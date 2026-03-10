@@ -1,0 +1,32 @@
+{
+  "name": "sayarah-hub",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev:landing": "vite --config vite.landing.js",
+    "dev:auction": "vite --config vite.auction.js",
+    "dev:logistics": "vite --config vite.logistics.js",
+    "dev:admin": "vite --config vite.admin.js",
+    "build:landing": "vite build --config vite.landing.js",
+    "build:auction": "vite build --config vite.auction.js",
+    "build:logistics": "vite build --config vite.logistics.js",
+    "build:admin": "vite build --config vite.admin.js",
+    "build": "npm run build:landing && npm run build:auction && npm run build:logistics && npm run build:admin",
+    "start": "node server.js",
+    "heroku-postbuild": "npm run build"
+  },
+  "dependencies": {
+    "express": "^4.22.1",
+    "firebase": "^12.10.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.1.1",
+    "vite": "^7.3.1"
+  }
+}
