@@ -485,23 +485,27 @@ export default function App() {
 
   useEffect(() => {
     if (!FIREBASE_ENABLED) { setLoaded(true); return; }
+    const timeout = setTimeout(() => { setLoaded(true); }, 5000);
     const unsub = onAuthChange(async (fbUser) => {
-      if (fbUser) {
-        const isSuperAdmin = fbUser.email === SUPER_ADMIN;
-        if (!isSuperAdmin) {
-          const role = await getUserRole(fbUser.uid);
-          if (role !== "admin") { await firebaseSignOut(); setLoaded(true); return; }
+      try {
+        if (fbUser) {
+          const isSuperAdmin = fbUser.email === SUPER_ADMIN;
+          if (!isSuperAdmin) {
+            const role = await getUserRole(fbUser.uid);
+            if (role !== "admin") { await firebaseSignOut(); clearTimeout(timeout); setLoaded(true); return; }
+          }
+          setAdminEmail(fbUser.email);
+          setLoggedIn(true);
+          await loadUsers();
+        } else {
+          setLoggedIn(false);
+          setAdminEmail("");
         }
-        setAdminEmail(fbUser.email);
-        setLoggedIn(true);
-        await loadUsers();
-      } else {
-        setLoggedIn(false);
-        setAdminEmail("");
-      }
+      } catch (e) { console.error("Auth init error:", e); }
+      clearTimeout(timeout);
       setLoaded(true);
     });
-    return () => unsub();
+    return () => { unsub(); clearTimeout(timeout); };
   }, []);
 
   const handleLogout = async () => {

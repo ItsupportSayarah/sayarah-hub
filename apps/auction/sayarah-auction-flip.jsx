@@ -3286,28 +3286,33 @@ export default function App() {
   // ─── Init: Firebase auth listener OR localStorage fallback ───
   useEffect(() => {
     if (FIREBASE_ENABLED) {
+      // Timeout fallback — if Firebase hangs, show login after 5s
+      const timeout = setTimeout(() => { setLoaded(true); }, 5000);
       const unsub = onAuthChange(async (fbUser) => {
-        if (fbUser) {
-          const isSuperAdmin = fbUser.email === "support@sayarah.io";
-          const role = isSuperAdmin ? "admin" : (await getUserRole(fbUser.uid)) || "user";
-          setFirebaseUid(fbUser.uid);
-          setUsername(fbUser.displayName || fbUser.email.split("@")[0]);
-          setUserRole(role);
-          setLoggedIn(true);
-          // Load user permissions for manager role
-          if (role === "manager") {
-            const ud = await getUserData(fbUser.uid);
-            if (ud && ud.allowedTabs) setAllowedTabs(ud.allowedTabs);
-          } else { setAllowedTabs(null); }
-          // Load data from Firestore
-          const cloudData = await loadAppData(fbUser.uid);
-          if (cloudData) setData({ ...defaultData(), ...cloudData });
-        } else {
-          setLoggedIn(false); setUsername(""); setUserRole("user"); setFirebaseUid(null);
-        }
+        try {
+          if (fbUser) {
+            const isSuperAdmin = fbUser.email === "support@sayarah.io";
+            const role = isSuperAdmin ? "admin" : (await getUserRole(fbUser.uid)) || "user";
+            setFirebaseUid(fbUser.uid);
+            setUsername(fbUser.displayName || fbUser.email.split("@")[0]);
+            setUserRole(role);
+            setLoggedIn(true);
+            // Load user permissions for manager role
+            if (role === "manager") {
+              const ud = await getUserData(fbUser.uid);
+              if (ud && ud.allowedTabs) setAllowedTabs(ud.allowedTabs);
+            } else { setAllowedTabs(null); }
+            // Load data from Firestore
+            const cloudData = await loadAppData(fbUser.uid);
+            if (cloudData) setData({ ...defaultData(), ...cloudData });
+          } else {
+            setLoggedIn(false); setUsername(""); setUserRole("user"); setFirebaseUid(null);
+          }
+        } catch (e) { console.error("Auth init error:", e); }
+        clearTimeout(timeout);
         setLoaded(true);
       });
-      return () => unsub();
+      return () => { unsub(); clearTimeout(timeout); };
     } else {
       // localStorage fallback
       try {

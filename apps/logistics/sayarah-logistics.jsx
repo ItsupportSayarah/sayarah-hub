@@ -1364,30 +1364,35 @@ export default function App(){
   // ─── Init: Firebase auth listener OR localStorage fallback ───
   useEffect(()=>{
     if(FIREBASE_ENABLED){
+      // Timeout fallback — if Firebase hangs, show login after 5s
+      const timeout=setTimeout(()=>{setLoaded(true);},5000);
       const unsub=onAuthChange(async(fbUser)=>{
-        if(fbUser){
-          const isSuperAdmin=fbUser.email==="support@sayarah.io";
-          const r=isSuperAdmin?"admin":(await getUserRole(fbUser.uid))||"customer";
-          setFirebaseUid(fbUser.uid);
-          setUsername(fbUser.displayName||fbUser.email.split("@")[0]);
-          setUserEmail(fbUser.email||"");
-          setRole(r);
-          setLoggedIn(true);
-          if(r==="manager"){
-            const ud=await getUserData(fbUser.uid);
-            if(ud){
-              const tabs=ud.allowedLogisticsTabs||ud.allowedTabs;
-              if(tabs)setAllowedTabs(tabs);
-            }
-          }else{setAllowedTabs(null);}
-          const cloudData=await loadAppData(fbUser.uid);
-          if(cloudData)setData({...defaultData(),...cloudData});
-        }else{
-          setLoggedIn(false);setUsername("");setRole("admin");setFirebaseUid(null);
-        }
+        try{
+          if(fbUser){
+            const isSuperAdmin=fbUser.email==="support@sayarah.io";
+            const r=isSuperAdmin?"admin":(await getUserRole(fbUser.uid))||"customer";
+            setFirebaseUid(fbUser.uid);
+            setUsername(fbUser.displayName||fbUser.email.split("@")[0]);
+            setUserEmail(fbUser.email||"");
+            setRole(r);
+            setLoggedIn(true);
+            if(r==="manager"){
+              const ud=await getUserData(fbUser.uid);
+              if(ud){
+                const tabs=ud.allowedLogisticsTabs||ud.allowedTabs;
+                if(tabs)setAllowedTabs(tabs);
+              }
+            }else{setAllowedTabs(null);}
+            const cloudData=await loadAppData(fbUser.uid);
+            if(cloudData)setData({...defaultData(),...cloudData});
+          }else{
+            setLoggedIn(false);setUsername("");setRole("admin");setFirebaseUid(null);
+          }
+        }catch(e){console.error("Auth init error:",e);}
+        clearTimeout(timeout);
         setLoaded(true);
       });
-      return()=>unsub();
+      return()=>{unsub();clearTimeout(timeout);};
     }else{
       try{const raw=localStorage.getItem(STORAGE_KEY);if(raw)setData({...defaultData(),...JSON.parse(raw)});}catch{}
       try{const s=localStorage.getItem("sayarah-sess-v3");if(s){const x=JSON.parse(s);setLoggedIn(true);setUsername(x.username);setUserEmail(x.email||"");setRole(x.role||"customer");}}catch{}
