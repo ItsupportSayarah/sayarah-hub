@@ -36,6 +36,9 @@ const I = {
   truck: (s=16,c="currentColor") => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="3" width="15" height="13" rx="2"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>,
   lock: (s=16,c="currentColor") => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>,
   loader: (s=16,c="currentColor") => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>,
+  key: (s=16,c="currentColor") => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>,
+  layout: (s=16,c="currentColor") => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>,
+  database: (s=16,c="currentColor") => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4.03 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/></svg>,
 };
 
 const ROLES = [
@@ -273,7 +276,7 @@ function UsersView({ users, onRefresh }) {
                       <div>
                         <div style={{ fontWeight: 700, color: B.navy, fontSize: 13 }}>{u.displayName || "—"}</div>
                         <div style={{ fontSize: 10, color: B.gray }}>{u.email || "—"}</div>
-                        {isSuperAdmin && <Badge color="#92400E" bg={B.amberBg}>🛡️ SUPER ADMIN</Badge>}
+                        {isSuperAdmin && <Badge color="#92400E" bg={B.amberBg}>{I.shield(12, "#92400E")} SUPER ADMIN</Badge>}
                       </div>
                     </div>
                   </td>
@@ -361,7 +364,7 @@ function UsersView({ users, onRefresh }) {
       {/* Permissions Guide */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 16 }}>
         <Card style={{ background: B.amberBg, border: `1px solid #FCD34D` }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: "#92400E", marginBottom: 6 }}>🚗 Auto Trade Hub Roles</div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: "#92400E", marginBottom: 6 }}><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{I.car(14, "#92400E")} Auto Trade Hub Roles</span></div>
           <div style={{ fontSize: 10, color: "#92400E", lineHeight: 1.8 }}>
             • <b>Admin</b> — All pages + User management<br/>
             • <b>Manager</b> — Assigned pages only<br/>
@@ -369,7 +372,7 @@ function UsersView({ users, onRefresh }) {
           </div>
         </Card>
         <Card style={{ background: B.blueBg, border: `1px solid #93C5FD` }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: B.blueDark, marginBottom: 6 }}>🚚 Sayarah Logistics Roles</div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: B.blueDark, marginBottom: 6 }}><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{I.truck(14, B.blueDark)} Sayarah Logistics Roles</span></div>
           <div style={{ fontSize: 10, color: B.blueDark, lineHeight: 1.8 }}>
             • <b>Admin</b> — All pages + User management<br/>
             • <b>Manager</b> — Assigned pages only<br/>
@@ -414,7 +417,7 @@ function ActivityView({ users }) {
               const isSuperAdmin = u.email === SUPER_ADMIN;
               return (
                 <tr key={u.id} style={{ borderBottom: `1px solid ${B.grayLight}` }}>
-                  <td style={{ padding: "10px 14px", fontWeight: 600 }}>{u.displayName || "—"}{isSuperAdmin && " 🛡️"}</td>
+                  <td style={{ padding: "10px 14px", fontWeight: 600 }}>{u.displayName || "—"}{isSuperAdmin && " (Super Admin)"}</td>
                   <td style={{ padding: "10px 14px", color: B.gray }}>{u.email}</td>
                   <td style={{ padding: "10px 14px" }}><Badge color={roleInfo.color} bg={roleInfo.bg}>{roleInfo.label}</Badge></td>
                   <td style={{ padding: "10px 14px", fontSize: 10, color: B.grayDark }}>{isSuperAdmin || u.role === "admin" ? "Full" : (u.allowedTabs || ["Dashboard"]).length + " pages"}</td>
@@ -442,7 +445,7 @@ function SettingsView({ adminEmail }) {
 
       <div style={{ display: "grid", gap: 14 }}>
         <Card>
-          <div style={{ fontSize: 13, fontWeight: 800, color: B.navy, marginBottom: 12 }}>🔑 Authentication</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: B.navy, marginBottom: 12 }}><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{I.key(14, B.navy)} Authentication</span></div>
           <div style={{ fontSize: 11, color: B.grayDark, lineHeight: 2 }}>
             <div><b>Provider:</b> Firebase Authentication</div>
             <div><b>Method:</b> Email / Password</div>
@@ -452,15 +455,15 @@ function SettingsView({ adminEmail }) {
         </Card>
 
         <Card>
-          <div style={{ fontSize: 13, fontWeight: 800, color: B.navy, marginBottom: 12 }}>📱 Applications</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: B.navy, marginBottom: 12 }}><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{I.layout(14, B.navy)} Applications</span></div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div style={{ padding: 14, background: B.cream, borderRadius: 8, border: `1px solid ${B.grayLight}` }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: B.navy }}>🚗 Auto Trade Hub</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: B.navy }}><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{I.car(14, B.navy)} Auto Trade Hub</span></div>
               <div style={{ fontSize: 10, color: B.gray, marginTop: 4 }}>Car auction flipping business management</div>
               <div style={{ fontSize: 10, color: B.grayDark, marginTop: 8 }}>{AUCTION_TABS.length} pages available</div>
             </div>
             <div style={{ padding: 14, background: B.cream, borderRadius: 8, border: `1px solid ${B.grayLight}` }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: B.navy }}>🚚 Sayarah Logistics</div>
+              <div style={{ fontSize: 12, fontWeight: 800, color: B.navy }}><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{I.truck(14, B.navy)} Sayarah Logistics</span></div>
               <div style={{ fontSize: 10, color: B.gray, marginTop: 4 }}>Vehicle shipping & logistics platform</div>
               <div style={{ fontSize: 10, color: B.grayDark, marginTop: 8 }}>{LOGISTICS_TABS.length} pages available</div>
             </div>
@@ -468,7 +471,7 @@ function SettingsView({ adminEmail }) {
         </Card>
 
         <Card>
-          <div style={{ fontSize: 13, fontWeight: 800, color: B.navy, marginBottom: 12 }}>🗄️ Database</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: B.navy, marginBottom: 12 }}><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{I.database(14, B.navy)} Database</span></div>
           <div style={{ fontSize: 11, color: B.grayDark, lineHeight: 2 }}>
             <div><b>Provider:</b> Cloud Firestore</div>
             <div><b>Project:</b> sayarah-hub</div>

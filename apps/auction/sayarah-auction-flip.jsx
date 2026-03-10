@@ -183,14 +183,14 @@ function calcRiskScore(vehicle) {
 
 // ─── Reconditioning Budget Engine ─────────────────────────────
 const RECON_CATEGORIES = [
-  { key: "mechanical", label: "Mechanical", icon: "⚙️" },
-  { key: "bodyPaint", label: "Body/Paint", icon: "🎨" },
-  { key: "interior", label: "Interior", icon: "💺" },
-  { key: "tires", label: "Tires/Wheels", icon: "🛞" },
-  { key: "electrical", label: "Electrical", icon: "⚡" },
-  { key: "detailing", label: "Detailing", icon: "✨" },
-  { key: "glass", label: "Glass/Windshield", icon: "🪟" },
-  { key: "other", label: "Other", icon: "📦" },
+  { key: "mechanical", label: "Mechanical", icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg> },
+  { key: "bodyPaint", label: "Body/Paint", icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 3H5a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2z"/><path d="M12 9v4"/><path d="M8 13H6a2 2 0 0 0-2 2v6h4v-6a2 2 0 0 0-2-2z"/></svg> },
+  { key: "interior", label: "Interior", icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 9V6a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v3"/><path d="M3 16a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5a2 2 0 0 0-4 0v1H7v-1a2 2 0 0 0-4 0z"/><path d="M5 18v2"/><path d="M19 18v2"/></svg> },
+  { key: "tires", label: "Tires/Wheels", icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/></svg> },
+  { key: "electrical", label: "Electrical", icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg> },
+  { key: "detailing", label: "Detailing", icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3z"/><path d="M5 3v4"/><path d="M3 5h4"/><path d="M19 17v4"/><path d="M17 19h4"/></svg> },
+  { key: "glass", label: "Glass/Windshield", icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg> },
+  { key: "other", label: "Other", icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg> },
 ];
 
 // ─── Cash Flow Engine ─────────────────────────────────────────
@@ -952,7 +952,7 @@ function DashboardTab({ data }) {
       {w("aging") && (agingDist.aging + agingDist.stale + agingDist.critical + agingDist.dead) > 0 && (
         <Card style={{ marginBottom: 12, borderLeft: `4px solid #D97706`, background: "#FFFBEB" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-            <span style={{ fontSize: 18 }}>⚠️</span>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             <span style={{ fontWeight: 700, color: "#92400E" }}>Inventory Alert:</span>
             {agingDist.aging > 0 && <Badge color="#D97706" bg="#FEF3C7">{agingDist.aging} Aging (30-45d)</Badge>}
             {agingDist.stale > 0 && <Badge color="#EA580C" bg="#FFEDD5">{agingDist.stale} Stale (45-60d)</Badge>}
@@ -1124,7 +1124,7 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
         </div>
       </div>
 
-      {filtered.length === 0 ? <Empty icon="🚗" title="No vehicles" sub="Add your first car" /> : (
+      {filtered.length === 0 ? <Empty icon={<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9L18 10l-2.7-3.6A1.5 1.5 0 0 0 14.1 6H9.9a1.5 1.5 0 0 0-1.2.6L6 10l-2.5 1.1C2.7 11.3 2 12.1 2 13v3c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/></svg>} title="No vehicles" sub="Add your first car" /> : (
         <div className="inventory-grid" style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}>
           {filtered.map(v => {
             const m = calcVehicleFullMetrics(v, data.sales.find(s => s.stockNum === v.stockNum), data.holdCosts);
@@ -1586,7 +1586,7 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
           {/* Approval notification */}
           {approvalMsg && (
             <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", borderRadius: 8, padding: "10px 16px", marginBottom: 14, fontSize: 13, fontWeight: 600, color: "#1E40AF", display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 16 }}>📋</span> {approvalMsg}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg> {approvalMsg}
             </div>
           )}
 
@@ -1632,14 +1632,14 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
           {/* ═══ VEHICLE TIMELINE ═══ */}
           {(() => {
             const events = [];
-            if (v.purchaseDate) events.push({ date: v.purchaseDate, icon: "🛒", label: "Purchased", detail: `${fmt$(p(v.purchasePrice))} from ${(AUCTION_FEE_TIERS[v.auctionSource] || {}).name || "—"}`, color: BRAND.red });
-            expenses.forEach(e => events.push({ date: e.date, icon: "💰", label: `Expense: ${e.category || "—"}`, detail: `${fmt$2(p(e.amount))}${e.description ? " — " + e.description : ""}`, color: "#D97706" }));
-            if (sale) events.push({ date: sale.date, icon: "💵", label: "Sold", detail: `${fmt$(p(sale.grossPrice))} to ${sale.buyerName || "—"}`, color: BRAND.green });
+            if (v.purchaseDate) events.push({ date: v.purchaseDate, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>, label: "Purchased", detail: `${fmt$(p(v.purchasePrice))} from ${(AUCTION_FEE_TIERS[v.auctionSource] || {}).name || "—"}`, color: BRAND.red });
+            expenses.forEach(e => events.push({ date: e.date, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>, label: `Expense: ${e.category || "—"}`, detail: `${fmt$2(p(e.amount))}${e.description ? " — " + e.description : ""}`, color: "#D97706" }));
+            if (sale) events.push({ date: sale.date, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="12" y1="6" x2="12" y2="18"/><path d="M6 12h.01"/><path d="M18 12h.01"/></svg>, label: "Sold", detail: `${fmt$(p(sale.grossPrice))} to ${sale.buyerName || "—"}`, color: BRAND.green });
             // Add status change events from activity log
             const log = loadActivityLog().filter(l => l.details?.stockNum === v.stockNum || l.description?.includes(`#${v.stockNum}`)).slice(0, 20);
             log.forEach(l => {
               if (!events.find(e => e.date === l.timestamp?.slice(0, 10) && e.label === l.action)) {
-                events.push({ date: l.timestamp?.slice(0, 10) || "", icon: l.action.includes("edit") ? "✏️" : l.action.includes("delete") ? "🗑️" : "📌", label: l.action.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()), detail: l.user, color: BRAND.gray });
+                events.push({ date: l.timestamp?.slice(0, 10) || "", icon: l.action.includes("edit") ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg> : l.action.includes("delete") ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="17" x2="12" y2="3"/><path d="M5 12l7-9 7 9"/><line x1="19" y1="21" x2="5" y2="21"/></svg>, label: l.action.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()), detail: l.user, color: BRAND.gray });
               }
             });
             events.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
@@ -1697,7 +1697,7 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
                   <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
                     {docs.map(d => (
                       <div key={d.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", background: "#F9FAFB", borderRadius: 8, border: `1px solid ${BRAND.grayLight}` }}>
-                        <span style={{ fontSize: 18 }}>{d.category === "Photo" ? "📷" : d.category === "Receipt" ? "🧾" : d.category === "Title" ? "📄" : d.category === "Insurance" ? "🛡️" : "📎"}</span>
+                        <span style={{ fontSize: 18, display: "flex", alignItems: "center" }}>{d.category === "Photo" ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg> : d.category === "Receipt" ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> : d.category === "Title" ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> : d.category === "Insurance" ? <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg> : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>}</span>
                         <div style={{ flex: 1 }}>
                           <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.black }}>{d.name}</div>
                           <div style={{ fontSize: 10, color: BRAND.gray }}>{d.category || "—"} · {d.date}{d.notes ? ` · ${d.notes}` : ""}</div>
@@ -1910,7 +1910,7 @@ function ExpensesTab({ data, setData }) {
         </div>
         <Btn onClick={openNew}>+ Add Expense</Btn>
       </div>
-      {sorted.length === 0 ? <Empty icon="💰" title="No expenses" sub="Track every business expense" /> : (
+      {sorted.length === 0 ? <Empty icon={<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>} title="No expenses" sub="Track every business expense" /> : (
         <Card style={{ padding: 0, overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -1984,7 +1984,7 @@ function SalesTab({ data, setData }) {
         <span style={{ fontSize: 13, color: BRAND.gray }}>{data.sales.length} sales · Revenue: <span style={{ color: BRAND.green, fontWeight: 800, ...S.mono }}>{fmt$(data.sales.reduce((s, x) => s + p(x.grossPrice), 0))}</span></span>
         <Btn onClick={openNew}>+ Record Sale</Btn>
       </div>
-      {sorted.length === 0 ? <Empty icon="📈" title="No sales" sub="Record your flips" /> : (
+      {sorted.length === 0 ? <Empty icon={<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>} title="No sales" sub="Record your flips" /> : (
         <Card style={{ padding: 0, overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -2085,7 +2085,7 @@ function MileageTab({ data, setData }) {
         <span style={{ fontSize: 13, color: BRAND.gray }}>{data.mileage.length} trips · {totalMiles.toLocaleString()} mi · Deduction: <span style={{ color: BRAND.blue, fontWeight: 800, ...S.mono }}>{fmt$2(totalMiles * IRS_RATE)}</span></span>
         <Btn onClick={openNew}>+ Log Trip</Btn>
       </div>
-      {sorted.length === 0 ? <Empty icon="🛣️" title="No mileage" sub="Track business miles" /> : (
+      {sorted.length === 0 ? <Empty icon={<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>} title="No mileage" sub="Track business miles" /> : (
         <Card style={{ padding: 0, overflow: "hidden" }}>
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -2140,11 +2140,11 @@ function getPipelineStage(vehicle, sales) {
 }
 
 const STAGE_COLORS = {
-  Scouting: { bg: "#EFF6FF", border: "#60A5FA", icon: "🔍", text: "#1E40AF" },
-  Purchased: { bg: "#FEF3C7", border: "#F59E0B", icon: "🔑", text: "#92400E" },
-  Repairing: { bg: "#FFEDD5", border: "#F97316", icon: "🔧", text: "#9A3412" },
-  Listed: { bg: "#F0FDF4", border: "#22C55E", icon: "📋", text: "#166534" },
-  Sold: { bg: "#F5F3FF", border: "#8B5CF6", icon: "✅", text: "#5B21B6" },
+  Scouting: { bg: "#EFF6FF", border: "#60A5FA", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>, text: "#1E40AF" },
+  Purchased: { bg: "#FEF3C7", border: "#F59E0B", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>, text: "#92400E" },
+  Repairing: { bg: "#FFEDD5", border: "#F97316", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>, text: "#9A3412" },
+  Listed: { bg: "#F0FDF4", border: "#22C55E", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/><line x1="8" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="16" y2="14"/><line x1="8" y1="18" x2="12" y2="18"/></svg>, text: "#166534" },
+  Sold: { bg: "#F5F3FF", border: "#8B5CF6", icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>, text: "#5B21B6" },
 };
 
 function PipelineTab({ data, setData }) {
@@ -2505,7 +2505,7 @@ function AnalyticsTab({ data }) {
               <tbody>
                 {dealCards.map((d, i) => (
                   <tr key={d.vehicle.id} style={{ borderBottom: `1px solid ${BRAND.grayLight}`, background: i === 0 ? "#FEFCE8" : i < 3 ? "#FFFBEB" : "transparent" }}>
-                    <TD style={{ fontWeight: 800, color: i < 3 ? "#D97706" : BRAND.grayDark }}>{i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i + 1}`}</TD>
+                    <TD style={{ fontWeight: 800, color: i < 3 ? "#D97706" : BRAND.grayDark }}>{`#${i + 1}`}</TD>
                     <TD><span style={{ color: BRAND.red, ...S.mono, fontWeight: 700, fontSize: 10 }}>#{d.vehicle.stockNum}</span> {d.vehicle.year} {d.vehicle.make} {d.vehicle.model}</TD>
                     <TD style={{ ...S.mono }}>{fmt$(d.metrics.invested)}</TD>
                     <TD style={{ ...S.mono }}>{fmt$(d.metrics.netSale)}</TD>
@@ -2859,7 +2859,7 @@ ${Object.keys(r.expByCat).length > 0 ? `<div class="section"><h3>Expense Breakdo
               <tbody>
                 {r.topDeals.map((d, i) => (
                   <tr key={d.vehicle.id} style={{ borderBottom: `1px solid ${BRAND.grayLight}` }}>
-                    <TD style={{ fontWeight: 800 }}>{i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i + 1}`}</TD>
+                    <TD style={{ fontWeight: 800 }}>{`#${i + 1}`}</TD>
                     <TD><span style={{ color: BRAND.red, ...S.mono, fontWeight: 700, fontSize: 10 }}>#{d.vehicle.stockNum}</span> {d.vehicle.year} {d.vehicle.make} {d.vehicle.model}</TD>
                     <TD style={{ ...S.mono }}>{fmt$(d.metrics.invested)}</TD>
                     <TD style={{ ...S.mono }}>{fmt$(d.metrics.netSale)}</TD>
@@ -2958,7 +2958,7 @@ function ApprovalsTab({ data, setData }) {
       </div>
 
       {filtered.length === 0 ? (
-        <Empty icon="📋" title={filter === "pending" ? "No pending requests" : "No requests"} sub={filter === "pending" ? "All caught up! No user edits awaiting approval." : "No requests match this filter."} />
+        <Empty icon={<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>} title={filter === "pending" ? "No pending requests" : "No requests"} sub={filter === "pending" ? "All caught up! No user edits awaiting approval." : "No requests match this filter."} />
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {filtered.map(a => {
@@ -3028,11 +3028,19 @@ function ActivityTab() {
   const filtered = userFilter === "All" ? log : log.filter(e => e.user === userFilter);
 
   const actionIcons = {
-    added_vehicle: "🚗", edited_vehicle: "✏️", deleted_vehicle: "🗑️",
-    added_expense: "💰", edited_expense: "✏️", deleted_expense: "🗑️",
-    finalized_sale: "💵", edited_sale: "✏️", deleted_sale: "🗑️",
-    requested_edit: "📋", requested_delete: "📋",
-    approved_request: "✅", rejected_request: "❌",
+    added_vehicle: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9L18 10l-2.7-3.6A1.5 1.5 0 0 0 14.1 6H9.9a1.5 1.5 0 0 0-1.2.6L6 10l-2.5 1.1C2.7 11.3 2 12.1 2 13v3c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/></svg>,
+    edited_vehicle: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>,
+    deleted_vehicle: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>,
+    added_expense: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>,
+    edited_expense: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>,
+    deleted_expense: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>,
+    finalized_sale: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="12" y1="6" x2="12" y2="18"/><path d="M6 12h.01"/><path d="M18 12h.01"/></svg>,
+    edited_sale: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>,
+    deleted_sale: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>,
+    requested_edit: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>,
+    requested_delete: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>,
+    approved_request: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
+    rejected_request: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>,
   };
   const actionColors = {
     added_vehicle: BRAND.green, edited_vehicle: BRAND.blue, deleted_vehicle: "#DC2626",
@@ -3059,12 +3067,12 @@ function ActivityTab() {
       </div>
 
       {filtered.length === 0 ? (
-        <Empty icon="📜" title="No activity" sub="User actions will appear here" />
+        <Empty icon={<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>} title="No activity" sub="User actions will appear here" />
       ) : (
         <Card style={{ padding: 0, overflow: "hidden" }}>
           <div style={{ maxHeight: 600, overflowY: "auto" }}>
             {filtered.map((entry, i) => {
-              const icon = actionIcons[entry.action] || "📌";
+              const icon = actionIcons[entry.action] || <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="17" x2="12" y2="3"/><path d="M5 12l7-9 7 9"/><line x1="19" y1="21" x2="5" y2="21"/></svg>;
               const color = actionColors[entry.action] || BRAND.gray;
               const date = new Date(entry.timestamp);
               const isToday = new Date().toDateString() === date.toDateString();
@@ -3445,7 +3453,7 @@ export default function App() {
                     ) : notifications.map((n, i) => (
                       <div key={i} style={{ padding: "12px 18px", borderBottom: `1px solid ${BRAND.grayLight}`, cursor: n.stockNum ? "pointer" : "default", transition: "background 0.15s" }} onClick={() => { if (n.stockNum) { setTab("Inventory"); setShowNotifPanel(false); } }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
-                          <span style={{ fontSize: 12 }}>{n.type === "critical" ? "🔴" : n.type === "warning" ? "🟡" : n.type === "action" ? "🔵" : "🟢"}</span>
+                          <div style={{ width: 10, height: 10, borderRadius: "50%", flexShrink: 0, background: n.type === "critical" ? "#DC2626" : n.type === "warning" ? "#F59E0B" : n.type === "action" ? "#3B82F6" : "#22C55E" }} />
                           <span style={{ fontSize: 12, fontWeight: 700, color: BRAND.black }}>{n.title}</span>
                         </div>
                         <div style={{ fontSize: 11, color: BRAND.gray, paddingLeft: 20 }}>{n.message}</div>

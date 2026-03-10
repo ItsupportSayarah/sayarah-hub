@@ -37,19 +37,47 @@ const today=()=>new Date().toISOString().slice(0,10);
 const daysBetween=(a,b)=>(!a||!b)?0:Math.max(0,Math.round((new Date(b)-new Date(a))/864e5));
 const daysAgo=d=>d?Math.max(0,Math.round((new Date()-new Date(d))/864e5)):0;
 
+// ─── SVG Icons (thin outline, strokeWidth 1.5) ───────────────
+const svgP={xmlns:"http://www.w3.org/2000/svg",fill:"none",stroke:"currentColor",strokeWidth:"1.5",strokeLinecap:"round",strokeLinejoin:"round"};
+const Ico=({children,size=16,...rest})=><svg {...svgP} width={size} height={size} viewBox="0 0 24 24" {...rest}>{children}</svg>;
+const IcoTag=({size})=><Ico size={size}><path d="M12 2l-8 4v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V6l-8-4z"/><path d="M9 12l2 2 4-4"/></Ico>;
+const IcoClipboard=({size})=><Ico size={size}><path d="M16 4h2a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V6a2 2 0 012-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></Ico>;
+const IcoTruck=({size})=><Ico size={size}><path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7V8z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></Ico>;
+const IcoWarehouse=({size})=><Ico size={size}><path d="M3 21V8l9-5 9 5v13"/><path d="M9 21V12h6v9"/></Ico>;
+const IcoUpload=({size})=><Ico size={size}><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></Ico>;
+const IcoPackage=({size})=><Ico size={size}><path d="M16.5 9.4l-9-5.19M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></Ico>;
+const IcoShip=({size})=><Ico size={size}><path d="M2 20l.8-2.2A4 4 0 016.5 15h11a4 4 0 013.7 2.8L22 20"/><path d="M4 15V8a2 2 0 012-2h12a2 2 0 012 2v7"/><path d="M12 6V2"/><path d="M8 6l4-4 4 4"/></Ico>;
+const IcoWaves=({size})=><Ico size={size}><path d="M2 6c.6.5 1.2 1 2.5 1C7 7 7 5 9.5 5c2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 12c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/><path d="M2 18c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 2.5 0 2.5-2 5-2 1.3 0 1.9.5 2.5 1"/></Ico>;
+const IcoAnchor=({size})=><Ico size={size}><circle cx="12" cy="5" r="3"/><line x1="12" y1="8" x2="12" y2="22"/><path d="M5 12H2a10 10 0 0020 0h-3"/></Ico>;
+const IcoShieldCheck=({size})=><Ico size={size}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="M9 12l2 2 4-4"/></Ico>;
+const IcoCheckCircle=({size})=><Ico size={size}><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></Ico>;
+const IcoCar=({size})=><Ico size={size}><path d="M5 17h14M5 17a2 2 0 01-2-2v-4l2.66-5.31A2 2 0 017.44 4h9.12a2 2 0 011.78 1.09L21 10.5V15a2 2 0 01-2 2m-14 0a2 2 0 100 4 2 2 0 000-4zm14 0a2 2 0 100 4 2 2 0 000-4z"/></Ico>;
+const IcoDollar=({size})=><Ico size={size}><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/></Ico>;
+const IcoFileText=({size})=><Ico size={size}><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></Ico>;
+const IcoBanknote=({size})=><Ico size={size}><rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="12" cy="12" r="3"/><path d="M2 9h2m16 0h2M2 15h2m16 0h2"/></Ico>;
+const IcoClock=({size})=><Ico size={size}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></Ico>;
+const IcoAlertCircle=({size})=><Ico size={size}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></Ico>;
+const IcoBarChart=({size})=><Ico size={size}><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></Ico>;
+const IcoUsers=({size})=><Ico size={size}><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></Ico>;
+const IcoAlertTriangle=({size})=><Ico size={size}><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></Ico>;
+const IcoCamera=({size})=><Ico size={size}><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></Ico>;
+const IcoFile=({size})=><Ico size={size}><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></Ico>;
+const IcoImage=({size})=><Ico size={size}><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></Ico>;
+const IcoLoader=({size})=><Ico size={size}><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></Ico>;
+
 // ─── Pipeline ─────────────────────────────────────────────────
 const STATUSES=[
-  {key:"purchased",label:"Purchased",icon:"🏷️",color:"#8B5CF6",bg:"#EDE9FE"},
-  {key:"title_pending",label:"Title Pending",icon:"📋",color:"#A855F7",bg:"#F3E8FF"},
-  {key:"on_the_way",label:"On The Way",icon:"🚛",color:"#F59E0B",bg:"#FEF3C7"},
-  {key:"at_warehouse",label:"At Warehouse",icon:"🏭",color:"#3B82F6",bg:"#DBEAFE"},
-  {key:"loading",label:"Loading",icon:"⬆️",color:"#06B6D4",bg:"#CFFAFE"},
-  {key:"loaded",label:"Loaded",icon:"📦",color:"#14B8A6",bg:"#CCFBF1"},
-  {key:"shipped",label:"Shipped",icon:"🚢",color:"#10B981",bg:"#D1FAE5"},
-  {key:"in_transit_sea",label:"In Transit (Sea)",icon:"🌊",color:"#0EA5E9",bg:"#E0F2FE"},
-  {key:"arrived_port",label:"Arrived at Port",icon:"⚓",color:"#6366F1",bg:"#E0E7FF"},
-  {key:"customs_clearance",label:"Customs Clearance",icon:"🛃",color:"#8B5CF6",bg:"#EDE9FE"},
-  {key:"delivered",label:"Delivered",icon:"✅",color:"#059669",bg:"#BBF7D0"},
+  {key:"purchased",label:"Purchased",icon:<IcoTag size={14}/>,color:"#8B5CF6",bg:"#EDE9FE"},
+  {key:"title_pending",label:"Title Pending",icon:<IcoClipboard size={14}/>,color:"#A855F7",bg:"#F3E8FF"},
+  {key:"on_the_way",label:"On The Way",icon:<IcoTruck size={14}/>,color:"#F59E0B",bg:"#FEF3C7"},
+  {key:"at_warehouse",label:"At Warehouse",icon:<IcoWarehouse size={14}/>,color:"#3B82F6",bg:"#DBEAFE"},
+  {key:"loading",label:"Loading",icon:<IcoUpload size={14}/>,color:"#06B6D4",bg:"#CFFAFE"},
+  {key:"loaded",label:"Loaded",icon:<IcoPackage size={14}/>,color:"#14B8A6",bg:"#CCFBF1"},
+  {key:"shipped",label:"Shipped",icon:<IcoShip size={14}/>,color:"#10B981",bg:"#D1FAE5"},
+  {key:"in_transit_sea",label:"In Transit (Sea)",icon:<IcoWaves size={14}/>,color:"#0EA5E9",bg:"#E0F2FE"},
+  {key:"arrived_port",label:"Arrived at Port",icon:<IcoAnchor size={14}/>,color:"#6366F1",bg:"#E0E7FF"},
+  {key:"customs_clearance",label:"Customs Clearance",icon:<IcoShieldCheck size={14}/>,color:"#8B5CF6",bg:"#EDE9FE"},
+  {key:"delivered",label:"Delivered",icon:<IcoCheckCircle size={14}/>,color:"#059669",bg:"#BBF7D0"},
 ];
 const TITLE_STATUSES=["With Title","Without Title","Title Pending","Title Mailed","Title at Warehouse","Title with Customs"];
 const PORTS=[
@@ -195,11 +223,11 @@ function Modal({title,onClose,children,wide}){
     </div>
   </div>;
 }
-function ConfirmDlg({msg,onOk,onCancel}){return <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1100,backdropFilter:"blur(4px)"}}><div style={{background:C.white,borderRadius:16,padding:28,maxWidth:380,textAlign:"center",boxShadow:C.shadowXl}}><div style={{width:48,height:48,borderRadius:12,background:C.redLight,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",fontSize:22}}>⚠️</div><p style={{color:C.slate700,fontSize:15,fontWeight:500,marginBottom:20,lineHeight:1.5}}>{msg}</p><div style={{display:"flex",justifyContent:"center",gap:10}}><Btn v="secondary" onClick={onCancel}>Cancel</Btn><Btn v="danger" onClick={onOk}>Delete</Btn></div></div></div>;}
+function ConfirmDlg({msg,onOk,onCancel}){return <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1100,backdropFilter:"blur(4px)"}}><div style={{background:C.white,borderRadius:16,padding:28,maxWidth:380,textAlign:"center",boxShadow:C.shadowXl}}><div style={{width:48,height:48,borderRadius:12,background:C.redLight,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",color:C.red}}><IcoAlertTriangle size={22}/></div><p style={{color:C.slate700,fontSize:15,fontWeight:500,marginBottom:20,lineHeight:1.5}}>{msg}</p><div style={{display:"flex",justifyContent:"center",gap:10}}><Btn v="secondary" onClick={onCancel}>Cancel</Btn><Btn v="danger" onClick={onOk}>Delete</Btn></div></div></div>;}
 function Bdg({children,color,bg}){return <span style={{fontSize:10,fontWeight:700,padding:"4px 10px",borderRadius:20,background:bg,color,letterSpacing:".02em",whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",gap:3}}>{children}</span>;}
 function SBdg({statusKey}){const s=STATUSES.find(x=>x.key===statusKey)||STATUSES[0];return <Bdg color={s.color} bg={s.bg}>{s.icon} {s.label}</Bdg>;}
 function IBdg({statusKey}){const s=INV_STATUSES.find(x=>x.key===statusKey)||INV_STATUSES[0];return <Bdg color={s.color} bg={s.bg}>{s.label}</Bdg>;}
-function Empty({icon,title,sub}){return <div style={{textAlign:"center",padding:"60px 20px"}}><div style={{width:72,height:72,borderRadius:20,background:C.slate100,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 12px",fontSize:32}}>{icon}</div><div style={{fontSize:16,fontWeight:700,color:C.slate700,marginBottom:4}}>{title}</div><div style={{fontSize:13,color:C.slate400}}>{sub}</div></div>;}
+function Empty({icon,title,sub}){return <div style={{textAlign:"center",padding:"60px 20px"}}><div style={{width:72,height:72,borderRadius:20,background:C.slate100,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 12px",color:C.slate500}}>{icon}</div><div style={{fontSize:16,fontWeight:700,color:C.slate700,marginBottom:4}}>{title}</div><div style={{fontSize:13,color:C.slate400}}>{sub}</div></div>;}
 function TH({children,right}){return <th style={{textAlign:right?"right":"left",padding:"12px 14px",color:C.slate500,fontSize:11,fontWeight:600,letterSpacing:".03em",background:C.white,position:"sticky",top:0,zIndex:1,borderBottom:"2px solid "+C.slate200}}>{children}</th>;}
 function TD({children,style:sx={}}){return <td style={{padding:"12px 14px",fontSize:13,...sx}}>{children}</td>;}
 function MiniBar({val,max,color}){const w=max>0?Math.min(100,(val/max)*100):0;return <div style={{height:6,background:C.slate100,borderRadius:3}}><div style={{height:6,background:color||C.blue,borderRadius:3,width:`${w}%`,transition:"width .4s ease"}}/></div>;}
@@ -211,7 +239,7 @@ function StatCard({label,value,sub,color,icon}){
         <div style={{fontSize:26,fontWeight:800,color:color||C.black,...MO,lineHeight:1}}>{value}</div>
         {sub&&<div style={{fontSize:11,color:C.slate400,marginTop:6}}>{sub}</div>}
       </div>
-      {icon&&<div style={{width:44,height:44,borderRadius:12,background:color?`${color}15`:C.slate100,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>{icon}</div>}
+      {icon&&<div style={{width:44,height:44,borderRadius:12,background:color?`${color}15`:C.slate100,display:"flex",alignItems:"center",justifyContent:"center",color:color||C.slate500}}>{icon}</div>}
     </div>
   </Card>;
 }
@@ -361,20 +389,20 @@ function DashboardTab({data,role,username,userEmail}){
 
       {/* Top KPI Row */}
       <div style={{display:"flex",flexWrap:"wrap",gap:14,marginBottom:16}}>
-        <StatCard label="Total Vehicles" value={vehs.length} icon="🚗" color={C.blue}/>
-        <StatCard label="In Transit" value={(sCounts.shipped||0)+(sCounts.in_transit_sea||0)} icon="🚢" color={C.teal}/>
-        <StatCard label="At Warehouse" value={sCounts.at_warehouse||0} icon="🏭" color={C.blue}/>
-        <StatCard label="Delivered" value={sCounts.delivered||0} icon="✅" color={C.emerald}/>
-        <StatCard label="Pipeline Value" value={f$(kpi.pipelineVal)} icon="💰" color={C.amber} sub={`${unsold.length} vehicles`}/>
+        <StatCard label="Total Vehicles" value={vehs.length} icon={<IcoCar size={20}/>} color={C.blue}/>
+        <StatCard label="In Transit" value={(sCounts.shipped||0)+(sCounts.in_transit_sea||0)} icon={<IcoShip size={20}/>} color={C.teal}/>
+        <StatCard label="At Warehouse" value={sCounts.at_warehouse||0} icon={<IcoWarehouse size={20}/>} color={C.blue}/>
+        <StatCard label="Delivered" value={sCounts.delivered||0} icon={<IcoCheckCircle size={20}/>} color={C.emerald}/>
+        <StatCard label="Pipeline Value" value={f$(kpi.pipelineVal)} icon={<IcoDollar size={20}/>} color={C.amber} sub={`${unsold.length} vehicles`}/>
       </div>
 
       {/* Financial Row */}
       <div style={{display:"flex",flexWrap:"wrap",gap:14,marginBottom:20}}>
-        <StatCard label="Total Invoiced" value={f$(kpi.totalInvoiced)} icon="📄" color={C.slate700}/>
-        <StatCard label="Total Received" value={f$(kpi.totalPaid)} icon="💵" color={C.emerald}/>
-        <StatCard label="Outstanding" value={f$(kpi.totalBal)} icon="⏳" color={kpi.totalBal>0?C.red:C.emerald}/>
-        <StatCard label="Overdue" value={f$(kpi.overdueAmt)} icon="🚨" color={C.red} sub={`${kpi.overdueCount} invoices`}/>
-        <StatCard label="This Month" value={f$(kpi.moRev)} icon="📊" color={C.teal} sub={`Invoiced: ${f$(kpi.moInv)}`}/>
+        <StatCard label="Total Invoiced" value={f$(kpi.totalInvoiced)} icon={<IcoFileText size={20}/>} color={C.slate700}/>
+        <StatCard label="Total Received" value={f$(kpi.totalPaid)} icon={<IcoBanknote size={20}/>} color={C.emerald}/>
+        <StatCard label="Outstanding" value={f$(kpi.totalBal)} icon={<IcoClock size={20}/>} color={kpi.totalBal>0?C.red:C.emerald}/>
+        <StatCard label="Overdue" value={f$(kpi.overdueAmt)} icon={<IcoAlertCircle size={20}/>} color={C.red} sub={`${kpi.overdueCount} invoices`}/>
+        <StatCard label="This Month" value={f$(kpi.moRev)} icon={<IcoBarChart size={20}/>} color={C.teal} sub={`Invoiced: ${f$(kpi.moInv)}`}/>
       </div>
 
       {/* Aging + Port side by side */}
@@ -461,7 +489,7 @@ function CustomersTab({data,setData}){
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search customers..." style={{...iS,width:220,padding:"8px 14px",fontSize:12}}/>
         <Btn onClick={()=>{setForm(empty());setEditing(null);setShowForm(true);}}>+ Add Customer</Btn>
       </PageHeader>
-      {filtered.length===0?<Empty icon="👥" title="No customers" sub="Add your first customer to get started"/>:
+      {filtered.length===0?<Empty icon={<IcoUsers size={32}/>} title="No customers" sub="Add your first customer to get started"/>:
       <Card style={{padding:0,overflow:"hidden",borderRadius:16}}><div style={{overflowX:"auto"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}>
           <thead><tr><TH>Customer</TH><TH>Contact</TH><TH>Vehicles</TH><TH right>Invoiced</TH><TH right>Paid</TH><TH right>Balance</TH><TH>Status</TH><TH>Actions</TH></tr></thead>
@@ -621,7 +649,7 @@ function VehiclesTab({data,setData,role,username,userEmail}){
           <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search..." style={{...iS,width:200,padding:"8px 14px",fontSize:12}}/>
         </PageHeader>
 
-        {filt.length===0?<Empty icon="🚗" title="No shipments" sub="No vehicles are assigned to your account yet"/>:
+        {filt.length===0?<Empty icon={<IcoCar size={32}/>} title="No shipments" sub="No vehicles are assigned to your account yet"/>:
         <div style={{display:"flex",flexDirection:"column",gap:16}}>
           {filt.map(v=>{
             const si=custStatusIndex(v.status);const sInfo=STATUSES.find(s=>s.key===v.status)||STATUSES[0];
@@ -632,7 +660,7 @@ function VehiclesTab({data,setData,role,username,userEmail}){
                 <div style={{padding:"16px 20px",display:"flex",justifyContent:"space-between",alignItems:"start",flexWrap:"wrap",gap:12}}>
                   <div style={{display:"flex",gap:14,alignItems:"center"}}>
                     {(v.photos||[]).length>0?<img src={v.photos[0].url} alt="" style={{width:64,height:48,borderRadius:8,objectFit:"cover",border:"1px solid "+C.slate200}}/>
-                    :<div style={{width:64,height:48,borderRadius:8,background:C.slate100,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>🚗</div>}
+                    :<div style={{width:64,height:48,borderRadius:8,background:C.slate100,display:"flex",alignItems:"center",justifyContent:"center",color:C.slate400}}><IcoCar size={20}/></div>}
                     <div>
                       <div style={{fontSize:16,fontWeight:800,color:C.slate800}}>{v.year} {v.make} {v.model}</div>
                       <div style={{fontSize:11,color:C.slate500,marginTop:2}}>
@@ -720,7 +748,7 @@ function VehiclesTab({data,setData,role,username,userEmail}){
         </div>
       </Card>}
 
-      {filt.length===0?<Empty icon="🚗" title="No vehicles" sub="Add vehicles to start tracking"/>:
+      {filt.length===0?<Empty icon={<IcoCar size={32}/>} title="No vehicles" sub="Add vehicles to start tracking"/>:
       <Card style={{padding:0,overflow:"hidden",borderRadius:16}}><div style={{overflowX:"auto"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
           <thead><tr>
@@ -744,8 +772,8 @@ function VehiclesTab({data,setData,role,username,userEmail}){
               <TD style={{fontSize:11}}>{v.destination||"—"}</TD>
               <TD><Bdg color={v.titleStatus==="With Title"?C.emerald:C.red} bg={v.titleStatus==="With Title"?C.emeraldLight:C.redLight}>{v.titleStatus}</Bdg></TD>
               <TD><div style={{display:"flex",gap:6,fontSize:10}}>
-                {(v.photos||[]).length>0&&<span style={{color:C.blue,fontWeight:600}}>📷{v.photos.length}</span>}
-                {(v.titleDocs||[]).length>0&&<span style={{color:C.emerald,fontWeight:600}}>📋{v.titleDocs.length}</span>}
+                {(v.photos||[]).length>0&&<span style={{color:C.blue,fontWeight:600,display:"inline-flex",alignItems:"center",gap:2}}><IcoCamera size={12}/>{v.photos.length}</span>}
+                {(v.titleDocs||[]).length>0&&<span style={{color:C.emerald,fontWeight:600,display:"inline-flex",alignItems:"center",gap:2}}><IcoFileText size={12}/>{v.titleDocs.length}</span>}
                 {!(v.photos||[]).length&&!(v.titleDocs||[]).length&&<span style={{color:C.slate300}}>—</span>}
               </div></TD>
               <TD style={{...MO,fontSize:11,fontWeight:600,color:C.slate500}}>{v.containerNum||"—"}</TD>
@@ -774,7 +802,7 @@ function VehiclesTab({data,setData,role,username,userEmail}){
             <Sel label="Port" value={form.portLocation} onChange={v=>upd("portLocation",v)} options={PORTS.map(x=>({value:x.code,label:x.full}))}/>
             <Sel label="Destination" value={form.destination} onChange={v=>upd("destination",v)} options={DESTS.map(d=>({value:d.code,label:`${d.name} (${d.code})`}))}/>
             <Sel label="Title" value={form.titleStatus} onChange={v=>upd("titleStatus",v)} options={TITLE_STATUSES}/>
-            <Sel label="Status" value={form.status} onChange={v=>upd("status",v)} options={STATUSES.map(s=>({value:s.key,label:`${s.icon} ${s.label}`}))}/>
+            <Sel label="Status" value={form.status} onChange={v=>upd("status",v)} options={STATUSES.map(s=>({value:s.key,label:s.label}))}/>
             <Inp label="Container" value={form.containerNum} onChange={v=>upd("containerNum",v)}/>
             <Inp label="Booking #" value={form.bookingNumber} onChange={v=>upd("bookingNumber",v)}/>
             <Inp label="B/L" value={form.blNumber} onChange={v=>upd("blNumber",v)}/>
@@ -785,7 +813,7 @@ function VehiclesTab({data,setData,role,username,userEmail}){
         {/* ── Vehicle Photos ── */}
         <div style={{borderTop:"1px solid "+C.slate200,margin:"16px 0",paddingTop:16}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-            <div><div style={{fontSize:13,fontWeight:700,color:C.slate800}}>📸 Vehicle Photos</div><div style={{fontSize:11,color:C.slate400}}>Upload photos of the vehicle (JPG, PNG, WebP)</div></div>
+            <div><div style={{fontSize:13,fontWeight:700,color:C.slate800,display:"flex",alignItems:"center",gap:6}}><IcoCamera size={14}/> Vehicle Photos</div><div style={{fontSize:11,color:C.slate400}}>Upload photos of the vehicle (JPG, PNG, WebP)</div></div>
             <div>
               <input ref={photoInputRef} type="file" accept="image/*" multiple onChange={e=>handleFileUpload(e.target.files,"photos")} style={{display:"none"}}/>
               <Btn v="secondary" s="sm" onClick={()=>photoInputRef.current?.click()} disabled={uploading||!FIREBASE_ENABLED}>+ Upload Photos</Btn>
@@ -805,7 +833,7 @@ function VehiclesTab({data,setData,role,username,userEmail}){
             </div>
           ):(
             <div style={{border:"2px dashed "+C.slate200,borderRadius:12,padding:"24px 16px",textAlign:"center",cursor:FIREBASE_ENABLED?"pointer":"default"}} onClick={()=>FIREBASE_ENABLED&&photoInputRef.current?.click()}>
-              <div style={{fontSize:28,marginBottom:4}}>📷</div>
+              <div style={{marginBottom:4,color:C.slate400}}><IcoCamera size={28}/></div>
               <div style={{fontSize:12,color:C.slate400,fontWeight:600}}>No photos yet</div>
               <div style={{fontSize:10,color:C.slate300,marginTop:2}}>{FIREBASE_ENABLED?"Click to upload or drag & drop":"Enable Firebase to upload files"}</div>
             </div>
@@ -815,7 +843,7 @@ function VehiclesTab({data,setData,role,username,userEmail}){
         {/* ── Title Documents ── */}
         <div style={{borderTop:"1px solid "+C.slate200,margin:"16px 0",paddingTop:16}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
-            <div><div style={{fontSize:13,fontWeight:700,color:C.slate800}}>📋 Title Documents</div><div style={{fontSize:11,color:C.slate400}}>Attach title scans, registration docs (PDF, JPG, PNG)</div></div>
+            <div><div style={{fontSize:13,fontWeight:700,color:C.slate800,display:"flex",alignItems:"center",gap:6}}><IcoFileText size={14}/> Title Documents</div><div style={{fontSize:11,color:C.slate400}}>Attach title scans, registration docs (PDF, JPG, PNG)</div></div>
             <div>
               <input ref={titleInputRef} type="file" accept="image/*,.pdf" multiple onChange={e=>handleFileUpload(e.target.files,"titles")} style={{display:"none"}}/>
               <Btn v="secondary" s="sm" onClick={()=>titleInputRef.current?.click()} disabled={uploading||!FIREBASE_ENABLED}>+ Upload Title</Btn>
@@ -826,7 +854,7 @@ function VehiclesTab({data,setData,role,username,userEmail}){
               {(form.titleDocs||[]).map(td=>(
                 <div key={td.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 14px",borderRadius:10,border:"1px solid "+C.slate200,background:C.slate50}}>
                   <div style={{display:"flex",alignItems:"center",gap:10}}>
-                    <div style={{width:36,height:36,borderRadius:8,background:td.name?.toLowerCase().endsWith(".pdf")?C.redLight:C.blueLight,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16}}>{td.name?.toLowerCase().endsWith(".pdf")?"📄":"🖼️"}</div>
+                    <div style={{width:36,height:36,borderRadius:8,background:td.name?.toLowerCase().endsWith(".pdf")?C.redLight:C.blueLight,display:"flex",alignItems:"center",justifyContent:"center",color:td.name?.toLowerCase().endsWith(".pdf")?C.red:C.blue}}>{td.name?.toLowerCase().endsWith(".pdf")?<IcoFile size={16}/>:<IcoImage size={16}/>}</div>
                     <div>
                       <div style={{fontSize:12,fontWeight:600,color:C.slate700}}>{td.name}</div>
                       <div style={{fontSize:10,color:C.slate400}}>{new Date(td.uploadedAt).toLocaleDateString()}</div>
@@ -841,7 +869,7 @@ function VehiclesTab({data,setData,role,username,userEmail}){
             </div>
           ):(
             <div style={{border:"2px dashed "+C.slate200,borderRadius:12,padding:"24px 16px",textAlign:"center",cursor:FIREBASE_ENABLED?"pointer":"default"}} onClick={()=>FIREBASE_ENABLED&&titleInputRef.current?.click()}>
-              <div style={{fontSize:28,marginBottom:4}}>📋</div>
+              <div style={{marginBottom:4,color:C.slate400}}><IcoClipboard size={28}/></div>
               <div style={{fontSize:12,color:C.slate400,fontWeight:600}}>No title documents</div>
               <div style={{fontSize:10,color:C.slate300,marginTop:2}}>{FIREBASE_ENABLED?"Click to upload title scans":"Enable Firebase to upload files"}</div>
             </div>
@@ -849,7 +877,7 @@ function VehiclesTab({data,setData,role,username,userEmail}){
         </div>
 
         {/* Upload status message */}
-        {uploadMsg&&<div style={{background:uploadMsg.includes("failed")?C.redLight:C.emeraldLight,color:uploadMsg.includes("failed")?C.red:C.emeraldDark,padding:"8px 14px",borderRadius:8,fontSize:12,fontWeight:600,marginTop:8}}>{uploading?"⏳ ":""}{uploadMsg}</div>}
+        {uploadMsg&&<div style={{background:uploadMsg.includes("failed")?C.redLight:C.emeraldLight,color:uploadMsg.includes("failed")?C.red:C.emeraldDark,padding:"8px 14px",borderRadius:8,fontSize:12,fontWeight:600,marginTop:8}}>{uploading?<span style={{display:"inline-flex",alignItems:"center",marginRight:4,verticalAlign:"middle"}}><IcoLoader size={12}/></span>:""}{uploadMsg}</div>}
 
         {/* Timeline */}
         {editing&&form.timeline&&form.timeline.length>0&&<div style={{marginTop:16,background:C.slate50,borderRadius:12,padding:16}}>
@@ -894,7 +922,7 @@ function ContainersTab({data,setData}){
       <PageHeader title="Containers" subtitle={`${data.containers.length} containers`}>
         <Btn onClick={()=>{setForm(empty());setEditing(null);setShowForm(true);}}>+ Add Container</Btn>
       </PageHeader>
-      {data.containers.length===0?<Empty icon="📦" title="No containers" sub="Create your first container booking"/>:
+      {data.containers.length===0?<Empty icon={<IcoPackage size={32}/>} title="No containers" sub="Create your first container booking"/>:
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(360px,1fr))",gap:14}}>
         {data.containers.map(c=>{
           const vIn=data.vehicles.filter(v=>v.containerNum===c.containerNum);
@@ -967,7 +995,7 @@ function TowingTab({data,setData}){
       <PageHeader title="Towing" subtitle={`${data.towingJobs.length} jobs · ${f$(data.towingJobs.reduce((s,t)=>s+p(t.cost),0))} total`}>
         <Btn onClick={()=>{setForm(empty());setEditing(null);setShowForm(true);}}>+ New Tow Job</Btn>
       </PageHeader>
-      {data.towingJobs.length===0?<Empty icon="🚛" title="No towing jobs" sub="Schedule your first vehicle pickup"/>:
+      {data.towingJobs.length===0?<Empty icon={<IcoTruck size={32}/>} title="No towing jobs" sub="Schedule your first vehicle pickup"/>:
       <Card style={{padding:0,overflow:"hidden",borderRadius:16}}><div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}><thead><tr>{["Date","Vehicle","Pickup","Delivery","Miles","Company","Cost","Status"].map(h=><TH key={h}>{h}</TH>)}</tr></thead><tbody>
         {[...data.towingJobs].sort((a,b)=>(b.scheduledDate||"").localeCompare(a.scheduledDate||"")).map((t,i)=>{const v=data.vehicles.find(vh=>vh.vehicleNum===t.vehicleNum);return(
           <tr key={t.id} onClick={()=>{setForm({...t});setEditing(t.id);setShowForm(true);}} style={{borderBottom:"1px solid "+C.slate100,cursor:"pointer",background:i%2===0?"transparent":C.slate50,transition:"background .15s"}} onMouseEnter={ev=>ev.currentTarget.style.background=C.slate50} onMouseLeave={ev=>ev.currentTarget.style.background=i%2===0?"transparent":C.slate50}>
@@ -1066,7 +1094,7 @@ function InvoicesTab({data,setData,role,username,userEmail}){
           <Btn onClick={()=>{setForm(empty());setEditing(null);setShowForm(true);}}>Generate Invoice</Btn>
         </>}
       </PageHeader>
-      {sorted.length===0?<Empty icon="📄" title="No invoices" sub={isAdmin?"Generate your first invoice":"No invoices yet"}/>:
+      {sorted.length===0?<Empty icon={<IcoFile size={32}/>} title="No invoices" sub={isAdmin?"Generate your first invoice":"No invoices yet"}/>:
       <Card style={{padding:0,overflow:"hidden",borderRadius:16}}><div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}><thead><tr>{["#","Date","Customer","Container","Vehs","Total","Paid","Balance","Status",""].map(h=><TH key={h}>{h}</TH>)}</tr></thead><tbody>
         {sorted.map((inv,i)=>{const gt=invGrandTotal(inv);const pd=invPaid(inv,data.payments);const bal=gt-pd;return(
           <tr key={inv.id} style={{borderBottom:"1px solid "+C.slate100,background:i%2===0?"transparent":C.slate50}}>
