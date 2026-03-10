@@ -1355,7 +1355,7 @@ const CUST_TABS=["Dashboard","My Shipments","Rates","My Invoices"];
 
 export default function App(){
   const[loggedIn,setLoggedIn]=useState(false);const[username,setUsername]=useState("");const[userEmail,setUserEmail]=useState("");const[role,setRole]=useState("admin");const[tab,setTab]=useState("Dashboard");
-  const[data,setData]=useState(defaultData());const[loaded,setLoaded]=useState(false);const[saving,setSaving]=useState(false);
+  const[data,setData]=useState(defaultData());const[loaded,setLoaded]=useState(true);const[saving,setSaving]=useState(false);
   const[firebaseUid,setFirebaseUid]=useState(null);
   const[allowedTabs,setAllowedTabs]=useState(null);
   const[collapsed,setCollapsed]=useState(false);

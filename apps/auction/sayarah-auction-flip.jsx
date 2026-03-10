@@ -3227,7 +3227,7 @@ export default function App() {
   const [userRole, setUserRole] = useState("user");
   const [tab, setTab] = useState("Dashboard");
   const [data, setData] = useState(defaultData());
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(true);
   const [saving, setSaving] = useState(false);
   const [darkMode, setDarkMode] = useState(() => loadTheme() === "dark");
   const [searchQuery, setSearchQuery] = useState("");

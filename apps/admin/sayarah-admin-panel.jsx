@@ -487,7 +487,7 @@ const NAV_TABS = ["Dashboard", "Users", "Activity", "Settings"];
 
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoaded] = useState(true);
   const [adminEmail, setAdminEmail] = useState("");
   const [tab, setTab] = useState("Dashboard");
   const [users, setUsers] = useState([]);
