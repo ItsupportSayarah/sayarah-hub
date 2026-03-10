@@ -272,8 +272,8 @@ function LoginPage({onLogin,data}){
       if(!user.trim()){setErr("Please enter your username");return;}
       const admins=data?.adminAccounts||defaultData().adminAccounts;
       const am=admins.find(a=>a.username.toLowerCase()===user.trim().toLowerCase());
-      if(am){if(!pass){setErr("Password required for admin");return;}if(pass!==am.password){setErr("Incorrect password");return;}setLoading(true);setErr("");setTimeout(()=>onLogin(user.trim(),"admin"),600);}
-      else{setLoading(true);setErr("");setTimeout(()=>onLogin(user.trim(),"customer"),600);}
+      if(am){if(!pass){setErr("Password required for admin");return;}if(pass!==am.password){setErr("Incorrect password");return;}setLoading(true);setErr("");setTimeout(()=>onLogin(user.trim(),"admin",null,""),600);}
+      else{setLoading(true);setErr("");setTimeout(()=>onLogin(user.trim(),"customer",null,""),600);}
     }
   };
 
@@ -313,8 +313,9 @@ function LoginPage({onLogin,data}){
 // DASHBOARD — Advanced KPIs
 // ═══════════════════════════════════════════════════════════════
 function DashboardTab({data,role,username,userEmail}){
-  const matchCust=v=>userEmail?(v.customerEmail?.toLowerCase()===userEmail.toLowerCase()||v.customer?.toLowerCase()===username.toLowerCase()):v.customer?.toLowerCase()===username.toLowerCase();
-  const matchInvCust=i=>userEmail?((data.customers||[]).find(c=>c.name===i.customer)?.email?.toLowerCase()===userEmail.toLowerCase()||i.customer?.toLowerCase()===username.toLowerCase()):i.customer?.toLowerCase()===username.toLowerCase();
+  const custNames=useMemo(()=>{if(!userEmail)return[];return(data.customers||[]).filter(c=>c.email?.toLowerCase()===userEmail.toLowerCase()).map(c=>c.name.toLowerCase());},[data.customers,userEmail]);
+  const matchCust=v=>{const un=username.toLowerCase();if(userEmail&&v.customerEmail?.toLowerCase()===userEmail.toLowerCase())return true;if(v.customer?.toLowerCase()===un)return true;if(custNames.some(n=>v.customer?.toLowerCase()===n))return true;return false;};
+  const matchInvCust=i=>{const un=username.toLowerCase();if(i.customer?.toLowerCase()===un)return true;if(custNames.some(n=>i.customer?.toLowerCase()===n))return true;return false;};
   const vehs=role==="customer"?data.vehicles.filter(matchCust):data.vehicles;
   const invs=role==="customer"?data.invoices.filter(matchInvCust):data.invoices;
   const pays=role==="customer"?data.payments.filter(py=>invs.some(i=>i.id===py.invoiceId)):data.payments;
@@ -602,7 +603,8 @@ function VehiclesTab({data,setData,role,username,userEmail}){
   const del=id=>{setData(d=>({...d,vehicles:d.vehicles.filter(v=>v.id!==id)}));setConfirm(null);setShowForm(false);};
   const bulkUpdate=()=>{if(!bulkStatus||selected.size===0)return;setData(d=>({...d,vehicles:d.vehicles.map(v=>{if(!selected.has(v.id))return v;return{...v,status:bulkStatus,timeline:[...(v.timeline||[]),{date:new Date().toISOString(),from:v.status,to:bulkStatus,by:username||"admin"}]};})}));setSelected(new Set());setBulkStatus("");logActivity(setData,username||"admin","Bulk Update",`${selected.size} vehicles → ${bulkStatus}`);};
 
-  const matchCust=v=>userEmail?(v.customerEmail?.toLowerCase()===userEmail.toLowerCase()||v.customer?.toLowerCase()===username.toLowerCase()):v.customer?.toLowerCase()===username.toLowerCase();
+  const custNames=useMemo(()=>{if(!userEmail)return[];return(data.customers||[]).filter(c=>c.email?.toLowerCase()===userEmail.toLowerCase()).map(c=>c.name.toLowerCase());},[data.customers,userEmail]);
+  const matchCust=v=>{const un=username.toLowerCase();if(userEmail&&v.customerEmail?.toLowerCase()===userEmail.toLowerCase())return true;if(v.customer?.toLowerCase()===un)return true;if(custNames.some(n=>v.customer?.toLowerCase()===n))return true;return false;};
   const allV=role==="customer"?data.vehicles.filter(matchCust):data.vehicles;
   let filt=filter==="all"?allV:allV.filter(v=>v.status===filter);
   if(search){const s=search.toLowerCase();filt=filt.filter(v=>`${v.year} ${v.make} ${v.model} ${v.vin} ${v.lotNumber} ${v.vehicleNum} ${v.customer} ${v.containerNum}`.toLowerCase().includes(s));}
@@ -1051,7 +1053,8 @@ function InvoicesTab({data,setData,role,username,userEmail}){
 
   useEffect(()=>{const now=today();const updates=data.invoices.filter(i=>i.status==="sent"&&i.dueDate&&i.dueDate<now&&invBalance(i,data.payments)>0);if(updates.length>0)setData(d=>({...d,invoices:d.invoices.map(i=>updates.some(u=>u.id===i.id)?{...i,status:"overdue"}:i)}));},[data.invoices]);
 
-  const matchInvCust=i=>userEmail?((data.customers||[]).find(c=>c.name===i.customer)?.email?.toLowerCase()===userEmail.toLowerCase()||i.customer?.toLowerCase()===username.toLowerCase()):i.customer?.toLowerCase()===username.toLowerCase();
+  const custNames=useMemo(()=>{if(!userEmail)return[];return(data.customers||[]).filter(c=>c.email?.toLowerCase()===userEmail.toLowerCase()).map(c=>c.name.toLowerCase());},[data.customers,userEmail]);
+  const matchInvCust=i=>{const un=username.toLowerCase();if(i.customer?.toLowerCase()===un)return true;if(custNames.some(n=>i.customer?.toLowerCase()===n))return true;return false;};
   const allInvs=isAdmin?data.invoices:data.invoices.filter(matchInvCust);
   const sorted=[...allInvs].sort((a,b)=>(b.date||"").localeCompare(a.date||""));
 
@@ -1387,7 +1390,7 @@ export default function App(){
       return()=>unsub();
     }else{
       try{const raw=localStorage.getItem(STORAGE_KEY);if(raw)setData({...defaultData(),...JSON.parse(raw)});}catch{}
-      try{const s=localStorage.getItem("sayarah-sess-v3");if(s){const x=JSON.parse(s);setLoggedIn(true);setUsername(x.username);setRole(x.role||"customer");}}catch{}
+      try{const s=localStorage.getItem("sayarah-sess-v3");if(s){const x=JSON.parse(s);setLoggedIn(true);setUsername(x.username);setUserEmail(x.email||"");setRole(x.role||"customer");}}catch{}
       setLoaded(true);
     }
   },[]);
@@ -1404,7 +1407,7 @@ export default function App(){
     }
   },[data,loaded,firebaseUid]);
 
-  const handleLogin=(u,r,uid,email)=>{setUsername(u);setUserEmail(email||"");setRole(r);setLoggedIn(true);setTab("Dashboard");if(uid)setFirebaseUid(uid);if(!FIREBASE_ENABLED)localStorage.setItem("sayarah-sess-v3",JSON.stringify({username:u,role:r}));};
+  const handleLogin=(u,r,uid,email)=>{setUsername(u);setUserEmail(email||"");setRole(r);setLoggedIn(true);setTab("Dashboard");if(uid)setFirebaseUid(uid);if(!FIREBASE_ENABLED)localStorage.setItem("sayarah-sess-v3",JSON.stringify({username:u,role:r,email:email||""}));};
   const handleLogout=async()=>{if(FIREBASE_ENABLED){try{await firebaseSignOut();}catch{}}setLoggedIn(false);setUsername("");setUserEmail("");setRole("admin");setTab("Dashboard");setFirebaseUid(null);localStorage.removeItem("sayarah-sess-v3");};
 
   if(!loaded)return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',system-ui,sans-serif",background:C.navy}}><img src="/logo.png" alt="Sayarah Logistics" style={{height:60,opacity:.8}}/></div>;
