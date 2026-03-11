@@ -6,6 +6,26 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// ─── HTTPS enforcement & www redirect (Heroku) ───
+app.use((req, res, next) => {
+  const host = req.headers.host || "";
+  const proto = req.headers["x-forwarded-proto"];
+
+  // Redirect non-www to www
+  if (host === "atlanticcarconnect.com") {
+    return res.redirect(301, `https://www.atlanticcarconnect.com${req.url}`);
+  }
+
+  // Redirect HTTP to HTTPS (Heroku sets x-forwarded-proto)
+  if (proto && proto !== "https") {
+    return res.redirect(301, `https://${host}${req.url}`);
+  }
+
+  // Set security headers
+  res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  next();
+});
+
 // ─── Auction app at /auction ───
 app.use("/auction", express.static(join(__dirname, "dist/auction")));
 app.get("/auction/*", (req, res) => {
