@@ -3291,16 +3291,17 @@ function AppInner() {
     return results.slice(0, 8);
   }, [searchQuery, data]);
 
-  const adminMode = isAdmin(userRole);
-  const managerMode = isManager(userRole);
-  const allAdminTabs = [...TABS, "Calendar", "Reports", "Approvals", "Activity", "Users"];
-  const visibleTabs = adminMode ? allAdminTabs : managerMode ? (allowedTabs && allowedTabs.length ? allowedTabs.filter(t => allAdminTabs.includes(t)) : ["Dashboard"]) : [...TABS, "Calendar"];
   const [pendingApprovalCount, setPendingApprovalCount] = useState(0);
   const [notifications, setNotifications] = useState([]);
   const [showNotifPanel, setShowNotifPanel] = useState(false);
   const [firebaseUid, setFirebaseUid] = useState(null);
   const [dataReady, setDataReady] = useState(false);
   const [allowedTabs, setAllowedTabs] = useState(null);
+
+  const adminMode = isAdmin(userRole);
+  const managerMode = isManager(userRole);
+  const allAdminTabs = [...TABS, "Calendar", "Reports", "Approvals", "Activity", "Users"];
+  const visibleTabs = adminMode ? allAdminTabs : managerMode ? (allowedTabs && allowedTabs.length ? allowedTabs.filter(t => allAdminTabs.includes(t)) : ["Dashboard"]) : [...TABS, "Calendar"];
 
   // Approvals & notifications check
   useEffect(() => {
