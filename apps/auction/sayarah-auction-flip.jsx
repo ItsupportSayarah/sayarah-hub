@@ -3090,9 +3090,9 @@ function ApprovalsTab({ data, setData }) {
 // ACTIVITY TAB (Admin Only)
 // ═══════════════════════════════════════════════════════════════
 function ActivityTab() {
-  const [log, setLog] = useState(loadActivityLog());
+  const [log, setLog] = useState([]);
   const [userFilter, setUserFilter] = useState("All");
-  const refresh = () => setLog(loadActivityLog());
+  const refresh = async () => { const data = await loadActivityLog(); setLog(Array.isArray(data) ? data : []); };
 
   useEffect(() => { refresh(); }, []);
 
