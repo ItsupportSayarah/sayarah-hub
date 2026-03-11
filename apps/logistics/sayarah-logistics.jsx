@@ -1101,7 +1101,7 @@ function InvoicesTab({data,setData,role,username,userEmail}){
     setShowPay(null);setPayForm({amount:"",date:today(),method:"Wire Transfer",reference:""});
   };
 
-  useEffect(()=>{const now=today();const updates=data.invoices.filter(i=>i.status==="sent"&&i.dueDate&&i.dueDate<now&&invBalance(i,data.payments)>0);if(updates.length>0)setData(d=>({...d,invoices:d.invoices.map(i=>updates.some(u=>u.id===i.id)?{...i,status:"overdue"}:i)}));},[data.invoices]);
+  useEffect(()=>{const now=today();const updates=data.invoices.filter(i=>i.status==="sent"&&i.dueDate&&i.dueDate<now&&invBalance(i,data.payments)>0);if(updates.length>0)setData(d=>({...d,invoices:d.invoices.map(i=>updates.some(u=>u.id===i.id)?{...i,status:"overdue"}:i)}));},[data.invoices,data.payments]);
 
   const custNames=useMemo(()=>{if(!userEmail)return[];return(data.customers||[]).filter(c=>c.email?.toLowerCase()===userEmail.toLowerCase()).map(c=>c.name.toLowerCase());},[data.customers,userEmail]);
   const matchInvCust=i=>{const un=username.toLowerCase();if(i.customer?.toLowerCase()===un)return true;if(custNames.some(n=>i.customer?.toLowerCase()===n))return true;return false;};
@@ -1407,6 +1407,7 @@ function AppInner(){
   const[loggedIn,setLoggedIn]=useState(false);const[username,setUsername]=useState("");const[userEmail,setUserEmail]=useState("");const[role,setRole]=useState("customer");const[tab,setTab]=useState("Dashboard");
   const[data,setData]=useState(defaultData());const[loaded,setLoaded]=useState(true);const[saving,setSaving]=useState(false);
   const[firebaseUid,setFirebaseUid]=useState(null);
+  const[dataReady,setDataReady]=useState(false);
   const[allowedTabs,setAllowedTabs]=useState(null);
   const[collapsed,setCollapsed]=useState(false);const[menuOpen,setMenuOpen]=useState(false);
   const tabs=role==="admin"?ADMIN_TABS:role==="manager"?(allowedTabs&&allowedTabs.length?allowedTabs.filter(t=>ADMIN_TABS.includes(t)):["Dashboard"]):CUST_TABS;
@@ -1435,6 +1436,7 @@ function AppInner(){
             }else{setAllowedTabs(null);}
             const cloudData=await loadAppData(fbUser.uid);
             if(cloudData)setData({...defaultData(),...cloudData});
+            setDataReady(true);
           }else{
             // Firebase says user is signed out — reset everything
             setFirebaseUid(null);
@@ -1442,6 +1444,7 @@ function AppInner(){
             setUsername("");
             setUserEmail("");
             setRole("customer");
+            setDataReady(false);
           }
         }catch(e){console.error("Auth init error:",e);}
         clearTimeout(timeout);
@@ -1451,13 +1454,14 @@ function AppInner(){
     }else{
       try{const raw=localStorage.getItem(STORAGE_KEY);if(raw)setData({...defaultData(),...JSON.parse(raw)});}catch{}
       try{const s=localStorage.getItem("sayarah-sess-v3");if(s){const x=JSON.parse(s);setLoggedIn(true);setUsername(x.username);setUserEmail(x.email||"");setRole(x.role||"customer");}}catch{}
+      setDataReady(true);
       setLoaded(true);
     }
   },[]);
 
-  // ─── Save data: Firestore OR localStorage ───
+  // ─── Save data: Firestore OR localStorage (only after cloud data loaded) ───
   useEffect(()=>{
-    if(!loaded)return;
+    if(!loaded||!dataReady)return;
     if(FIREBASE_ENABLED&&firebaseUid){
       const t=setTimeout(()=>{setSaving(true);saveAppData(firebaseUid,data).then(()=>setTimeout(()=>setSaving(false),400)).catch(()=>setSaving(false));},600);
       return()=>clearTimeout(t);
@@ -1465,10 +1469,10 @@ function AppInner(){
       const t=setTimeout(()=>{try{setSaving(true);localStorage.setItem(STORAGE_KEY,JSON.stringify(data));setTimeout(()=>setSaving(false),400);}catch{setSaving(false);}},400);
       return()=>clearTimeout(t);
     }
-  },[data,loaded,firebaseUid]);
+  },[data,loaded,dataReady,firebaseUid]);
 
   const handleLogin=(u,r,uid,email)=>{setUsername(u);setUserEmail(email||"");setRole(r);setLoggedIn(true);setTab("Dashboard");if(uid)setFirebaseUid(uid);if(!FIREBASE_ENABLED)localStorage.setItem("sayarah-sess-v3",JSON.stringify({username:u,role:r,email:email||""}));};
-  const handleLogout=async()=>{if(FIREBASE_ENABLED){try{await firebaseSignOut();}catch{}}setLoggedIn(false);setUsername("");setUserEmail("");setRole("customer");setTab("Dashboard");setFirebaseUid(null);localStorage.removeItem("sayarah-sess-v3");};
+  const handleLogout=async()=>{setLoggedIn(false);setUsername("");setUserEmail("");setRole("customer");setTab("Dashboard");setFirebaseUid(null);setDataReady(false);localStorage.removeItem("sayarah-sess-v3");if(FIREBASE_ENABLED){try{await firebaseSignOut();}catch{}}};
 
   if(!loaded)return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',system-ui,sans-serif",background:C.navy}}><img src="/logo.png" alt="Sayarah Logistics" style={{height:60,opacity:.8}}/></div>;
   if(!loggedIn)return <div style={{fontFamily:"'Inter',system-ui,sans-serif"}}><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/><LoginPage onLogin={handleLogin} data={data}/></div>;

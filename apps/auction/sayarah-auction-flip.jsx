@@ -359,29 +359,28 @@ function canDeleteVehicles(role) { return role === "admin"; }
 const APPROVALS_STORAGE_KEY = "sayarah-approvals-v1";
 const ACTIVITY_STORAGE_KEY = "sayarah-activity-v1";
 
-function loadApprovals() {
-  if (FIREBASE_ENABLED) { return loadApprovalsFB().catch(() => []); }
+async function loadApprovals() {
+  if (FIREBASE_ENABLED) { try { return await loadApprovalsFB(); } catch { return []; } }
   try { const raw = localStorage.getItem(APPROVALS_STORAGE_KEY); return raw ? JSON.parse(raw) : []; } catch { return []; }
 }
 function saveApprovals(list) {
   if (FIREBASE_ENABLED) { saveApprovalsFB(list).catch(() => {}); return; }
   localStorage.setItem(APPROVALS_STORAGE_KEY, JSON.stringify(list));
 }
-function addApproval(approval) { const res = loadApprovals(); if (res instanceof Promise) { res.then(arr => { arr.unshift(approval); saveApprovals(arr); }); } else { res.unshift(approval); saveApprovals(res); } }
+async function addApproval(approval) { const arr = await loadApprovals(); arr.unshift(approval); saveApprovals(arr); }
 
-function loadActivityLog() {
-  if (FIREBASE_ENABLED) { return loadActivityLogFB().catch(() => []); }
+async function loadActivityLog() {
+  if (FIREBASE_ENABLED) { try { return await loadActivityLogFB(); } catch { return []; } }
   try { const raw = localStorage.getItem(ACTIVITY_STORAGE_KEY); return raw ? JSON.parse(raw) : []; } catch { return []; }
 }
 function saveActivityLog(list) {
   if (FIREBASE_ENABLED) { saveActivityLogFB(list).catch(() => {}); return; }
   localStorage.setItem(ACTIVITY_STORAGE_KEY, JSON.stringify(list));
 }
-function logActivity(user, action, description, details = {}) {
+async function logActivity(user, action, description, details = {}) {
   const entry = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), user, action, description, timestamp: new Date().toISOString(), details };
-  const p = loadActivityLog();
-  if (p instanceof Promise) { p.then(log => { log.unshift(entry); if (log.length > 500) log.length = 500; saveActivityLog(log); }); }
-  else { p.unshift(entry); if (p.length > 500) p.length = 500; saveActivityLog(p); }
+  const log = await loadActivityLog();
+  log.unshift(entry); if (log.length > 500) log.length = 500; saveActivityLog(log);
 }
 
 // ─── Notifications ──────────────────────────────────────────
@@ -395,18 +394,19 @@ function addNotification(type, title, message, meta = {}) {
   if (all.length > 100) all.length = 100;
   saveNotifications(all);
 }
-function generateNotifications(data) {
+async function generateNotifications(data) {
   const notes = [];
   const now = new Date();
   // Aging vehicles
-  data.vehicles.filter(v => v.status !== "Sold" && v.purchaseDate).forEach(v => {
+  (data.vehicles || []).filter(v => v.status !== "Sold" && v.purchaseDate).forEach(v => {
     const days = Math.round((now - new Date(v.purchaseDate)) / 86400000);
     if (days >= 60) notes.push({ type: "critical", title: `#${v.stockNum} Critical Aging`, message: `${v.year} ${v.make} ${v.model} held for ${days} days. Consider price reduction.`, stockNum: v.stockNum });
     else if (days >= 45) notes.push({ type: "warning", title: `#${v.stockNum} Stale Inventory`, message: `${v.year} ${v.make} ${v.model} held for ${days} days.`, stockNum: v.stockNum });
     else if (days >= 30) notes.push({ type: "info", title: `#${v.stockNum} Aging Alert`, message: `${v.year} ${v.make} ${v.model} held for ${days} days.`, stockNum: v.stockNum });
   });
   // Pending approvals
-  const pending = loadApprovals().filter(a => a.status === "pending");
+  const approvals = await loadApprovals();
+  const pending = approvals.filter(a => a.status === "pending");
   if (pending.length > 0) notes.push({ type: "action", title: "Pending Approvals", message: `${pending.length} request${pending.length > 1 ? "s" : ""} waiting for review.` });
   return notes;
 }
@@ -2924,11 +2924,12 @@ ${Object.keys(r.expByCat).length > 0 ? `<div class="section"><h3>Expense Breakdo
 // APPROVALS TAB (Admin Only)
 // ═══════════════════════════════════════════════════════════════
 function ApprovalsTab({ data, setData }) {
-  const [approvals, setApprovals] = useState(loadApprovals());
+  const [approvals, setApprovals] = useState([]);
   const [filter, setFilter] = useState("pending");
-  const refresh = () => setApprovals(loadApprovals());
+  const refresh = async () => { const a = await loadApprovals(); setApprovals(a); };
+  useEffect(() => { refresh(); }, []);
 
-  const handleApprove = (approval) => {
+  const handleApprove = async (approval) => {
     // Apply the change
     if (approval.type === "expense_edit" && approval.newData) {
       setData(d => ({ ...d, expenses: d.expenses.map(e => e.id === approval.targetId ? approval.newData : e) }));
@@ -2940,14 +2941,14 @@ function ApprovalsTab({ data, setData }) {
       setData(d => ({ ...d, sales: d.sales.filter(s => s.id !== approval.targetId) }));
     }
     // Update approval status
-    const all = loadApprovals().map(a => a.id === approval.id ? { ...a, status: "approved", resolvedAt: new Date().toISOString() } : a);
+    const all = (await loadApprovals()).map(a => a.id === approval.id ? { ...a, status: "approved", resolvedAt: new Date().toISOString() } : a);
     saveApprovals(all);
     logActivity("Admin", "approved_request", `Approved ${approval.type.replace("_", " ")} by ${approval.requestedBy} on #${approval.stockNum} ${approval.vehicle}`);
     refresh();
   };
 
-  const handleReject = (approval) => {
-    const all = loadApprovals().map(a => a.id === approval.id ? { ...a, status: "rejected", resolvedAt: new Date().toISOString() } : a);
+  const handleReject = async (approval) => {
+    const all = (await loadApprovals()).map(a => a.id === approval.id ? { ...a, status: "rejected", resolvedAt: new Date().toISOString() } : a);
     saveApprovals(all);
     logActivity("Admin", "rejected_request", `Rejected ${approval.type.replace("_", " ")} by ${approval.requestedBy} on #${approval.stockNum} ${approval.vehicle}`);
     refresh();
@@ -3298,15 +3299,15 @@ function AppInner() {
   const [notifications, setNotifications] = useState([]);
   const [showNotifPanel, setShowNotifPanel] = useState(false);
   const [firebaseUid, setFirebaseUid] = useState(null);
+  const [dataReady, setDataReady] = useState(false);
   const [allowedTabs, setAllowedTabs] = useState(null);
 
   // Approvals & notifications check
   useEffect(() => {
     const check = async () => {
-      const approvals = loadApprovals();
-      const resolved = approvals instanceof Promise ? await approvals : approvals;
+      const resolved = await loadApprovals();
       setPendingApprovalCount(resolved.filter(a => a.status === "pending").length);
-      setNotifications(generateNotifications(data));
+      setNotifications(await generateNotifications(data));
     };
     check();
     const interval = setInterval(check, 5000);
@@ -3332,15 +3333,17 @@ function AppInner() {
               const ud = await getUserData(fbUser.uid);
               if (ud && ud.allowedTabs) setAllowedTabs(ud.allowedTabs);
             } else { setAllowedTabs(null); }
-            // Load data from Firestore
+            // Load data from Firestore BEFORE enabling saves
             const cloudData = await loadAppData(fbUser.uid);
             if (cloudData) setData({ ...defaultData(), ...cloudData });
+            setDataReady(true);
           } else {
             // Firebase says user is signed out — reset everything
             setFirebaseUid(null);
             setLoggedIn(false);
             setUsername("");
             setUserRole("user");
+            setDataReady(false);
           }
         } catch (e) { console.error("Auth init error:", e); }
         clearTimeout(timeout);
@@ -3357,13 +3360,14 @@ function AppInner() {
         const s = localStorage.getItem("sayarah-session-v2");
         if (s) { const x = JSON.parse(s); setLoggedIn(true); setUsername(x.username); setUserRole(x.role || "user"); }
       } catch {}
+      setDataReady(true);
       setLoaded(true);
     }
   }, []);
 
-  // ─── Save data: Firestore OR localStorage ───
+  // ─── Save data: Firestore OR localStorage (only after cloud data loaded) ───
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || !dataReady) return;
     if (FIREBASE_ENABLED && firebaseUid) {
       const t = setTimeout(() => {
         setSaving(true);
@@ -3374,7 +3378,7 @@ function AppInner() {
       const t = setTimeout(() => { try { setSaving(true); localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); setTimeout(() => setSaving(false), 400); } catch { setSaving(false); } }, 400);
       return () => clearTimeout(t);
     }
-  }, [data, loaded, firebaseUid]);
+  }, [data, loaded, dataReady, firebaseUid]);
 
   const handleLogin = (u, role, uid) => {
     setUsername(u); setUserRole(role); setLoggedIn(true);
@@ -3382,9 +3386,9 @@ function AppInner() {
     if (!FIREBASE_ENABLED) localStorage.setItem("sayarah-session-v2", JSON.stringify({ username: u, role }));
   };
   const handleLogout = async () => {
-    if (FIREBASE_ENABLED) { try { await firebaseSignOut(); } catch {} }
-    setLoggedIn(false); setUsername(""); setUserRole("user"); setFirebaseUid(null);
+    setLoggedIn(false); setUsername(""); setUserRole("user"); setFirebaseUid(null); setDataReady(false);
     localStorage.removeItem("sayarah-session-v2");
+    if (FIREBASE_ENABLED) { try { await firebaseSignOut(); } catch {} }
   };
 
   // Re-derive BRAND colors on dark mode toggle

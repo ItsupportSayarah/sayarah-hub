@@ -195,15 +195,19 @@ export async function createUserDoc(uid, email, displayName, role = "user") {
 
 // ─── Add user by email (creates Firestore doc using email-based ID) ───
 export async function addUserByEmail(email, displayName, role = "user") {
-  // Use a deterministic ID based on email so duplicates are prevented
-  const id = email.replace(/[^a-zA-Z0-9]/g, "_");
+  // Check if user already exists by email
+  const existing = await getDocs(collection(db, "users"));
+  const dup = existing.docs.find(d => d.data().email === email);
+  if (dup) throw new Error("User with this email already exists");
+  // Use lowercase email as deterministic ID (preserves uniqueness)
+  const id = email.toLowerCase().replace(/[^a-z0-9@._-]/g, "").replace(/[@.]/g, "_");
   await setDoc(doc(db, "users", id), {
     uid: id,
     email,
     displayName: displayName || email.split("@")[0],
     role,
     createdAt: serverTimestamp(),
-  }, { merge: true });
+  });
 }
 
 // ─── Users list for admin management ───

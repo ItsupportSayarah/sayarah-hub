@@ -1,4 +1,4 @@
-import { useState, useEffect, Component } from "react";
+import { useState, useEffect, useRef, Component } from "react";
 import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData, onUsersChange, addUserByEmail } from "./src/firebase.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
@@ -458,9 +458,10 @@ function UsersView({ users, onRefresh }) {
 // ACTIVITY / AUDIT LOG
 // ═══════════════════════════════════════════════════════════════
 function ActivityView({ users }) {
+  const toMs = (v) => { if (!v) return 0; if (typeof v === "number") return v; if (v.toMillis) return v.toMillis(); if (v.seconds) return v.seconds * 1000; return new Date(v).getTime() || 0; };
   const recent = [...users].sort((a, b) => {
-    const da = a.lastLogin || a.createdAt || 0;
-    const db = b.lastLogin || b.createdAt || 0;
+    const da = toMs(a.lastLogin || a.createdAt);
+    const db = toMs(b.lastLogin || b.createdAt);
     return db - da;
   });
 
@@ -578,8 +579,8 @@ function AppInner() {
     setLoadingUsers(false);
   };
 
-  // Track unsubscribe function with ref to avoid stale closure
-  const unsubUsersRef = { current: null };
+  // Track unsubscribe function with useRef to persist across renders
+  const unsubUsersRef = useRef(null);
 
   const startUsersListener = () => {
     // Clean up previous listener
@@ -629,10 +630,13 @@ function AppInner() {
   }, []);
 
   const handleLogout = async () => {
+    if (unsubUsersRef.current) { unsubUsersRef.current(); unsubUsersRef.current = null; }
     try { await firebaseSignOut(); } catch {}
     setLoggedIn(false);
     setAdminEmail("");
     setTab("Dashboard");
+    setUsers([]);
+    setLoadingUsers(true);
   };
 
   if (!loaded) return (
