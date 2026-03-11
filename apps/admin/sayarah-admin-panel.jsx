@@ -502,21 +502,38 @@ export default function App() {
 
   const loadUsers = async () => {
     setLoadingUsers(true);
-    try { const u = await getAllUsers(); setUsers(u); } catch (e) { console.error(e); }
+    try {
+      const u = await getAllUsers();
+      console.log("getAllUsers returned:", u.length, "users");
+      setUsers(u);
+    } catch (e) { console.error("getAllUsers error:", e); }
     setLoadingUsers(false);
   };
 
-  // Real-time listener ref
-  const [unsubUsers, setUnsubUsers] = useState(null);
+  // Track unsubscribe function with ref to avoid stale closure
+  const unsubUsersRef = { current: null };
 
   const startUsersListener = () => {
-    // Clean up previous listener if any
-    if (unsubUsers) unsubUsers();
-    const unsub = onUsersChange((usersList) => {
-      setUsers(usersList);
-      setLoadingUsers(false);
-    });
-    setUnsubUsers(() => unsub);
+    // Clean up previous listener
+    if (unsubUsersRef.current) unsubUsersRef.current();
+    try {
+      const unsub = onUsersChange(
+        (usersList) => {
+          console.log("Real-time users update:", usersList.length, "users");
+          setUsers(usersList);
+          setLoadingUsers(false);
+        },
+        (err) => {
+          // Firestore rules may block collection-level reads — fallback to one-time fetch
+          console.warn("Real-time listener failed, falling back to getAllUsers:", err.message);
+          loadUsers();
+        }
+      );
+      unsubUsersRef.current = unsub;
+    } catch (e) {
+      console.warn("Failed to start listener, using getAllUsers:", e.message);
+      loadUsers();
+    }
   };
 
   useEffect(() => {
@@ -540,7 +557,7 @@ export default function App() {
       clearTimeout(timeout);
       setLoaded(true);
     });
-    return () => { unsub(); clearTimeout(timeout); if (unsubUsers) unsubUsers(); };
+    return () => { unsub(); clearTimeout(timeout); if (unsubUsersRef.current) unsubUsersRef.current(); };
   }, []);
 
   const handleLogout = async () => {

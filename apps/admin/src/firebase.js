@@ -109,10 +109,13 @@ export async function getAllUsers() {
 }
 
 // Listen to users collection in real-time
-export function onUsersChange(callback) {
+export function onUsersChange(callback, onError) {
   return onSnapshot(collection(db, "users"), (snap) => {
     const users = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     callback(users);
+  }, (err) => {
+    console.error("onUsersChange error:", err);
+    if (onError) onError(err);
   });
 }
 
