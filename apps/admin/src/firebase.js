@@ -97,6 +97,14 @@ export async function getAllUsers() {
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
+// Listen to users collection in real-time
+export function onUsersChange(callback) {
+  return onSnapshot(collection(db, "users"), (snap) => {
+    const users = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    callback(users);
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  DATA HELPERS — Replaces localStorage
 // ═══════════════════════════════════════════════════════════════

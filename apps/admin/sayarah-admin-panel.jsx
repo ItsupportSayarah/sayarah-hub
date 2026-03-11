@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData } from "./src/firebase.js";
+import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData, onUsersChange } from "./src/firebase.js";
 
 const FIREBASE_ENABLED = (() => {
   try { return auth && auth.app && auth.app.options && auth.app.options.apiKey && !auth.app.options.apiKey.startsWith("YOUR_"); } catch { return false; }
@@ -502,6 +502,19 @@ export default function App() {
     setLoadingUsers(false);
   };
 
+  // Real-time listener ref
+  const [unsubUsers, setUnsubUsers] = useState(null);
+
+  const startUsersListener = () => {
+    // Clean up previous listener if any
+    if (unsubUsers) unsubUsers();
+    const unsub = onUsersChange((usersList) => {
+      setUsers(usersList);
+      setLoadingUsers(false);
+    });
+    setUnsubUsers(() => unsub);
+  };
+
   useEffect(() => {
     if (!FIREBASE_ENABLED) { setLoaded(true); return; }
     const timeout = setTimeout(() => { setLoaded(true); }, 5000);
@@ -515,7 +528,7 @@ export default function App() {
           }
           setAdminEmail(fbUser.email);
           setLoggedIn(true);
-          await loadUsers();
+          startUsersListener();
         } else {
           // Don't force logout — handled by logout button only
         }
@@ -523,7 +536,7 @@ export default function App() {
       clearTimeout(timeout);
       setLoaded(true);
     });
-    return () => { unsub(); clearTimeout(timeout); };
+    return () => { unsub(); clearTimeout(timeout); if (unsubUsers) unsubUsers(); };
   }, []);
 
   const handleLogout = async () => {
