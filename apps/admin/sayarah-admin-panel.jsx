@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, Component } from "react";
+import { useState, useEffect, useRef, useCallback, createContext, useContext, Component } from "react";
 import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData, onUsersChange, addUserByEmail } from "./src/firebase.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
@@ -91,6 +91,16 @@ function Btn({ children, onClick, variant = "primary", disabled, style }) {
   return <button onClick={onClick} disabled={disabled} style={{ ...styles[variant], padding: "8px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: disabled ? "not-allowed" : "pointer", fontFamily: font, opacity: disabled ? 0.5 : 1, transition: "all .2s", ...style }}>{children}</button>;
 }
 
+// ─── Toast Notification System ───
+const ToastCtx = createContext();
+function useToast() { return useContext(ToastCtx); }
+function ToastProvider({ children }) {
+  const [toasts, setToasts] = useState([]);
+  const add = useCallback((msg, type = "success") => { const id = Date.now() + Math.random(); setToasts(t => [...t, { id, msg, type }]); setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3500); }, []);
+  const colors = { success: { bg: "#F0FDF4", border: "#86EFAC", text: "#166534" }, error: { bg: "#FEF2F2", border: "#FECACA", text: "#991B1B" }, info: { bg: "#EFF6FF", border: "#93C5FD", text: "#1E40AF" } };
+  return <ToastCtx.Provider value={add}>{children}<div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999, display: "flex", flexDirection: "column", gap: 8, pointerEvents: "none" }}>{toasts.map(t => { const c = colors[t.type] || colors.info; return <div key={t.id} style={{ background: c.bg, border: `1px solid ${c.border}`, color: c.text, padding: "10px 18px", borderRadius: 10, fontSize: 13, fontWeight: 600, fontFamily: font, boxShadow: "0 4px 12px rgba(0,0,0,0.1)", maxWidth: 360, pointerEvents: "auto" }}>{t.msg}</div>; })}</div></ToastCtx.Provider>;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // LOGIN PAGE
 // ═══════════════════════════════════════════════════════════════
@@ -102,7 +112,9 @@ function LoginPage({ onLogin }) {
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!email || !pass) { setErr("Email and password required"); return; }
+    if (!email.trim()) { setErr("Email is required"); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setErr("Enter a valid email address"); return; }
+    if (!pass) { setErr("Password is required"); return; }
     setLoading(true); setErr("");
     try {
       const cred = await firebaseSignIn(email, pass);
@@ -247,7 +259,8 @@ function UsersView({ users, onRefresh }) {
   };
 
   const handleAddUser = async () => {
-    if (!newEmail) { setMsg("Error: Email is required"); return; }
+    if (!newEmail.trim()) { setMsg("Error: Email is required"); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail.trim())) { setMsg("Error: Enter a valid email address"); return; }
     setAdding(true); setMsg("");
     try {
       await addUserByEmail(newEmail.trim(), newName.trim(), newRole);
@@ -745,5 +758,5 @@ function AppInner() {
 }
 
 export default function App() {
-  return <ErrorBoundary><AppInner /></ErrorBoundary>;
+  return <ErrorBoundary><ToastProvider><AppInner /></ToastProvider></ErrorBoundary>;
 }

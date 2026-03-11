@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo, useRef, useCallback, Component } from "react";
-import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserData, getUserProfile, saveSharedData, loadSharedData, onSharedDataChange, getAllUsers, updateUserPermissions, saveApprovalsFB, loadApprovalsFB, saveActivityLogFB, loadActivityLogFB, uploadFile, deleteFile } from "./src/firebase.js";
+import { useState, useEffect, useMemo, useRef, useCallback, createContext, useContext, Component } from "react";
+import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserData, getUserProfile, saveSharedData, saveSharedFields, loadSharedData, onSharedDataChange, getAllUsers, updateUserPermissions, saveApprovalsFB, loadApprovalsFB, saveActivityLogFB, loadActivityLogFB, uploadFile, deleteFile } from "./src/firebase.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
 class ErrorBoundary extends Component {
@@ -58,6 +58,9 @@ const MO={fontFamily:"'Inter',system-ui,sans-serif",fontVariantNumeric:"tabular-
 const today=()=>new Date().toISOString().slice(0,10);
 const daysBetween=(a,b)=>(!a||!b)?0:Math.max(0,Math.round((new Date(b)-new Date(a))/864e5));
 const daysAgo=d=>d?Math.max(0,Math.round((new Date()-new Date(d))/864e5)):0;
+
+// CSV export utility
+function exportCSV(filename,headers,rows){const csvEsc=v=>{const s=String(v??"");return s.includes(",")||s.includes('"')||s.includes("\n")?`"${s.replace(/"/g,'""')}"`:s;};const csv=[headers.join(","),...rows.map(r=>r.map(csvEsc).join(","))].join("\n");const blob=new Blob([csv],{type:"text/csv;charset=utf-8;"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=filename;a.click();URL.revokeObjectURL(a.href);}
 
 // ─── SVG Icons (thin outline, strokeWidth 1.5) ───────────────
 const svgP={xmlns:"http://www.w3.org/2000/svg",fill:"none",stroke:"currentColor",strokeWidth:"1.5",strokeLinecap:"round",strokeLinejoin:"round"};
@@ -176,8 +179,8 @@ const defaultData=()=>({
   vehicles:[],containers:[],towingJobs:[],invoices:[],payments:[],customers:[],activityLog:[],
   nextVehicleNum:1,nextInvoiceNum:1001,nextContainerNum:1,
   companyInfo:{name:"Sayarah Logistics",address:"275 Grove Street, Suite 2-400",city:"Newton, MA 02466",phone:"+1 (949) 889-5621",email:"support@sayarah.io"},
-  bankInfo:{accountNum:"466024356536",routingPaper:"011000138 (paper s& electronic)",routingWire:"026009593 (wires)",titleOnAccount:"Atlantic Car Connect LLC",bankAddress:"207 River, West Newton, MA, 02465",bankMobile:"+1 781 866 3575",bankName:"Bank of America"},
-  adminAccounts:[{username:"admin",password:"admin123"},{username:"sayarah",password:"sayarah2025"},{username:"obaidull",password:"obaidull123"}],
+  bankInfo:{accountNum:"",routingPaper:"",routingWire:"",titleOnAccount:"",bankAddress:"",bankMobile:"",bankName:""},
+  adminAccounts:[],
 });
 
 // ─── Activity Logger ──────────────────────────────────────────
@@ -246,6 +249,16 @@ function Modal({title,onClose,children,wide}){
   </div>;
 }
 function ConfirmDlg({msg,onOk,onCancel}){return <div style={{position:"fixed",inset:0,background:"rgba(15,23,42,.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1100,backdropFilter:"blur(4px)"}}><div style={{background:C.white,borderRadius:16,padding:28,maxWidth:380,textAlign:"center",boxShadow:C.shadowXl}}><div style={{width:48,height:48,borderRadius:12,background:C.redLight,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 16px",color:C.red}}><IcoAlertTriangle size={22}/></div><p style={{color:C.slate700,fontSize:15,fontWeight:500,marginBottom:20,lineHeight:1.5}}>{msg}</p><div style={{display:"flex",justifyContent:"center",gap:10}}><Btn v="secondary" onClick={onCancel}>Cancel</Btn><Btn v="danger" onClick={onOk}>Delete</Btn></div></div></div>;}
+// ─── Toast Notification System ───
+const ToastCtx=createContext();
+function useToast(){return useContext(ToastCtx);}
+function ToastProvider({children}){
+  const[toasts,setToasts]=useState([]);
+  const add=useCallback((msg,type="success")=>{const id=Date.now()+Math.random();setToasts(t=>[...t,{id,msg,type}]);setTimeout(()=>setToasts(t=>t.filter(x=>x.id!==id)),3500);},[]);
+  const colors={success:{bg:"#F0FDF4",border:"#86EFAC",text:"#166534"},error:{bg:"#FEF2F2",border:"#FECACA",text:"#991B1B"},info:{bg:"#EFF6FF",border:"#93C5FD",text:"#1E40AF"}};
+  return <ToastCtx.Provider value={add}>{children}<div style={{position:"fixed",top:16,right:16,zIndex:9999,display:"flex",flexDirection:"column",gap:8,pointerEvents:"none"}}>{toasts.map(t=>{const c=colors[t.type]||colors.info;return <div key={t.id} style={{background:c.bg,border:`1px solid ${c.border}`,color:c.text,padding:"10px 18px",borderRadius:10,fontSize:13,fontWeight:600,fontFamily:"'Inter',system-ui,sans-serif",boxShadow:"0 4px 12px rgba(0,0,0,0.1)",maxWidth:360,pointerEvents:"auto"}}>{t.msg}</div>;})}</div></ToastCtx.Provider>;
+}
+
 function Bdg({children,color,bg}){return <span style={{fontSize:10,fontWeight:700,padding:"4px 10px",borderRadius:20,background:bg,color,letterSpacing:".02em",whiteSpace:"nowrap",display:"inline-flex",alignItems:"center",gap:3}}>{children}</span>;}
 function SBdg({statusKey}){const s=STATUSES.find(x=>x.key===statusKey)||STATUSES[0];return <Bdg color={s.color} bg={s.bg}>{s.icon} {s.label}</Bdg>;}
 function IBdg({statusKey}){const s=INV_STATUSES.find(x=>x.key===statusKey)||INV_STATUSES[0];return <Bdg color={s.color} bg={s.bg}>{s.label}</Bdg>;}
@@ -295,7 +308,9 @@ function LoginPage({onLogin,data}){
   const go=async()=>{
     if(FIREBASE_ENABLED){
       if(!user.trim()){setErr("Enter your email");return;}
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user.trim())){setErr("Enter a valid email address");return;}
       if(!pass.trim()){setErr("Enter a password");return;}
+      if(isSignUp&&pass.length<6){setErr("Password must be at least 6 characters");return;}
       setLoading(true);setErr("");
       try{
         if(isSignUp){
@@ -319,11 +334,7 @@ function LoginPage({onLogin,data}){
         setErr(msg);setLoading(false);
       }
     }else{
-      if(!user.trim()){setErr("Please enter your username");return;}
-      const admins=data?.adminAccounts||defaultData().adminAccounts;
-      const am=admins.find(a=>a.username.toLowerCase()===user.trim().toLowerCase());
-      if(am){if(!pass){setErr("Password required for admin");return;}if(pass!==am.password){setErr("Incorrect password");return;}setLoading(true);setErr("");setTimeout(()=>onLogin(user.trim(),"admin",null,""),600);}
-      else{setLoading(true);setErr("");setTimeout(()=>onLogin(user.trim(),"customer",null,""),600);}
+      setErr("Firebase authentication required. Please contact your administrator.");return;
     }
   };
 
@@ -567,7 +578,7 @@ function StatementView({customer,data,onClose}){
   const totalDebit=txns.reduce((s,t)=>s+t.debit,0);const totalCredit=txns.reduce((s,t)=>s+t.credit,0);
   const co=data.companyInfo||defaultData().companyInfo;
 
-  const handlePrint=()=>{const el=ref.current;if(!el)return;const w=window.open("","_blank");w.document.write(`<html><head><title>Statement - ${customer.name}</title><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"><style>body{margin:0;padding:20px;font-family:'DM Sans',sans-serif;font-size:12px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:6px 8px;font-size:11px}</style></head><body>${el.outerHTML}</body></html>`);w.document.close();setTimeout(()=>w.print(),500);};
+  const handlePrint=()=>{const el=ref.current;if(!el)return;const w=window.open("","_blank");const d=w.document;d.open();d.write(`<!DOCTYPE html><html><head><title>Statement</title><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"><style>body{margin:0;padding:20px;font-family:'DM Sans',sans-serif;font-size:12px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:6px 8px;font-size:11px}</style></head><body></body></html>`);d.close();const clone=el.cloneNode(true);clone.querySelectorAll("script").forEach(s=>s.remove());d.body.appendChild(clone);setTimeout(()=>w.print(),500);};
 
   return(
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(15,23,42,.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:16,backdropFilter:"blur(6px)"}}>
@@ -616,7 +627,8 @@ function VehiclesTab({data,setData,role,username,userEmail,firebaseUid,allUsers}
   const[uploading,setUploading]=useState(false);const[uploadMsg,setUploadMsg]=useState("");const[viewPhoto,setViewPhoto]=useState(null);
   const photoInputRef=useRef(null);const titleInputRef=useRef(null);
   const empty=()=>({id:gid(),vehicleNum:String(data.nextVehicleNum).padStart(3,"0"),year:"",make:"",model:"",trim:"",vin:"",color:"",lotNumber:"",auctionSource:"",purchasePrice:"",vehicleType:"sedan",isRunning:true,status:"purchased",portLocation:"NJ",destination:"UAE",titleStatus:"Without Title",containerNum:"",customer:"",customerEmail:"",notes:"",dateAdded:today(),bookingNumber:"",blNumber:"",assignedUserId:"",timeline:[],photos:[],titleDocs:[]});
-  const[form,setForm]=useState(empty());const upd=(k,v)=>setForm(f=>({...f,[k]:v}));
+  const[form,setForm]=useState(empty());const[formError,setFormError]=useState("");
+  const upd=(k,v)=>{setFormError("");setForm(f=>({...f,[k]:v}));};
 
   // File upload handler
   const handleFileUpload=async(files,type)=>{
@@ -643,7 +655,10 @@ function VehiclesTab({data,setData,role,username,userEmail,firebaseUid,allUsers}
     else setForm(f=>({...f,titleDocs:(f.titleDocs||[]).filter(x=>x.id!==fileObj.id)}));
   };
   const save=()=>{
-    if(!form.make&&!form.model&&!form.vin)return;
+    if(!form.make?.trim()){setFormError("Make is required");return;}
+    if(!form.model?.trim()){setFormError("Model is required");return;}
+    if(form.vin&&!/^[A-HJ-NPR-Z0-9]{17}$/i.test(form.vin.trim())){setFormError("VIN must be exactly 17 characters");return;}
+    setFormError("");
     const oldV=editing?data.vehicles.find(v=>v.id===editing):null;
     let newForm={...form};
     if(oldV&&oldV.status!==form.status){newForm.timeline=[...(newForm.timeline||[]),{date:new Date().toISOString(),from:oldV.status,to:form.status,by:username||"admin"}];}
@@ -754,6 +769,11 @@ function VehiclesTab({data,setData,role,username,userEmail,firebaseUid,allUsers}
     <div>
       <PageHeader title="Vehicles" subtitle={`${allV.length} vehicles tracked`}>
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search VIN, make, customer..." style={{...iS,width:240,padding:"8px 14px",fontSize:12}}/>
+        <Btn v="secondary" onClick={()=>{
+          const h=["Vehicle#","Year","Make","Model","VIN","Color","Status","Customer","Container","Port","Destination","Date Added"];
+          const rows=allV.map(v=>[v.vehicleNum,v.year,v.make,v.model,v.vin||"",v.color||"",v.status,v.customer||"",v.containerNum||"",v.portLocation||"",v.destination||"",v.dateAdded||""]);
+          exportCSV(`logistics_vehicles_${today()}.csv`,h,rows);
+        }}>Export CSV</Btn>
         {canEdit&&<Btn onClick={()=>{setForm(empty());setEditing(null);setShowForm(true);}}>+ Add Vehicle</Btn>}
       </PageHeader>
 
@@ -914,9 +934,10 @@ function VehiclesTab({data,setData,role,username,userEmail,firebaseUid,allUsers}
             <span style={{color:C.slate400,fontSize:11}}>by {t.by}</span>
           </div>)}
         </div>}
+        {formError&&<div style={{color:"#DC2626",fontSize:12,fontWeight:600,padding:"8px 12px",background:"#FEF2F2",borderRadius:6,marginTop:10}}>{formError}</div>}
         <div style={{display:"flex",justifyContent:"space-between",marginTop:20}}>
           <div>{canEdit&&editing&&<Btn v="danger" onClick={()=>setConfirm(editing)}>Delete</Btn>}</div>
-          <div style={{display:"flex",gap:8}}><Btn v="secondary" onClick={()=>setShowForm(false)}>{canEdit?"Cancel":"Close"}</Btn>{canEdit&&<Btn onClick={save}>{editing?"Save Changes":"Add Vehicle"}</Btn>}</div>
+          <div style={{display:"flex",gap:8}}><Btn v="secondary" onClick={()=>{setShowForm(false);setFormError("");}}>{canEdit?"Cancel":"Close"}</Btn>{canEdit&&<Btn onClick={save}>{editing?"Save Changes":"Add Vehicle"}</Btn>}</div>
         </div>
       </Modal>}
 
@@ -1117,6 +1138,11 @@ function InvoicesTab({data,setData,role,username,userEmail}){
   return(
     <div>
       <PageHeader title={isAdmin?"Invoices":"My Invoices"} subtitle={`${allInvs.length} invoices`}>
+        <Btn v="secondary" onClick={()=>{
+          const h=["Invoice#","Date","Due Date","Customer","Email","Container","Status","Total","Paid","Balance"];
+          const rows=allInvs.map(inv=>{const total=(inv.lineItems||[]).reduce((s,l)=>s+(parseFloat(l.amount)||0),0);const paid=(inv.payments||[]).reduce((s,p)=>s+(parseFloat(p.amount)||0),0);return[inv.invoiceNum,inv.date,inv.dueDate||"",inv.customer,inv.email||"",inv.containerNum||"",inv.status,total.toFixed(2),paid.toFixed(2),(total-paid).toFixed(2)];});
+          exportCSV(`invoices_${today()}.csv`,h,rows);
+        }}>Export CSV</Btn>
         {isAdmin&&<>
           <Sel value="" onChange={v=>{if(v){setForm({...empty()});autoFillContainer(v);setEditing(null);setShowForm(true);}}} options={data.containers.map(c=>({value:c.containerNum,label:`${c.containerNum} (${data.vehicles.filter(v=>v.containerNum===c.containerNum).length} vehs)`}))} placeholder="Auto from Container..." style={{minWidth:220}}/>
           <Btn onClick={()=>{setForm(empty());setEditing(null);setShowForm(true);}}>Generate Invoice</Btn>
@@ -1207,7 +1233,7 @@ function InvViewer({invoice,data,onClose}){
   const gt=invGrandTotal(invoice);const aedR=p(invoice.aedRate||3.67);const aedT=gt*aedR;
   const pd=invPaid(invoice,data.payments);const bal=gt-pd;const pastDue=invoice.dueDate?daysAgo(invoice.dueDate):0;
   const invPays=data.payments.filter(py=>py.invoiceId===invoice.id);
-  const print=()=>{const el=ref.current;if(!el)return;const w=window.open("","_blank");w.document.write(`<html><head><title>${invoice.invoiceNum}</title><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"><style>body{margin:0;padding:20px;font-family:'DM Sans',sans-serif;font-size:12px}@media print{[style*="page-break-before"]{page-break-before:always;border-top:none!important;margin-top:0!important;padding-top:20px!important}}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:6px 8px;font-size:11px}ol,ul{margin:0}</style></head><body>${el.outerHTML}</body></html>`);w.document.close();setTimeout(()=>w.print(),500);};
+  const print=()=>{const el=ref.current;if(!el)return;const w=window.open("","_blank");const d=w.document;d.open();d.write(`<!DOCTYPE html><html><head><title>Invoice</title><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"><style>body{margin:0;padding:20px;font-family:'DM Sans',sans-serif;font-size:12px}@media print{[style*="page-break-before"]{page-break-before:always;border-top:none!important;margin-top:0!important;padding-top:20px!important}}table{border-collapse:collapse;width:100%}th,td{border:1px solid #ccc;padding:6px 8px;font-size:11px}ol,ul{margin:0}</style></head><body></body></html>`);d.close();const clone=el.cloneNode(true);clone.querySelectorAll("script").forEach(s=>s.remove());d.body.appendChild(clone);setTimeout(()=>w.print(),500);};
   const L={fontWeight:700,color:"#374151"};
 
   return(
@@ -1411,6 +1437,7 @@ const ADMIN_TABS=["Dashboard","Customers","Vehicles","Containers","Towing","Rate
 const CUST_TABS=["Dashboard","My Shipments","Rates","My Invoices"];
 
 function AppInner(){
+  const toast=useToast();
   const[loggedIn,setLoggedIn]=useState(false);const[username,setUsername]=useState("");const[userEmail,setUserEmail]=useState("");const[role,setRole]=useState("customer");const[tab,setTab]=useState("Dashboard");
   const[data,setData]=useState(defaultData());const[loaded,setLoaded]=useState(true);const[saving,setSaving]=useState(false);
   const[firebaseUid,setFirebaseUid]=useState(null);
@@ -1494,10 +1521,10 @@ function AppInner(){
     }
   },[data,loaded,dataReady,firebaseUid,role]);
 
-  const handleLogin=(u,r,uid,email)=>{setUsername(u);setUserEmail(email||"");setRole(r);setLoggedIn(true);setTab("Dashboard");if(uid)setFirebaseUid(uid);if(!FIREBASE_ENABLED)localStorage.setItem("sayarah-sess-v3",JSON.stringify({username:u,role:r,email:email||""}));};
+  const handleLogin=(u,r,uid,email)=>{setUsername(u);setUserEmail(email||"");setRole(r);setLoggedIn(true);setTab("Dashboard");if(uid)setFirebaseUid(uid);if(!FIREBASE_ENABLED)localStorage.setItem("sayarah-sess-v3",JSON.stringify({username:u,role:r,email:email||""}));toast(`Welcome back, ${u}!`);};
   const handleLogout=async()=>{setLoggedIn(false);setUsername("");setUserEmail("");setRole("customer");setTab("Dashboard");setFirebaseUid(null);setDataReady(false);localStorage.removeItem("sayarah-sess-v3");if(FIREBASE_ENABLED){try{await firebaseSignOut();}catch{}}};
 
-  if(!loaded)return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',system-ui,sans-serif",background:C.navy}}><img src="/logo.png" alt="Sayarah Logistics" style={{height:60,opacity:.8}}/></div>;
+  if(!loaded)return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',system-ui,sans-serif",background:C.navy,gap:16}}><img src="/logo.png" alt="Sayarah Logistics" style={{height:60,opacity:.8}}/><div style={{width:28,height:28,border:"3px solid rgba(255,255,255,.15)",borderTopColor:"#fff",borderRadius:"50%",animation:"spin .8s linear infinite"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>;
   if(!loggedIn)return <div style={{fontFamily:"'Inter',system-ui,sans-serif"}}><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/><LoginPage onLogin={handleLogin} data={data}/></div>;
 
   const sideW=collapsed?56:240;
@@ -1599,5 +1626,5 @@ function AppInner(){
 }
 
 export default function App(){
-  return <ErrorBoundary><AppInner/></ErrorBoundary>;
+  return <ErrorBoundary><ToastProvider><AppInner/></ToastProvider></ErrorBoundary>;
 }

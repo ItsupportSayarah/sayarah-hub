@@ -6,6 +6,7 @@ export default defineConfig({
   root: 'apps/auction',
   publicDir: '../../public',
   base: '/auction/',
+  envDir: '../..',
   build: {
     outDir: '../../dist/auction',
     emptyOutDir: true,

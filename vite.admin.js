@@ -6,6 +6,7 @@ export default defineConfig({
   root: 'apps/admin',
   publicDir: '../../public',
   base: '/admin/',
+  envDir: '../..',
   build: {
     outDir: '../../dist/admin',
     emptyOutDir: true,

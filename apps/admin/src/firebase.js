@@ -12,13 +12,13 @@ import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, getDocs, del
 //     Get it from: Firebase Console → Project Settings → Your Apps
 // ──────────────────────────────────────────────────────────────
 const firebaseConfig = {
-  apiKey: "AIzaSyBKMJB6qdSStpzWBqxr6hW4YAigT-DyaOg",
-  authDomain: "sayarah-hub.firebaseapp.com",
-  projectId: "sayarah-hub",
-  storageBucket: "sayarah-hub.firebasestorage.app",
-  messagingSenderId: "807394144397",
-  appId: "1:807394144397:web:07a07c9720cf809924b2c4",
-  measurementId: "G-J4W3YENY76",
+  apiKey: import.meta.env.VITE_FB_API_KEY,
+  authDomain: import.meta.env.VITE_FB_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FB_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FB_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FB_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FB_APP_ID,
+  measurementId: import.meta.env.VITE_FB_MEASUREMENT_ID,
 };
 
 const app = initializeApp(firebaseConfig);

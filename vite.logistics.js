@@ -6,6 +6,7 @@ export default defineConfig({
   root: 'apps/logistics',
   publicDir: '../../public',
   base: '/logistics/',
+  envDir: '../..',
   build: {
     outDir: '../../dist/logistics',
     emptyOutDir: true,

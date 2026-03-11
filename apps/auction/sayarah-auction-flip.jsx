@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, Component } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, createContext, useContext, Component } from "react";
 import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserProfile, updateUserRole, getAllUsers, updateUserPermissions, getUserData, saveAppData, loadAppData, saveApprovalsFB, loadApprovalsFB, saveActivityLogFB, loadActivityLogFB } from "./src/firebase.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
@@ -314,27 +314,21 @@ const USERS_STORAGE_KEY = "sayarah-users-v2";
 const AUCTION_SOURCES = ["copart", "iaai", "manheim", "private_party", "autotrader", "facebook", "custom"];
 
 // ─── User Management ────────────────────────────────────────
-const DEFAULT_ADMIN = { id: "admin-didar", username: "Didar", password: "admin123", role: "admin", email: "", phone: "", address: "" };
-
 function loadUsers() {
   try {
     const raw = localStorage.getItem(USERS_STORAGE_KEY);
-    if (raw) {
-      const users = JSON.parse(raw);
-      if (!users.find(u => u.role === "admin")) users.unshift(DEFAULT_ADMIN);
-      return users;
-    }
+    if (raw) return JSON.parse(raw);
   } catch {}
-  return [DEFAULT_ADMIN];
+  return [];
 }
 
 function saveUsers(users) {
   localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
 }
 
-function authenticateUser(username, password) {
-  const users = loadUsers();
-  return users.find(u => u.username.toLowerCase() === username.toLowerCase() && u.password === password) || null;
+function authenticateUser() {
+  // localStorage auth disabled — Firebase required
+  return null;
 }
 
 // Firebase auth wrapper — used by LoginPage when Firebase is enabled
@@ -448,6 +442,16 @@ const fmtPct = n => (n == null || isNaN(n)) ? "0%" : (n * 100).toFixed(1) + "%";
 const daysBetween = (d1, d2) => (!d1 || !d2) ? null : Math.round((new Date(d2) - new Date(d1)) / 86400000);
 const daysFromNow = d => d ? Math.round((new Date() - new Date(d)) / 86400000) : 0;
 const S = { mono: { fontFamily: "'DM Mono', monospace" } };
+// HTML escape for safe print/PDF output
+const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+// CSV export utility
+function exportCSV(filename, headers, rows) {
+  const csvEsc = v => { const s = String(v ?? ""); return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s; };
+  const csv = [headers.join(","), ...rows.map(r => r.map(csvEsc).join(","))].join("\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = filename; a.click(); URL.revokeObjectURL(a.href);
+}
 
 function calcTotalInvested(v) {
   const pp = p(v.purchasePrice);
@@ -517,6 +521,29 @@ function Btn({ children, onClick, variant = "primary", size = "md", disabled, st
 }
 
 function Card({ children, style = {}, onClick }) { return <div onClick={onClick} style={{ background: BRAND.white, border: `1px solid ${BRAND.grayLight}`, borderRadius: 12, padding: 18, ...style }}>{children}</div>; }
+
+// ─── Toast Notification System ───
+const ToastCtx = createContext();
+function useToast() { return useContext(ToastCtx); }
+function ToastProvider({ children }) {
+  const [toasts, setToasts] = useState([]);
+  const add = useCallback((msg, type = "success") => {
+    const id = Date.now() + Math.random();
+    setToasts(t => [...t, { id, msg, type }]);
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3500);
+  }, []);
+  const colors = { success: { bg: "#F0FDF4", border: "#86EFAC", text: "#166534" }, error: { bg: "#FEF2F2", border: "#FECACA", text: "#991B1B" }, info: { bg: "#EFF6FF", border: "#93C5FD", text: "#1E40AF" } };
+  return (
+    <ToastCtx.Provider value={add}>
+      {children}
+      <div style={{ position: "fixed", top: 16, right: 16, zIndex: 9999, display: "flex", flexDirection: "column", gap: 8, pointerEvents: "none" }}>
+        {toasts.map(t => { const c = colors[t.type] || colors.info; return (
+          <div key={t.id} style={{ background: c.bg, border: `1px solid ${c.border}`, color: c.text, padding: "10px 18px", borderRadius: 10, fontSize: 13, fontWeight: 600, fontFamily: "'DM Sans', sans-serif", boxShadow: "0 4px 12px rgba(0,0,0,0.1)", animation: "slideUp 0.3s ease", maxWidth: 360, pointerEvents: "auto" }}>{t.msg}</div>
+        ); })}
+      </div>
+    </ToastCtx.Provider>
+  );
+}
 
 function StatCard({ label, value, sub, color, trend }) {
   return (
@@ -601,7 +628,9 @@ function LoginPage({ onLogin }) {
     if (FIREBASE_ENABLED) {
       // Firebase auth — email/password
       if (!user.trim()) { setError("Enter your email"); return; }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user.trim())) { setError("Enter a valid email address"); return; }
       if (!pass.trim()) { setError("Enter a password"); return; }
+      if (isSignUp && pass.length < 6) { setError("Password must be at least 6 characters"); return; }
       setLoading(true); setError("");
       try {
         if (isSignUp) {
@@ -1084,16 +1113,21 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
 
   const empty = () => ({ id: genId(), stockNum: String(data.nextStockNum).padStart(3, "0"), year: "", make: "", model: "", trim: "", vin: "", color: "", odometer: "", purchaseDate: "", auctionSource: "copart", useCustomPremium: false, buyerPremiumPct: "", transportCost: "", repairCost: "", otherExpenses: "", titleStatus: "clean", status: "In Recon", purchasePrice: "", reconBudget: "", notes: "" });
   const [form, setForm] = useState(empty());
-  const upd = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const [formError, setFormError] = useState("");
+  const upd = (k, v) => { setFormError(""); setForm(f => ({ ...f, [k]: v })); };
 
-  const openNew = () => { setForm(empty()); setEditing(null); setShowForm(true); };
+  const openNew = () => { setForm(empty()); setEditing(null); setFormError(""); setShowForm(true); };
   const openDetail = v => { setShowDetail(v.id); };
   const openEditFromDetail = v => {
     if (!canEdit) return;
-    setForm({ ...v, auctionSource: v.auctionSource || "custom", titleStatus: v.titleStatus || "clean" }); setEditing(v.id); setShowForm(true);
+    setForm({ ...v, auctionSource: v.auctionSource || "custom", titleStatus: v.titleStatus || "clean" }); setEditing(v.id); setFormError(""); setShowForm(true);
   };
   const save = () => {
-    if (!form.make && !form.model) return;
+    if (!form.make.trim()) { setFormError("Make is required"); return; }
+    if (!form.model.trim()) { setFormError("Model is required"); return; }
+    if (!form.year) { setFormError("Year is required"); return; }
+    if (form.vin && !/^[A-HJ-NPR-Z0-9]{17}$/i.test(form.vin.trim())) { setFormError("VIN must be exactly 17 characters (no I, O, Q)"); return; }
+    setFormError("");
     if (editing) {
       if (!canEdit) return;
       setData(d => ({ ...d, vehicles: d.vehicles.map(v => v.id === editing ? form : v) }));
@@ -1151,6 +1185,11 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
             <option value="profit">Highest Profit</option>
             <option value="aging">Most Aged</option>
           </select>
+          <Btn variant="secondary" onClick={() => {
+            const headers = ["Stock#","Year","Make","Model","Trim","VIN","Color","Status","Purchase Price","Transport","Repair","Total Invested","Purchase Date"];
+            const rows = filtered.map(v => [v.stockNum, v.year, v.make, v.model, v.trim||"", v.vin||"", v.color||"", v.status, v.purchasePrice||"", v.transportCost||"", v.repairCost||"", calcTotalInvested(v).toFixed(2), v.purchaseDate||""]);
+            exportCSV(`vehicles_${new Date().toISOString().slice(0,10)}.csv`, headers, rows);
+          }}>Export CSV</Btn>
           <Btn onClick={openNew}>+ Add Vehicle</Btn>
         </div>
       </div>
@@ -1312,6 +1351,7 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
             </div>
           </div>
 
+          {formError && <div style={{ color: "#DC2626", fontSize: 12, fontWeight: 600, padding: "8px 12px", background: "#FEF2F2", borderRadius: 6, marginTop: 10 }}>{formError}</div>}
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 18 }}>
             <div>{editing && canDelete && <Btn variant="danger" onClick={() => setConfirm(editing)}>Delete</Btn>}</div>
             <div style={{ display: "flex", gap: 6 }}><Btn variant="secondary" onClick={() => setShowForm(false)}>Cancel</Btn><Btn onClick={save}>{editing ? "Save" : "Add Vehicle"}</Btn></div>
@@ -1374,31 +1414,31 @@ td{padding:8px 10px;border-bottom:1px solid #f3f4f6}
   <div class="inv-meta">
     <div class="inv-num">${invoiceNum}</div>
     <div>Date: <b>${today}</b></div>
-    <div>Stock #: <b>${v.stockNum}</b></div>
+    <div>Stock #: <b>${esc(v.stockNum)}</b></div>
   </div>
 </div>
 
 <div class="parties">
   <div class="party">
     <div class="party-label">Client (Exported By)</div>
-    <div class="party-name">${u.username || "—"}</div>
+    <div class="party-name">${esc(u.username || "—")}</div>
     <div class="party-detail">
-      ${u.email ? u.email + "<br>" : ""}${u.phone ? u.phone + "<br>" : ""}${u.address ? u.address : ""}
+      ${u.email ? esc(u.email) + "<br>" : ""}${u.phone ? esc(u.phone) + "<br>" : ""}${u.address ? esc(u.address) : ""}
     </div>
   </div>
   ${sale && sale.buyerName ? `<div class="party">
     <div class="party-label">Buyer</div>
-    <div class="party-name">${sale.buyerName}</div>
+    <div class="party-name">${esc(sale.buyerName)}</div>
     <div class="party-detail">
-      ${sale.buyerPhone ? sale.buyerPhone + "<br>" : ""}${sale.buyerEmail ? sale.buyerEmail : ""}
+      ${sale.buyerPhone ? esc(sale.buyerPhone) + "<br>" : ""}${sale.buyerEmail ? esc(sale.buyerEmail) : ""}
     </div>
   </div>` : ""}
 </div>
 
 <div class="vehicle-hero">
-  <div class="vehicle-name">${v.year} ${v.make} ${v.model} ${v.trim || ""}</div>
+  <div class="vehicle-name">${esc(v.year)} ${esc(v.make)} ${esc(v.model)} ${esc(v.trim || "")}</div>
   <div class="vehicle-meta">
-    ${v.vin ? "VIN: " + v.vin + " · " : ""}${v.color ? v.color + " · " : ""}${v.odometer ? parseInt(v.odometer).toLocaleString() + " mi · " : ""}Title: ${titleInfo.label} · Status: ${v.status}
+    ${v.vin ? "VIN: " + esc(v.vin) + " · " : ""}${v.color ? esc(v.color) + " · " : ""}${v.odometer ? parseInt(v.odometer).toLocaleString() + " mi · " : ""}Title: ${esc(titleInfo.label)} · Status: ${esc(v.status)}
   </div>
 </div>
 
@@ -1419,7 +1459,7 @@ ${expenses.length > 0 ? `<div class="section">
   <table>
     <thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Vendor</th><th style="text-align:right">Amount</th></tr></thead>
     <tbody>
-      ${expenses.map(e => `<tr><td>${e.date || "—"}</td><td>${e.category || "—"}</td><td>${e.description || "—"}</td><td>${e.vendor || "—"}</td><td class="amt">${fmt$2(p(e.amount))}</td></tr>`).join("")}
+      ${expenses.map(e => `<tr><td>${esc(e.date||"—")}</td><td>${esc(e.category||"—")}</td><td>${esc(e.description||"—")}</td><td>${esc(e.vendor||"—")}</td><td class="amt">${fmt$2(p(e.amount))}</td></tr>`).join("")}
       <tr class="total-row"><td colspan="4">Total Expenses</td><td class="amt">${fmt$2(totalExp)}</td></tr>
     </tbody>
   </table>
@@ -1428,8 +1468,8 @@ ${expenses.length > 0 ? `<div class="section">
 ${sale ? `<div class="section">
   <div class="section-title">Sale Details</div>
   <table>
-    <tr><td>Sale Date</td><td class="amt">${sale.date}</td></tr>
-    <tr><td>Sale Type</td><td class="amt">${sale.saleType || "—"}</td></tr>
+    <tr><td>Sale Date</td><td class="amt">${esc(sale.date)}</td></tr>
+    <tr><td>Sale Type</td><td class="amt">${esc(sale.saleType || "—")}</td></tr>
     <tr><td>Gross Sale Price</td><td class="amt">${fmt$2(p(sale.grossPrice))}</td></tr>
     <tr><td>Auction/Seller Fee</td><td class="amt">-${fmt$2(p(sale.auctionFee))}</td></tr>
     <tr><td>Title/Transfer Fee</td><td class="amt">-${fmt$2(p(sale.titleFee))}</td></tr>
@@ -2822,8 +2862,8 @@ td{padding:8px;border-bottom:1px solid #eee}
 <div class="stat"><div class="stat-label">Avg Profit/Car</div><div class="stat-value">${fmt$(r.avgProfit)}</div></div>
 <div class="stat"><div class="stat-label">Avg Days to Sell</div><div class="stat-value">${r.avgDays}d</div></div>
 </div>
-${r.topDeals.length > 0 ? `<div class="section"><h3>Top Deals</h3><table><thead><tr><th>Vehicle</th><th>Invested</th><th>Sold For</th><th>Profit</th><th>Days</th><th>Grade</th></tr></thead><tbody>${r.topDeals.map(d => `<tr><td>#${d.vehicle.stockNum} ${d.vehicle.year} ${d.vehicle.make} ${d.vehicle.model}</td><td>${fmt$(d.metrics.invested)}</td><td>${fmt$(d.metrics.netSale)}</td><td style="color:${(d.metrics.grossProfit||0)>=0?"#166534":"#DC2626"};font-weight:700">${fmt$(d.metrics.grossProfit)}</td><td>${d.metrics.days||"—"}d</td><td>${d.metrics.grade?d.metrics.grade.grade:"—"}</td></tr>`).join("")}</tbody></table></div>` : ""}
-${Object.keys(r.expByCat).length > 0 ? `<div class="section"><h3>Expense Breakdown</h3><table><thead><tr><th>Category</th><th>Amount</th></tr></thead><tbody>${Object.entries(r.expByCat).sort((a,b)=>b[1]-a[1]).map(([c,a])=>`<tr><td>${c}</td><td style="font-weight:700">${fmt$(a)}</td></tr>`).join("")}</tbody></table></div>` : ""}
+${r.topDeals.length > 0 ? `<div class="section"><h3>Top Deals</h3><table><thead><tr><th>Vehicle</th><th>Invested</th><th>Sold For</th><th>Profit</th><th>Days</th><th>Grade</th></tr></thead><tbody>${r.topDeals.map(d => `<tr><td>#${esc(d.vehicle.stockNum)} ${esc(d.vehicle.year)} ${esc(d.vehicle.make)} ${esc(d.vehicle.model)}</td><td>${fmt$(d.metrics.invested)}</td><td>${fmt$(d.metrics.netSale)}</td><td style="color:${(d.metrics.grossProfit||0)>=0?"#166534":"#DC2626"};font-weight:700">${fmt$(d.metrics.grossProfit)}</td><td>${d.metrics.days||"—"}d</td><td>${d.metrics.grade?esc(d.metrics.grade.grade):"—"}</td></tr>`).join("")}</tbody></table></div>` : ""}
+${Object.keys(r.expByCat).length > 0 ? `<div class="section"><h3>Expense Breakdown</h3><table><thead><tr><th>Category</th><th>Amount</th></tr></thead><tbody>${Object.entries(r.expByCat).sort((a,b)=>b[1]-a[1]).map(([c,a])=>`<tr><td>${esc(c)}</td><td style="font-weight:700">${fmt$(a)}</td></tr>`).join("")}</tbody></table></div>` : ""}
 <div class="footer">Generated by Auto Trade Hub · Powered by Sayarah Inc · ${new Date().toLocaleDateString()}</div>
 </body></html>`;
     const w = window.open("", "_blank");
@@ -3262,6 +3302,7 @@ function UsersTab() {
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════
 function AppInner() {
+  const toast = useToast();
   const [loggedIn, setLoggedIn] = useState(false);
   const [username, setUsername] = useState("");
   const [userRole, setUserRole] = useState("user");
@@ -3394,6 +3435,7 @@ function AppInner() {
     setUsername(u); setUserRole(role); setLoggedIn(true);
     if (uid) setFirebaseUid(uid);
     if (!FIREBASE_ENABLED) localStorage.setItem("sayarah-session-v2", JSON.stringify({ username: u, role }));
+    toast(`Welcome back, ${u}!`);
   };
   const handleLogout = async () => {
     setLoggedIn(false); setUsername(""); setUserRole("user"); setFirebaseUid(null); setDataReady(false);
@@ -3404,7 +3446,7 @@ function AppInner() {
   // Re-derive BRAND colors on dark mode toggle
   const theme = darkMode ? BRAND_DARK : BRAND_LIGHT;
 
-  if (!loaded) return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", background: theme.cream }}><img src="/logo.png" alt="Auto Trade Hub" style={{ height: 70 }} /></div>;
+  if (!loaded) return <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", background: theme.cream, gap: 16 }}><img src="/logo.png" alt="Auto Trade Hub" style={{ height: 70 }} /><div style={{ width: 28, height: 28, border: "3px solid #e5e7eb", borderTopColor: BRAND.red, borderRadius: "50%", animation: "spin 0.8s linear infinite" }} /><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>;
   if (!loggedIn) return <div style={{ fontFamily: "'DM Sans', sans-serif" }}><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" /><LoginPage onLogin={handleLogin} /></div>;
 
   return (
@@ -3418,6 +3460,14 @@ function AppInner() {
   .app-header-actions .action-label{display:none!important}
   .search-dropdown{width:calc(100vw - 32px)!important;right:-60px!important}
   .notif-dropdown{width:calc(100vw - 32px)!important;right:-60px!important}
+  .auction-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .auction-table-wrap table{min-width:600px}
+  .auction-content{padding:12px!important}
+  .stat-cards-row{gap:6px!important}
+  .modal-dialog{padding:16px!important;max-width:calc(100vw - 24px)!important}
+  .report-period-bar{flex-direction:column!important;align-items:flex-start!important}
+  .login-hero{display:none!important}
+  .login-form-side{flex:1 1 100%!important}
 }
 @media(max-width:480px){
   .app-header-actions .action-label{display:none!important}
@@ -3597,7 +3647,7 @@ function AppInner() {
         </div>
       </div>
       {/* Content */}
-      <div className="app-content" style={{ maxWidth: 1120, margin: "0 auto", padding: "20px 16px" }}>
+      <div className="auction-content" style={{ maxWidth: 1120, margin: "0 auto", padding: "20px 16px" }}>
         {tab === "Dashboard" && <DashboardTab data={data} />}
         {tab === "Pipeline" && <PipelineTab data={data} setData={setData} />}
         {tab === "Inventory" && <InventoryTab data={data} setData={setData} role={userRole} currentUser={username} />}
@@ -3618,5 +3668,5 @@ function AppInner() {
 }
 
 export default function App() {
-  return <ErrorBoundary><AppInner /></ErrorBoundary>;
+  return <ErrorBoundary><ToastProvider><AppInner /></ToastProvider></ErrorBoundary>;
 }
