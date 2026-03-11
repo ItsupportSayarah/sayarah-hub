@@ -517,8 +517,7 @@ export default function App() {
           setLoggedIn(true);
           await loadUsers();
         } else {
-          setLoggedIn(false);
-          setAdminEmail("");
+          // Don't force logout — handled by logout button only
         }
       } catch (e) { console.error("Auth init error:", e); }
       clearTimeout(timeout);

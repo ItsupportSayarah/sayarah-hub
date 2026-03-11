@@ -3314,7 +3314,8 @@ export default function App() {
             const cloudData = await loadAppData(fbUser.uid);
             if (cloudData) setData({ ...defaultData(), ...cloudData });
           } else {
-            setLoggedIn(false); setUsername(""); setUserRole("user"); setFirebaseUid(null);
+            // Only reset if user hasn't manually logged in via the form
+            setFirebaseUid(null);
           }
         } catch (e) { console.error("Auth init error:", e); }
         clearTimeout(timeout);
