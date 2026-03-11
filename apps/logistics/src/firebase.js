@@ -46,9 +46,19 @@ export async function firebaseSignUp(email, password, displayName) {
   return cred.user;
 }
 
-// Sign in existing user
+// Sign in existing user (ensures Firestore user doc exists)
 export async function firebaseSignIn(email, password) {
   const cred = await signInWithEmailAndPassword(auth, email, password);
+  const snap = await getDoc(doc(db, "users", cred.user.uid));
+  if (!snap.exists()) {
+    await setDoc(doc(db, "users", cred.user.uid), {
+      uid: cred.user.uid,
+      email: cred.user.email,
+      displayName: cred.user.displayName || email.split("@")[0],
+      role: "user",
+      createdAt: serverTimestamp(),
+    });
+  }
   return cred.user;
 }
 
