@@ -1,5 +1,27 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback, Component } from "react";
 import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserData, saveAppData, loadAppData, getAllUsers, updateUserPermissions, saveApprovalsFB, loadApprovalsFB, saveActivityLogFB, loadActivityLogFB, uploadFile, deleteFile } from "./src/firebase.js";
+
+// Error boundary — catches render crashes and shows a message instead of blank page
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, info) { console.error("App crash:", error, info); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "system-ui, sans-serif", background: "#F8FAFC", padding: 20 }}>
+          <div style={{ textAlign: "center", maxWidth: 400 }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>!</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#1E293B", marginBottom: 8 }}>Something went wrong</div>
+            <div style={{ fontSize: 13, color: "#64748B", marginBottom: 20 }}>{this.state.error?.message || "An unexpected error occurred"}</div>
+            <button onClick={() => window.location.reload()} style={{ padding: "10px 24px", background: "#3B82F6", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Reload Page</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const FIREBASE_ENABLED = (() => {
   try { return auth && auth.app && auth.app.options && auth.app.options.apiKey && !auth.app.options.apiKey.startsWith("YOUR_"); } catch { return false; }
@@ -1381,8 +1403,8 @@ function UsersManagementTab(){
 const ADMIN_TABS=["Dashboard","Customers","Vehicles","Containers","Towing","Rates","Invoices","Settings","Users"];
 const CUST_TABS=["Dashboard","My Shipments","Rates","My Invoices"];
 
-export default function App(){
-  const[loggedIn,setLoggedIn]=useState(false);const[username,setUsername]=useState("");const[userEmail,setUserEmail]=useState("");const[role,setRole]=useState("admin");const[tab,setTab]=useState("Dashboard");
+function AppInner(){
+  const[loggedIn,setLoggedIn]=useState(false);const[username,setUsername]=useState("");const[userEmail,setUserEmail]=useState("");const[role,setRole]=useState("customer");const[tab,setTab]=useState("Dashboard");
   const[data,setData]=useState(defaultData());const[loaded,setLoaded]=useState(true);const[saving,setSaving]=useState(false);
   const[firebaseUid,setFirebaseUid]=useState(null);
   const[allowedTabs,setAllowedTabs]=useState(null);
@@ -1414,8 +1436,12 @@ export default function App(){
             const cloudData=await loadAppData(fbUser.uid);
             if(cloudData)setData({...defaultData(),...cloudData});
           }else{
-            // Only reset uid, don't force logout (handled by logout button)
+            // Firebase says user is signed out — reset everything
             setFirebaseUid(null);
+            setLoggedIn(false);
+            setUsername("");
+            setUserEmail("");
+            setRole("customer");
           }
         }catch(e){console.error("Auth init error:",e);}
         clearTimeout(timeout);
@@ -1442,7 +1468,7 @@ export default function App(){
   },[data,loaded,firebaseUid]);
 
   const handleLogin=(u,r,uid,email)=>{setUsername(u);setUserEmail(email||"");setRole(r);setLoggedIn(true);setTab("Dashboard");if(uid)setFirebaseUid(uid);if(!FIREBASE_ENABLED)localStorage.setItem("sayarah-sess-v3",JSON.stringify({username:u,role:r,email:email||""}));};
-  const handleLogout=async()=>{if(FIREBASE_ENABLED){try{await firebaseSignOut();}catch{}}setLoggedIn(false);setUsername("");setUserEmail("");setRole("admin");setTab("Dashboard");setFirebaseUid(null);localStorage.removeItem("sayarah-sess-v3");};
+  const handleLogout=async()=>{if(FIREBASE_ENABLED){try{await firebaseSignOut();}catch{}}setLoggedIn(false);setUsername("");setUserEmail("");setRole("customer");setTab("Dashboard");setFirebaseUid(null);localStorage.removeItem("sayarah-sess-v3");};
 
   if(!loaded)return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',system-ui,sans-serif",background:C.navy}}><img src="/logo.png" alt="Sayarah Logistics" style={{height:60,opacity:.8}}/></div>;
   if(!loggedIn)return <div style={{fontFamily:"'Inter',system-ui,sans-serif"}}><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/><LoginPage onLogin={handleLogin} data={data}/></div>;
@@ -1543,4 +1569,8 @@ export default function App(){
       </main>
     </div>
   );
+}
+
+export default function App(){
+  return <ErrorBoundary><AppInner/></ErrorBoundary>;
 }

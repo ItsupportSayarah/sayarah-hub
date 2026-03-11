@@ -1,5 +1,27 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, Component } from "react";
 import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData, onUsersChange, addUserByEmail } from "./src/firebase.js";
+
+// Error boundary — catches render crashes and shows a message instead of blank page
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, info) { console.error("App crash:", error, info); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "system-ui, sans-serif", background: "#F8FAFC", padding: 20 }}>
+          <div style={{ textAlign: "center", maxWidth: 400 }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>!</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#1E293B", marginBottom: 8 }}>Something went wrong</div>
+            <div style={{ fontSize: 13, color: "#64748B", marginBottom: 20 }}>{this.state.error?.message || "An unexpected error occurred"}</div>
+            <button onClick={() => window.location.reload()} style={{ padding: "10px 24px", background: "#3B82F6", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Reload Page</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const FIREBASE_ENABLED = (() => {
   try { return auth && auth.app && auth.app.options && auth.app.options.apiKey && !auth.app.options.apiKey.startsWith("YOUR_"); } catch { return false; }
@@ -538,7 +560,7 @@ function SettingsView({ adminEmail }) {
 // ═══════════════════════════════════════════════════════════════
 const NAV_TABS = ["Dashboard", "Users", "Activity", "Settings"];
 
-export default function App() {
+function AppInner() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [loaded, setLoaded] = useState(true);
   const [adminEmail, setAdminEmail] = useState("");
@@ -698,4 +720,8 @@ export default function App() {
       </div>
     </div>
   );
+}
+
+export default function App() {
+  return <ErrorBoundary><AppInner /></ErrorBoundary>;
 }

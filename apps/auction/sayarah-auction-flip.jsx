@@ -1,5 +1,27 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Component } from "react";
 import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserProfile, updateUserRole, getAllUsers, updateUserPermissions, getUserData, saveAppData, loadAppData, saveApprovalsFB, loadApprovalsFB, saveActivityLogFB, loadActivityLogFB } from "./src/firebase.js";
+
+// Error boundary — catches render crashes and shows a message instead of blank page
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, info) { console.error("App crash:", error, info); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "system-ui, sans-serif", background: "#F8FAFC", padding: 20 }}>
+          <div style={{ textAlign: "center", maxWidth: 400 }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>!</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: "#1E293B", marginBottom: 8 }}>Something went wrong</div>
+            <div style={{ fontSize: 13, color: "#64748B", marginBottom: 20 }}>{this.state.error?.message || "An unexpected error occurred"}</div>
+            <button onClick={() => window.location.reload()} style={{ padding: "10px 24px", background: "#3B82F6", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>Reload Page</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // Check if Firebase is configured (not placeholder keys)
 const FIREBASE_ENABLED = (() => {
@@ -3229,7 +3251,7 @@ function UsersTab() {
 // ═══════════════════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════
-export default function App() {
+function AppInner() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [username, setUsername] = useState("");
   const [userRole, setUserRole] = useState("user");
@@ -3314,8 +3336,11 @@ export default function App() {
             const cloudData = await loadAppData(fbUser.uid);
             if (cloudData) setData({ ...defaultData(), ...cloudData });
           } else {
-            // Only reset if user hasn't manually logged in via the form
+            // Firebase says user is signed out — reset everything
             setFirebaseUid(null);
+            setLoggedIn(false);
+            setUsername("");
+            setUserRole("user");
           }
         } catch (e) { console.error("Auth init error:", e); }
         clearTimeout(timeout);
@@ -3576,4 +3601,8 @@ export default function App() {
       </div>
     </div>
   );
+}
+
+export default function App() {
+  return <ErrorBoundary><AppInner /></ErrorBoundary>;
 }
