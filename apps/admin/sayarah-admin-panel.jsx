@@ -156,7 +156,7 @@ function DashboardView({ users }) {
         ))}
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div className="admin-2col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <Card style={{ borderTop: `3px solid ${B.red}` }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
             <div style={{ width: 36, height: 36, borderRadius: 8, background: B.redBg, display: "flex", alignItems: "center", justifyContent: "center" }}>{I.car(18, B.red)}</div>
@@ -252,6 +252,7 @@ function UsersView({ users, onRefresh }) {
 
       {/* Users Table */}
       <Card style={{ padding: 0, overflow: "hidden" }}>
+        <div className="admin-table-wrap">
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr style={{ background: B.cream, borderBottom: `2px solid ${B.grayLight}` }}>
@@ -358,11 +359,12 @@ function UsersView({ users, onRefresh }) {
             })}
           </tbody>
         </table>
+        </div>
         {filtered.length === 0 && <div style={{ padding: 32, textAlign: "center", color: B.gray, fontSize: 12 }}>No users found</div>}
       </Card>
 
       {/* Permissions Guide */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 16 }}>
+      <div className="admin-2col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 16 }}>
         <Card style={{ background: B.amberBg, border: `1px solid #FCD34D` }}>
           <div style={{ fontSize: 12, fontWeight: 800, color: "#92400E", marginBottom: 6 }}><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{I.car(14, "#92400E")} Auto Trade Hub Roles</span></div>
           <div style={{ fontSize: 10, color: "#92400E", lineHeight: 1.8 }}>
@@ -401,6 +403,7 @@ function ActivityView({ users }) {
         <div style={{ fontSize: 12, color: B.gray }}>Recent registrations and user accounts</div>
       </div>
       <Card style={{ padding: 0, overflow: "hidden" }}>
+        <div className="admin-table-wrap">
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr style={{ background: B.cream, borderBottom: `2px solid ${B.grayLight}` }}>
@@ -427,6 +430,7 @@ function ActivityView({ users }) {
             })}
           </tbody>
         </table>
+        </div>
       </Card>
     </div>
   );
@@ -456,7 +460,7 @@ function SettingsView({ adminEmail }) {
 
         <Card>
           <div style={{ fontSize: 13, fontWeight: 800, color: B.navy, marginBottom: 12 }}><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{I.layout(14, B.navy)} Applications</span></div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div className="admin-2col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <div style={{ padding: 14, background: B.cream, borderRadius: 8, border: `1px solid ${B.grayLight}` }}>
               <div style={{ fontSize: 12, fontWeight: 800, color: B.navy }}><span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>{I.car(14, B.navy)} Auto Trade Hub</span></div>
               <div style={{ fontSize: 10, color: B.gray, marginTop: 4 }}>Car auction flipping business management</div>
@@ -560,19 +564,35 @@ export default function App() {
   return (
     <div style={{ fontFamily: font, background: B.cream, minHeight: "100vh", color: B.navy }}>
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+      <style>{`
+@media(max-width:768px){
+  .admin-topbar-inner{flex-wrap:wrap!important;height:auto!important;padding:10px 0!important;gap:8px!important}
+  .admin-topbar-inner>div:last-child{width:100%;justify-content:flex-end}
+  .admin-nav{overflow-x:auto!important;-webkit-overflow-scrolling:touch;flex-wrap:nowrap!important}
+  .admin-nav button{white-space:nowrap!important;flex-shrink:0!important;padding:8px 12px!important}
+  .admin-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .admin-table-wrap table{min-width:700px}
+  .admin-2col{grid-template-columns:1fr!important}
+  .admin-content{padding:16px 12px!important}
+}
+@media(max-width:480px){
+  .admin-topbar{padding:0 12px!important}
+  .admin-topbar-inner .admin-brand-text{display:none!important}
+}
+`}</style>
 
       {/* Top Bar */}
-      <div style={{ background: `linear-gradient(135deg, ${B.navy} 0%, ${B.navyLight} 100%)`, padding: "0 24px", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 4px 20px rgba(0,0,0,.3)" }}>
-        <div style={{ maxWidth: 1400, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: 56 }}>
+      <div className="admin-topbar" style={{ background: `linear-gradient(135deg, ${B.navy} 0%, ${B.navyLight} 100%)`, padding: "0 24px", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 4px 20px rgba(0,0,0,.3)" }}>
+        <div className="admin-topbar-inner" style={{ maxWidth: 1400, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: 56 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <img src="/logo.png" alt="Sayarah" style={{ height: 32, objectFit: "contain" }} />
-            <div>
+            <div className="admin-brand-text">
               <div style={{ fontSize: 14, fontWeight: 900, color: B.white, letterSpacing: "-.3px" }}>Sayarah Admin Panel</div>
               <div style={{ fontSize: 8, color: B.gray, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".1em" }}>Unified Control Center</div>
             </div>
           </div>
 
-          <nav style={{ display: "flex", gap: 2 }}>
+          <nav className="admin-nav" style={{ display: "flex", gap: 2 }}>
             {NAV_TABS.map(t => (
               <button key={t} onClick={() => setTab(t)} style={{
                 background: tab === t ? "rgba(255,255,255,.12)" : "transparent",
@@ -593,7 +613,7 @@ export default function App() {
       </div>
 
       {/* Content */}
-      <div style={{ maxWidth: 1400, margin: "0 auto", padding: "24px 20px" }}>
+      <div className="admin-content" style={{ maxWidth: 1400, margin: "0 auto", padding: "24px 20px" }}>
         {loadingUsers && tab !== "Settings" ? (
           <div style={{ textAlign: "center", padding: 60, color: B.gray }}>
             <div style={{ marginBottom: 12 }}>{I.loader(28, B.gray)}</div>

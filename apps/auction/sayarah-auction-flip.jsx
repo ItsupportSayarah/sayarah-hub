@@ -3371,10 +3371,25 @@ export default function App() {
   return (
     <div style={{ fontFamily: "'DM Sans', sans-serif", background: theme.cream, minHeight: "100vh", color: theme.black }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+      <style>{`
+@media(max-width:768px){
+  .app-header-bar{padding:0 12px!important}
+  .app-nav-bar{padding:0 8px!important}
+  .app-header-inner{height:50px!important}
+  .app-header-actions .action-label{display:none!important}
+  .search-dropdown{width:calc(100vw - 32px)!important;right:-60px!important}
+  .notif-dropdown{width:calc(100vw - 32px)!important;right:-60px!important}
+}
+@media(max-width:480px){
+  .app-header-actions .action-label{display:none!important}
+  .search-dropdown{width:calc(100vw - 16px)!important;left:50%!important;right:auto!important;transform:translateX(-50%)!important}
+  .notif-dropdown{width:calc(100vw - 16px)!important;left:50%!important;right:auto!important;transform:translateX(-50%)!important}
+}
+      `}</style>
       {/* ═══ Premium Header ═══ */}
       <div style={{ position: "sticky", top: 0, zIndex: 100 }}>
         {/* Top Bar — Logo + Actions */}
-        <div style={{
+        <div className="app-header-bar" style={{
           background: `linear-gradient(135deg, ${BRAND.red} 0%, #6B1010 100%)`,
           padding: "0 32px",
           borderBottom: "1px solid rgba(255,255,255,0.08)",
@@ -3496,7 +3511,7 @@ export default function App() {
         </div>
 
         {/* Bottom Bar — Navigation Tabs */}
-        <div style={{
+        <div className="app-nav-bar" style={{
           background: darkMode ? "#1a1a1a" : "#fff",
           borderBottom: `1px solid ${BRAND.grayLight}`,
           boxShadow: "0 1px 8px rgba(0,0,0,0.06)",

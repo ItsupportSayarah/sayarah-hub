@@ -1386,7 +1386,7 @@ export default function App(){
   const[data,setData]=useState(defaultData());const[loaded,setLoaded]=useState(true);const[saving,setSaving]=useState(false);
   const[firebaseUid,setFirebaseUid]=useState(null);
   const[allowedTabs,setAllowedTabs]=useState(null);
-  const[collapsed,setCollapsed]=useState(false);
+  const[collapsed,setCollapsed]=useState(false);const[menuOpen,setMenuOpen]=useState(false);
   const tabs=role==="admin"?ADMIN_TABS:role==="manager"?(allowedTabs&&allowedTabs.length?allowedTabs.filter(t=>ADMIN_TABS.includes(t)):["Dashboard"]):CUST_TABS;
 
   // ─── Init: Firebase auth listener OR localStorage fallback ───
@@ -1452,23 +1452,39 @@ export default function App(){
   return(
     <div style={{fontFamily:"'Inter',system-ui,sans-serif",display:"flex",minHeight:"100vh",color:C.black}}>
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
+      <style>{`
+@media(max-width:768px){
+  .logi-sidebar{transform:translateX(-100%)!important;width:260px!important;box-shadow:none!important}
+  .logi-sidebar.open{transform:translateX(0)!important;box-shadow:20px 0 60px rgba(0,0,0,.5)!important}
+  .logi-main{margin-left:0!important}
+  .logi-overlay{display:block!important}
+  .logi-hamburger{display:flex!important}
+  .logi-collapse-btn{display:none!important}
+  .logi-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .logi-table-wrap table{min-width:700px}
+}
+@media(min-width:769px){
+  .logi-overlay{display:none!important}
+  .logi-hamburger{display:none!important}
+}
+`}</style>
 
       {/* ═══ SIDEBAR ═══ */}
-      <aside style={{width:sideW,minHeight:"100vh",background:C.navy,display:"flex",flexDirection:"column",transition:"width .25s ease",overflow:"hidden",position:"fixed",left:0,top:0,bottom:0,zIndex:200}}>
+      <aside className={"logi-sidebar"+(menuOpen?" open":"")} style={{width:sideW,minHeight:"100vh",background:C.navy,display:"flex",flexDirection:"column",transition:"width .25s ease",overflow:"hidden",position:"fixed",left:0,top:0,bottom:0,zIndex:200}}>
         {/* Logo area */}
         <div style={{padding:collapsed?"14px 8px":"18px 20px",borderBottom:"1px solid rgba(255,255,255,.08)",display:"flex",alignItems:"center",justifyContent:"space-between",minHeight:64}}>
           {!collapsed&&<div style={{display:"flex",alignItems:"center",gap:10}}>
             <img src="/logo.png" alt="" style={{height:32,objectFit:"contain"}}/>
             <div><div style={{fontSize:14,fontWeight:800,color:"#fff",letterSpacing:".02em",lineHeight:1}}>SAYARAH</div><div style={{fontSize:9,color:"rgba(255,255,255,.35)",letterSpacing:".1em",fontWeight:600}}>LOGISTICS</div></div>
           </div>}
-          <button onClick={()=>setCollapsed(!collapsed)} style={{background:"rgba(255,255,255,.08)",border:"none",borderRadius:8,width:32,height:32,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"rgba(255,255,255,.5)",fontSize:14,transition:"all .15s",flexShrink:0}} onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,.15)"} onMouseLeave={e=>e.currentTarget.style.background="rgba(255,255,255,.08)"}>{collapsed?"→":"←"}</button>
+          <button className="logi-collapse-btn" onClick={()=>setCollapsed(!collapsed)} style={{background:"rgba(255,255,255,.08)",border:"none",borderRadius:8,width:32,height:32,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"rgba(255,255,255,.5)",fontSize:14,transition:"all .15s",flexShrink:0}} onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,.15)"} onMouseLeave={e=>e.currentTarget.style.background="rgba(255,255,255,.08)"}>{collapsed?"→":"←"}</button>
         </div>
 
         {/* Nav items */}
         <nav style={{flex:1,padding:"12px 8px",display:"flex",flexDirection:"column",gap:2}}>
           {tabs.map(t=>{
             const active=tab===t;
-            return <button key={t} onClick={()=>setTab(t)} style={{
+            return <button key={t} onClick={()=>{setTab(t);setMenuOpen(false);}} style={{
               display:"flex",alignItems:"center",gap:12,padding:collapsed?"10px 0":"10px 14px",borderRadius:10,border:"none",
               background:active?"rgba(139,26,26,.3)":"transparent",
               color:active?"#fff":"rgba(255,255,255,.5)",
@@ -1500,8 +1516,16 @@ export default function App(){
         </div>
       </aside>
 
+      {/* Mobile overlay */}
+      <div className="logi-overlay" onClick={()=>setMenuOpen(false)} style={{display:"none",position:"fixed",inset:0,background:"rgba(0,0,0,.4)",zIndex:150}}/>
+
       {/* ═══ MAIN CONTENT ═══ */}
-      <main style={{flex:1,background:C.bg,overflowY:"auto",marginLeft:sideW,transition:"margin-left .25s ease",minHeight:"100vh"}}>
+      <main className="logi-main" style={{flex:1,background:C.bg,overflowY:"auto",marginLeft:sideW,transition:"margin-left .25s ease",minHeight:"100vh"}}>
+        <div className="logi-hamburger" style={{display:"none",alignItems:"center",padding:"12px 16px",background:C.navy,position:"sticky",top:0,zIndex:100}}>
+          <button onClick={()=>setMenuOpen(!menuOpen)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:8,display:"flex",alignItems:"center"}}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
+          <img src="/logo.png" alt="" style={{height:28,objectFit:"contain",marginLeft:10}}/>
+          <span style={{fontSize:13,fontWeight:700,color:"#fff",marginLeft:8}}>SAYARAH LOGISTICS</span>
+        </div>
         <div style={{maxWidth:1200,margin:"0 auto",padding:"28px 32px"}}>
           {tab==="Dashboard"&&<DashboardTab data={data} role={role} username={username} userEmail={userEmail}/>}
           {tab==="Customers"&&role==="admin"&&<CustomersTab data={data} setData={setData}/>}
