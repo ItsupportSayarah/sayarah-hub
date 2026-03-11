@@ -41,6 +41,8 @@ export async function firebaseSignUp(email, password, displayName) {
     email,
     displayName,
     role: "user",
+    logisticsAccess: true,
+    auctionAccess: false,
     createdAt: serverTimestamp(),
   });
   return cred.user;
@@ -56,6 +58,8 @@ export async function firebaseSignIn(email, password) {
       email: cred.user.email,
       displayName: cred.user.displayName || email.split("@")[0],
       role: "user",
+      logisticsAccess: true,
+      auctionAccess: false,
       createdAt: serverTimestamp(),
     });
   }
@@ -113,7 +117,35 @@ export async function getAllUsers() {
 //  DATA HELPERS — Replaces localStorage
 // ═══════════════════════════════════════════════════════════════
 
-// Save main app data — Logistics uses its own collection
+// ─── Shared Logistics Data (all users read from same document) ───
+export async function saveSharedData(data) {
+  await setDoc(doc(db, "logisticsShared", "appData"), {
+    ...data,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function loadSharedData() {
+  const snap = await getDoc(doc(db, "logisticsShared", "appData"));
+  if (snap.exists()) {
+    const d = snap.data();
+    delete d.updatedAt;
+    return d;
+  }
+  return null;
+}
+
+export function onSharedDataChange(callback) {
+  return onSnapshot(doc(db, "logisticsShared", "appData"), (snap) => {
+    if (snap.exists()) {
+      const d = snap.data();
+      delete d.updatedAt;
+      callback(d);
+    }
+  });
+}
+
+// ─── Legacy per-user data (kept for migration) ───
 export async function saveAppData(uid, data) {
   await setDoc(doc(db, "logisticsData", uid), {
     ...data,
@@ -121,7 +153,6 @@ export async function saveAppData(uid, data) {
   });
 }
 
-// Load app data once
 export async function loadAppData(uid) {
   const snap = await getDoc(doc(db, "logisticsData", uid));
   if (snap.exists()) {
@@ -132,7 +163,6 @@ export async function loadAppData(uid) {
   return null;
 }
 
-// Listen to app data changes in real-time
 export function onAppDataChange(uid, callback) {
   return onSnapshot(doc(db, "logisticsData", uid), (snap) => {
     if (snap.exists()) {

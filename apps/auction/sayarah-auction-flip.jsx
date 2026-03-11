@@ -340,13 +340,22 @@ function authenticateUser(username, password) {
 // Firebase auth wrapper — used by LoginPage when Firebase is enabled
 async function firebaseLogin(email, password) {
   const user = await firebaseSignIn(email, password);
-  const role = await getUserRole(user.uid);
+  const profile = await getUserProfile(user.uid);
+  const role = profile?.role || "user";
+  // Check auctionAccess — admin/manager always have access, others need explicit permission
+  const isSuperAdmin = email === "support@sayarah.io";
+  if (!isSuperAdmin && role !== "admin" && role !== "manager" && profile?.auctionAccess !== true) {
+    await firebaseSignOut();
+    throw { code: "auth/unauthorized", message: "You don't have access to Auto Trade Hub. Contact your admin to request access." };
+  }
   return { uid: user.uid, username: user.displayName || email.split("@")[0], email, role };
 }
 
 async function firebaseRegister(email, password, displayName) {
+  // New registrations via auction app don't get auction access by default — admin must grant it
   const user = await firebaseSignUp(email, password, displayName);
-  return { uid: user.uid, username: displayName, email, role: "user" };
+  await firebaseSignOut();
+  throw { code: "auth/unauthorized", message: "Account created! However, you need admin approval to access Auto Trade Hub. Contact your admin." };
 }
 
 function isAdmin(role) { return role === "admin"; }

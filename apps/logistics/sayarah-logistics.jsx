@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback, Component } from "react";
-import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserData, saveAppData, loadAppData, getAllUsers, updateUserPermissions, saveApprovalsFB, loadApprovalsFB, saveActivityLogFB, loadActivityLogFB, uploadFile, deleteFile } from "./src/firebase.js";
+import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserData, getUserProfile, saveSharedData, loadSharedData, onSharedDataChange, getAllUsers, updateUserPermissions, saveApprovalsFB, loadApprovalsFB, saveActivityLogFB, loadActivityLogFB, uploadFile, deleteFile } from "./src/firebase.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
 class ErrorBoundary extends Component {
@@ -209,10 +209,10 @@ function Inp({label,value,onChange,type="text",placeholder,readOnly,step,style:s
         ...(focused&&!readOnly?{borderColor:C.blue,boxShadow:"0 0 0 3px rgba(59,130,246,.15)"}:{})}}/>
   </div>;
 }
-function Sel({label,value,onChange,options,placeholder,style:sx={}}){
+function Sel({label,value,onChange,options,placeholder,style:sx={},disabled}){
   return <div style={{display:"flex",flexDirection:"column",gap:4,...sx}}>
     {label&&<label style={{fontSize:11,fontWeight:600,color:C.slate500,letterSpacing:"0.02em"}}>{label}</label>}
-    <select value={value??""} onChange={e=>onChange(e.target.value)} style={{...iS,cursor:"pointer",appearance:"auto"}}>
+    <select value={value??""} onChange={e=>onChange(e.target.value)} disabled={disabled} style={{...iS,cursor:disabled?"default":"pointer",appearance:"auto",...(disabled?{background:C.slate50,color:C.slate400}:{})}}>
       {placeholder&&<option value="">{placeholder}</option>}
       {options.map(o=>typeof o==="object"?<option key={o.value} value={o.value}>{o.label}</option>:<option key={o} value={o}>{o}</option>)}
     </select>
@@ -610,11 +610,12 @@ function StatementView({customer,data,onClose}){
 // ═══════════════════════════════════════════════════════════════
 // VEHICLES TAB — With Timeline & Bulk Actions
 // ═══════════════════════════════════════════════════════════════
-function VehiclesTab({data,setData,role,username,userEmail}){
+function VehiclesTab({data,setData,role,username,userEmail,firebaseUid,allUsers}){
+  const canEdit=role==="admin"||role==="manager";
   const[showForm,setShowForm]=useState(false);const[editing,setEditing]=useState(null);const[confirm,setConfirm]=useState(null);const[filter,setFilter]=useState("all");const[search,setSearch]=useState("");const[selected,setSelected]=useState(new Set());const[bulkStatus,setBulkStatus]=useState("");
   const[uploading,setUploading]=useState(false);const[uploadMsg,setUploadMsg]=useState("");const[viewPhoto,setViewPhoto]=useState(null);
   const photoInputRef=useRef(null);const titleInputRef=useRef(null);
-  const empty=()=>({id:gid(),vehicleNum:String(data.nextVehicleNum).padStart(3,"0"),year:"",make:"",model:"",trim:"",vin:"",color:"",lotNumber:"",auctionSource:"",purchasePrice:"",vehicleType:"sedan",isRunning:true,status:"purchased",portLocation:"NJ",destination:"UAE",titleStatus:"Without Title",containerNum:"",customer:"",customerEmail:"",notes:"",dateAdded:today(),bookingNumber:"",blNumber:"",timeline:[],photos:[],titleDocs:[]});
+  const empty=()=>({id:gid(),vehicleNum:String(data.nextVehicleNum).padStart(3,"0"),year:"",make:"",model:"",trim:"",vin:"",color:"",lotNumber:"",auctionSource:"",purchasePrice:"",vehicleType:"sedan",isRunning:true,status:"purchased",portLocation:"NJ",destination:"UAE",titleStatus:"Without Title",containerNum:"",customer:"",customerEmail:"",notes:"",dateAdded:today(),bookingNumber:"",blNumber:"",assignedUserId:"",timeline:[],photos:[],titleDocs:[]});
   const[form,setForm]=useState(empty());const upd=(k,v)=>setForm(f=>({...f,[k]:v}));
 
   // File upload handler
@@ -655,7 +656,8 @@ function VehiclesTab({data,setData,role,username,userEmail}){
 
   const custNames=useMemo(()=>{if(!userEmail)return[];return(data.customers||[]).filter(c=>c.email?.toLowerCase()===userEmail.toLowerCase()).map(c=>c.name.toLowerCase());},[data.customers,userEmail]);
   const matchCust=v=>{const un=username.toLowerCase();if(userEmail&&v.customerEmail?.toLowerCase()===userEmail.toLowerCase())return true;if(v.customer?.toLowerCase()===un)return true;if(custNames.some(n=>v.customer?.toLowerCase()===n))return true;return false;};
-  const allV=role==="customer"?data.vehicles.filter(matchCust):data.vehicles;
+  // Data isolation: user role only sees vehicles assigned to them
+  const allV=role==="customer"?data.vehicles.filter(matchCust):role==="user"?data.vehicles.filter(v=>v.assignedUserId===firebaseUid):data.vehicles;
   let filt=filter==="all"?allV:allV.filter(v=>v.status===filter);
   if(search){const s=search.toLowerCase();filt=filt.filter(v=>`${v.year} ${v.make} ${v.model} ${v.vin} ${v.lotNumber} ${v.vehicleNum} ${v.customer} ${v.containerNum}`.toLowerCase().includes(s));}
 
@@ -747,12 +749,12 @@ function VehiclesTab({data,setData,role,username,userEmail}){
     );
   }
 
-  // ─── ADMIN VIEW ───
+  // ─── ADMIN / USER VIEW ───
   return(
     <div>
       <PageHeader title="Vehicles" subtitle={`${allV.length} vehicles tracked`}>
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search VIN, make, customer..." style={{...iS,width:240,padding:"8px 14px",fontSize:12}}/>
-        <Btn onClick={()=>{setForm(empty());setEditing(null);setShowForm(true);}}>+ Add Vehicle</Btn>
+        {canEdit&&<Btn onClick={()=>{setForm(empty());setEditing(null);setShowForm(true);}}>+ Add Vehicle</Btn>}
       </PageHeader>
 
       <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:16}}>
@@ -760,8 +762,8 @@ function VehiclesTab({data,setData,role,username,userEmail}){
         {STATUSES.map(s=>{const ct=allV.filter(v=>v.status===s.key).length;return ct>0&&<Btn key={s.key} v={filter===s.key?"primary":"secondary"} s="sm" onClick={()=>setFilter(s.key)}>{s.icon} {ct}</Btn>;})}
       </div>
 
-      {/* Bulk Actions */}
-      {selected.size>0&&<Card style={{marginBottom:14,padding:"12px 18px",background:C.red50,border:"1px solid "+C.redLight}}>
+      {/* Bulk Actions — admin/manager only */}
+      {canEdit&&selected.size>0&&<Card style={{marginBottom:14,padding:"12px 18px",background:C.red50,border:"1px solid "+C.redLight}}>
         <div style={{display:"flex",alignItems:"center",gap:10,fontSize:13}}>
           <span style={{fontWeight:700,color:C.red}}>{selected.size} selected</span>
           <Sel value={bulkStatus} onChange={setBulkStatus} options={STATUSES.map(s=>({value:s.key,label:s.label}))} placeholder="Change status to..." style={{minWidth:200}}/>
@@ -774,13 +776,13 @@ function VehiclesTab({data,setData,role,username,userEmail}){
       <Card style={{padding:0,overflow:"hidden",borderRadius:16}}><div style={{overflowX:"auto"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
           <thead><tr>
-            <th style={{padding:"12px 8px",width:36,background:C.white,position:"sticky",top:0,zIndex:1,borderBottom:"2px solid "+C.slate200}}><input type="checkbox" checked={selected.size===filt.length&&filt.length>0} onChange={selectAll} style={{accentColor:C.red}}/></th>
+            {canEdit&&<th style={{padding:"12px 8px",width:36,background:C.white,position:"sticky",top:0,zIndex:1,borderBottom:"2px solid "+C.slate200}}><input type="checkbox" checked={selected.size===filt.length&&filt.length>0} onChange={selectAll} style={{accentColor:C.red}}/></th>}
             <TH>#</TH><TH>Vehicle</TH><TH>VIN</TH><TH>Customer</TH><TH>Port</TH><TH>Dest</TH><TH>Title</TH><TH>Files</TH><TH>Container</TH><TH>Status</TH>
           </tr></thead>
           <tbody>{filt.map((v,i)=>(
-            <tr key={v.id} style={{borderBottom:"1px solid "+C.slate100,cursor:"pointer",background:i%2===0?"transparent":C.slate50,transition:"background .15s"}} onClick={()=>{setForm({...v,timeline:v.timeline||[],photos:v.photos||[],titleDocs:v.titleDocs||[]});setEditing(v.id);setShowForm(true);}}
+            <tr key={v.id} style={{borderBottom:"1px solid "+C.slate100,cursor:"pointer",background:i%2===0?"transparent":C.slate50,transition:"background .15s"}} onClick={()=>{setForm({...v,timeline:v.timeline||[],photos:v.photos||[],titleDocs:v.titleDocs||[],assignedUserId:v.assignedUserId||""});setEditing(v.id);setShowForm(true);}}
               onMouseEnter={e=>e.currentTarget.style.background=C.slate50} onMouseLeave={e=>e.currentTarget.style.background=i%2===0?"transparent":C.slate50}>
-              <td style={{padding:"10px 8px",textAlign:"center"}}><input type="checkbox" checked={selected.has(v.id)} onChange={e=>{e.stopPropagation();toggleSelect(v.id);}} style={{accentColor:C.red}}/></td>
+              {canEdit&&<td style={{padding:"10px 8px",textAlign:"center"}}><input type="checkbox" checked={selected.has(v.id)} onChange={e=>{e.stopPropagation();toggleSelect(v.id);}} style={{accentColor:C.red}}/></td>}
               <TD style={{color:C.blue,fontWeight:700,...MO}}>{v.vehicleNum}</TD>
               <TD>
                 <div style={{display:"flex",alignItems:"center",gap:8}}>
@@ -806,29 +808,31 @@ function VehiclesTab({data,setData,role,username,userEmail}){
       </div></Card>}
 
       {/* Vehicle Form */}
-      {showForm&&<Modal title={editing?"Edit Vehicle":"Add Vehicle"} onClose={()=>setShowForm(false)} wide>
+      {showForm&&<Modal title={canEdit?(editing?"Edit Vehicle":"Add Vehicle"):"Vehicle Details"} onClose={()=>setShowForm(false)} wide>
+        {!canEdit&&<div style={{background:C.amberLight,color:"#92400E",padding:"8px 14px",borderRadius:8,fontSize:12,fontWeight:600,marginBottom:14}}>Read-only mode — contact admin to make changes</div>}
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(130px,1fr))",gap:12}}>
           <Inp label="# " value={form.vehicleNum} readOnly onChange={v=>upd("vehicleNum",v)}/>
-          <Inp label="Year" value={form.year} onChange={v=>upd("year",v)} type="number" placeholder="2022"/>
-          <Inp label="Make" value={form.make} onChange={v=>upd("make",v)} placeholder="Toyota"/>
-          <Inp label="Model" value={form.model} onChange={v=>upd("model",v)} placeholder="Camry"/>
-          <Inp label="Color" value={form.color} onChange={v=>upd("color",v)}/>
-          <Inp label="VIN" value={form.vin} onChange={v=>upd("vin",v)} placeholder="Full VIN"/>
-          <Inp label="Lot #" value={form.lotNumber} onChange={v=>upd("lotNumber",v)}/>
-          <Sel label="Customer" value={form.customer} onChange={v=>{upd("customer",v);const c=(data.customers||[]).find(x=>x.name===v);if(c)upd("customerEmail",c.email||"");}} options={(data.customers||[]).map(c=>c.name)} placeholder="Select..."/>
+          <Inp label="Year" value={form.year} onChange={v=>upd("year",v)} type="number" placeholder="2022" readOnly={!canEdit}/>
+          <Inp label="Make" value={form.make} onChange={v=>upd("make",v)} placeholder="Toyota" readOnly={!canEdit}/>
+          <Inp label="Model" value={form.model} onChange={v=>upd("model",v)} placeholder="Camry" readOnly={!canEdit}/>
+          <Inp label="Color" value={form.color} onChange={v=>upd("color",v)} readOnly={!canEdit}/>
+          <Inp label="VIN" value={form.vin} onChange={v=>upd("vin",v)} placeholder="Full VIN" readOnly={!canEdit}/>
+          <Inp label="Lot #" value={form.lotNumber} onChange={v=>upd("lotNumber",v)} readOnly={!canEdit}/>
+          <Sel label="Customer" value={form.customer} onChange={v=>{upd("customer",v);const c=(data.customers||[]).find(x=>x.name===v);if(c)upd("customerEmail",c.email||"");}} options={(data.customers||[]).map(c=>c.name)} placeholder="Select..." disabled={!canEdit}/>
         </div>
         <div style={{borderTop:"1px solid "+C.slate200,margin:"16px 0",paddingTop:16}}>
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(145px,1fr))",gap:12}}>
-            <Inp label="Purchase $" value={form.purchasePrice} onChange={v=>upd("purchasePrice",v)} type="number" step=".01"/>
-            <Sel label="Type" value={form.vehicleType} onChange={v=>upd("vehicleType",v)} options={VTYPES.map(t=>({value:t,label:t[0].toUpperCase()+t.slice(1)}))}/>
-            <Sel label="Port" value={form.portLocation} onChange={v=>upd("portLocation",v)} options={PORTS.map(x=>({value:x.code,label:x.full}))}/>
-            <Sel label="Destination" value={form.destination} onChange={v=>upd("destination",v)} options={DESTS.map(d=>({value:d.code,label:`${d.name} (${d.code})`}))}/>
-            <Sel label="Title" value={form.titleStatus} onChange={v=>upd("titleStatus",v)} options={TITLE_STATUSES}/>
-            <Sel label="Status" value={form.status} onChange={v=>upd("status",v)} options={STATUSES.map(s=>({value:s.key,label:s.label}))}/>
-            <Inp label="Container" value={form.containerNum} onChange={v=>upd("containerNum",v)}/>
-            <Inp label="Booking #" value={form.bookingNumber} onChange={v=>upd("bookingNumber",v)}/>
-            <Inp label="B/L" value={form.blNumber} onChange={v=>upd("blNumber",v)}/>
-            <Inp label="Auction" value={form.auctionSource} onChange={v=>upd("auctionSource",v)} placeholder="Copart, IAAI"/>
+            <Inp label="Purchase $" value={form.purchasePrice} onChange={v=>upd("purchasePrice",v)} type="number" step=".01" readOnly={!canEdit}/>
+            <Sel label="Type" value={form.vehicleType} onChange={v=>upd("vehicleType",v)} options={VTYPES.map(t=>({value:t,label:t[0].toUpperCase()+t.slice(1)}))} disabled={!canEdit}/>
+            <Sel label="Port" value={form.portLocation} onChange={v=>upd("portLocation",v)} options={PORTS.map(x=>({value:x.code,label:x.full}))} disabled={!canEdit}/>
+            <Sel label="Destination" value={form.destination} onChange={v=>upd("destination",v)} options={DESTS.map(d=>({value:d.code,label:`${d.name} (${d.code})`}))} disabled={!canEdit}/>
+            <Sel label="Title" value={form.titleStatus} onChange={v=>upd("titleStatus",v)} options={TITLE_STATUSES} disabled={!canEdit}/>
+            <Sel label="Status" value={form.status} onChange={v=>upd("status",v)} options={STATUSES.map(s=>({value:s.key,label:s.label}))} disabled={!canEdit}/>
+            <Inp label="Container" value={form.containerNum} onChange={v=>upd("containerNum",v)} readOnly={!canEdit}/>
+            <Inp label="Booking #" value={form.bookingNumber} onChange={v=>upd("bookingNumber",v)} readOnly={!canEdit}/>
+            <Inp label="B/L" value={form.blNumber} onChange={v=>upd("blNumber",v)} readOnly={!canEdit}/>
+            <Inp label="Auction" value={form.auctionSource} onChange={v=>upd("auctionSource",v)} placeholder="Copart, IAAI" readOnly={!canEdit}/>
+            {role==="admin"&&<Sel label="Assign to User" value={form.assignedUserId||""} onChange={v=>upd("assignedUserId",v)} options={[{value:"",label:"Unassigned"},...(allUsers||[]).filter(u=>u.logisticsAccess!==false&&u.role!=="admin").map(u=>({value:u.uid||u.id,label:`${u.displayName||u.email} (${u.role})`}))]}/>}
           </div>
         </div>
 
@@ -838,7 +842,7 @@ function VehiclesTab({data,setData,role,username,userEmail}){
             <div><div style={{fontSize:13,fontWeight:700,color:C.slate800,display:"flex",alignItems:"center",gap:6}}><IcoCamera size={14}/> Vehicle Photos</div><div style={{fontSize:11,color:C.slate400}}>Upload photos of the vehicle (JPG, PNG, WebP)</div></div>
             <div>
               <input ref={photoInputRef} type="file" accept="image/*" multiple onChange={e=>handleFileUpload(e.target.files,"photos")} style={{display:"none"}}/>
-              <Btn v="secondary" s="sm" onClick={()=>photoInputRef.current?.click()} disabled={uploading||!FIREBASE_ENABLED}>+ Upload Photos</Btn>
+              {canEdit&&<Btn v="secondary" s="sm" onClick={()=>photoInputRef.current?.click()} disabled={uploading||!FIREBASE_ENABLED}>+ Upload Photos</Btn>}
             </div>
           </div>
           {(form.photos||[]).length>0?(
@@ -848,7 +852,7 @@ function VehiclesTab({data,setData,role,username,userEmail}){
                   <img src={ph.url} alt={ph.name} style={{width:"100%",height:100,objectFit:"cover",display:"block"}}/>
                   <div style={{padding:"6px 8px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                     <span style={{fontSize:9,color:C.slate500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:90}}>{ph.name}</span>
-                    <button onClick={e=>{e.stopPropagation();removeFile(ph,"photos");}} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:13,padding:0,lineHeight:1}}>✕</button>
+                    {canEdit&&<button onClick={e=>{e.stopPropagation();removeFile(ph,"photos");}} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:13,padding:0,lineHeight:1}}>✕</button>}
                   </div>
                 </div>
               ))}
@@ -868,7 +872,7 @@ function VehiclesTab({data,setData,role,username,userEmail}){
             <div><div style={{fontSize:13,fontWeight:700,color:C.slate800,display:"flex",alignItems:"center",gap:6}}><IcoFileText size={14}/> Title Documents</div><div style={{fontSize:11,color:C.slate400}}>Attach title scans, registration docs (PDF, JPG, PNG)</div></div>
             <div>
               <input ref={titleInputRef} type="file" accept="image/*,.pdf" multiple onChange={e=>handleFileUpload(e.target.files,"titles")} style={{display:"none"}}/>
-              <Btn v="secondary" s="sm" onClick={()=>titleInputRef.current?.click()} disabled={uploading||!FIREBASE_ENABLED}>+ Upload Title</Btn>
+              {canEdit&&<Btn v="secondary" s="sm" onClick={()=>titleInputRef.current?.click()} disabled={uploading||!FIREBASE_ENABLED}>+ Upload Title</Btn>}
             </div>
           </div>
           {(form.titleDocs||[]).length>0?(
@@ -884,7 +888,7 @@ function VehiclesTab({data,setData,role,username,userEmail}){
                   </div>
                   <div style={{display:"flex",gap:6,alignItems:"center"}}>
                     <a href={td.url} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{fontSize:11,color:C.blue,fontWeight:600,textDecoration:"none"}}>View</a>
-                    <button onClick={()=>removeFile(td,"titles")} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:13,padding:0}}>✕</button>
+                    {canEdit&&<button onClick={()=>removeFile(td,"titles")} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:13,padding:0}}>✕</button>}
                   </div>
                 </div>
               ))}
@@ -911,8 +915,8 @@ function VehiclesTab({data,setData,role,username,userEmail}){
           </div>)}
         </div>}
         <div style={{display:"flex",justifyContent:"space-between",marginTop:20}}>
-          <div>{editing&&<Btn v="danger" onClick={()=>setConfirm(editing)}>Delete</Btn>}</div>
-          <div style={{display:"flex",gap:8}}><Btn v="secondary" onClick={()=>setShowForm(false)}>Cancel</Btn><Btn onClick={save}>{editing?"Save Changes":"Add Vehicle"}</Btn></div>
+          <div>{canEdit&&editing&&<Btn v="danger" onClick={()=>setConfirm(editing)}>Delete</Btn>}</div>
+          <div style={{display:"flex",gap:8}}><Btn v="secondary" onClick={()=>setShowForm(false)}>{canEdit?"Cancel":"Close"}</Btn>{canEdit&&<Btn onClick={save}>{editing?"Save Changes":"Add Vehicle"}</Btn>}</div>
         </div>
       </Modal>}
 
@@ -932,7 +936,8 @@ function VehiclesTab({data,setData,role,username,userEmail}){
 // ═══════════════════════════════════════════════════════════════
 // CONTAINERS — With Demurrage Calculator
 // ═══════════════════════════════════════════════════════════════
-function ContainersTab({data,setData}){
+function ContainersTab({data,setData,role}){
+  const canEdit=role==="admin"||role==="manager";
   const[showForm,setShowForm]=useState(false);const[editing,setEditing]=useState(null);const[confirm,setConfirm]=useState(null);
   const empty=()=>({id:gid(),containerNum:`CONT-${String(data.nextContainerNum).padStart(3,"0")}`,containerType:"40ft Standard",shippingLine:"",bookingNumber:"",blNumber:"",sealNumber:"",portOrigin:"NJ",destination:"UAE",status:"Empty",departureDate:"",arrivalDate:"",freeDaysStart:"",notes:""});
   const[form,setForm]=useState(empty());const upd=(k,v)=>setForm(f=>({...f,[k]:v}));
@@ -942,7 +947,7 @@ function ContainersTab({data,setData}){
   return(
     <div>
       <PageHeader title="Containers" subtitle={`${data.containers.length} containers`}>
-        <Btn onClick={()=>{setForm(empty());setEditing(null);setShowForm(true);}}>+ Add Container</Btn>
+        {canEdit&&<Btn onClick={()=>{setForm(empty());setEditing(null);setShowForm(true);}}>+ Add Container</Btn>}
       </PageHeader>
       {data.containers.length===0?<Empty icon={<IcoPackage size={32}/>} title="No containers" sub="Create your first container booking"/>:
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(360px,1fr))",gap:14}}>
@@ -996,9 +1001,9 @@ function ContainersTab({data,setData}){
         {form.arrivalDate&&form.shippingLine&&(()=>{const d=calcDemurrage(form.shippingLine,daysAgo(form.arrivalDate));return d.overDays>0?<div style={{background:C.red50,borderRadius:10,padding:14,marginTop:14,border:"1px solid #FECACA",fontSize:12}}>
           <b style={{color:C.red}}>Demurrage Estimate ({form.shippingLine}):</b> {d.overDays} days over · Port: {f$(d.portStorage)} · Det: {f$(d.detention)} · NOC: {f$(d.noc)} · <b>Total: {f$(d.total)} AED</b>
         </div>:<div style={{background:C.emerald50,borderRadius:10,padding:12,marginTop:14,border:"1px solid #BBF7D0",fontSize:12,color:C.emerald}}>Within free days ({daysAgo(form.arrivalDate)} days at port)</div>;})()}
-        <div style={{display:"flex",justifyContent:"space-between",marginTop:20}}><div>{editing&&<Btn v="danger" onClick={()=>setConfirm(editing)}>Delete</Btn>}</div><div style={{display:"flex",gap:8}}><Btn v="secondary" onClick={()=>setShowForm(false)}>Cancel</Btn><Btn onClick={save}>{editing?"Save":"Add Container"}</Btn></div></div>
+        <div style={{display:"flex",justifyContent:"space-between",marginTop:20}}><div>{canEdit&&editing&&<Btn v="danger" onClick={()=>setConfirm(editing)}>Delete</Btn>}</div><div style={{display:"flex",gap:8}}><Btn v="secondary" onClick={()=>setShowForm(false)}>{canEdit?"Cancel":"Close"}</Btn>{canEdit&&<Btn onClick={save}>{editing?"Save":"Add Container"}</Btn>}</div></div>
       </Modal>}
-      {confirm&&<ConfirmDlg msg="Delete this container?" onOk={()=>del(confirm)} onCancel={()=>setConfirm(null)}/>}
+      {canEdit&&confirm&&<ConfirmDlg msg="Delete this container?" onOk={()=>del(confirm)} onCancel={()=>setConfirm(null)}/>}
     </div>
   );
 }
@@ -1006,7 +1011,8 @@ function ContainersTab({data,setData}){
 // ═══════════════════════════════════════════════════════════════
 // TOWING
 // ═══════════════════════════════════════════════════════════════
-function TowingTab({data,setData}){
+function TowingTab({data,setData,role}){
+  const canEdit=role==="admin"||role==="manager";
   const[showForm,setShowForm]=useState(false);const[editing,setEditing]=useState(null);const[confirm,setConfirm]=useState(null);
   const empty=()=>({id:gid(),vehicleNum:"",pickupLocation:"",deliveryLocation:"",miles:"",isRunning:true,vehicleType:"sedan",towCompany:"",driverName:"",driverPhone:"",status:"Scheduled",scheduledDate:today(),cost:"",notes:""});
   const[form,setForm]=useState(empty());const upd=(k,v)=>setForm(f=>({...f,[k]:v}));
@@ -1015,7 +1021,7 @@ function TowingTab({data,setData}){
   return(
     <div>
       <PageHeader title="Towing" subtitle={`${data.towingJobs.length} jobs · ${f$(data.towingJobs.reduce((s,t)=>s+p(t.cost),0))} total`}>
-        <Btn onClick={()=>{setForm(empty());setEditing(null);setShowForm(true);}}>+ New Tow Job</Btn>
+        {canEdit&&<Btn onClick={()=>{setForm(empty());setEditing(null);setShowForm(true);}}>+ New Tow Job</Btn>}
       </PageHeader>
       {data.towingJobs.length===0?<Empty icon={<IcoTruck size={32}/>} title="No towing jobs" sub="Schedule your first vehicle pickup"/>:
       <Card style={{padding:0,overflow:"hidden",borderRadius:16}}><div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",fontSize:13}}><thead><tr>{["Date","Vehicle","Pickup","Delivery","Miles","Company","Cost","Status"].map(h=><TH key={h}>{h}</TH>)}</tr></thead><tbody>
@@ -1037,9 +1043,9 @@ function TowingTab({data,setData}){
         {p(form.miles)>0&&<Card style={{marginTop:12,padding:"10px 16px",background:C.red50,border:"1px solid "+C.blueLight}}>
           <span style={{fontSize:12,color:C.slate600}}>Estimated cost: </span><b style={{...MO,color:C.blue}}>{f$(calcTowRate(p(form.miles),form.isRunning,form.vehicleType).total)}</b>
         </Card>}
-        <div style={{display:"flex",justifyContent:"space-between",marginTop:20}}><div>{editing&&<Btn v="danger" onClick={()=>setConfirm(editing)}>Delete</Btn>}</div><div style={{display:"flex",gap:8}}><Btn v="secondary" onClick={()=>setShowForm(false)}>Cancel</Btn><Btn onClick={save}>{editing?"Save":"Create Job"}</Btn></div></div>
+        <div style={{display:"flex",justifyContent:"space-between",marginTop:20}}><div>{canEdit&&editing&&<Btn v="danger" onClick={()=>setConfirm(editing)}>Delete</Btn>}</div><div style={{display:"flex",gap:8}}><Btn v="secondary" onClick={()=>setShowForm(false)}>{canEdit?"Cancel":"Close"}</Btn>{canEdit&&<Btn onClick={save}>{editing?"Save":"Create Job"}</Btn>}</div></div>
       </Modal>}
-      {confirm&&<ConfirmDlg msg="Delete this tow job?" onOk={()=>del(confirm)} onCancel={()=>setConfirm(null)}/>}
+      {canEdit&&confirm&&<ConfirmDlg msg="Delete this tow job?" onOk={()=>del(confirm)} onCancel={()=>setConfirm(null)}/>}
     </div>
   );
 }
@@ -1255,15 +1261,16 @@ function InvViewer({invoice,data,onClose}){
 // ═══════════════════════════════════════════════════════════════
 // SETTINGS — Admin accounts + Activity Log
 // ═══════════════════════════════════════════════════════════════
-function SettingsTab({data,setData,username}){
+function SettingsTab({data,setData,username,role}){
+  const canEdit=role==="admin";
   const[newU,setNewU]=useState("");const[newP,setNewP]=useState("");const[confirm,setConfirm]=useState(null);const admins=data.adminAccounts||[];
   const addAdmin=()=>{if(!newU.trim()||!newP.trim())return;if(admins.some(a=>a.username.toLowerCase()===newU.trim().toLowerCase()))return;setData(d=>({...d,adminAccounts:[...(d.adminAccounts||[]),{username:newU.trim(),password:newP}]}));setNewU("");setNewP("");};
   const remAdmin=idx=>{setData(d=>({...d,adminAccounts:d.adminAccounts.filter((_,i)=>i!==idx)}));setConfirm(null);};
 
   return(
     <div>
-      <PageHeader title="Settings" subtitle="Manage admin accounts and view activity"/>
-      <Card style={{marginBottom:18,padding:24}}>
+      <PageHeader title="Settings" subtitle={canEdit?"Manage admin accounts and view activity":"View activity log"}/>
+      {canEdit&&<Card style={{marginBottom:18,padding:24}}>
         <div style={{fontSize:13,fontWeight:700,color:C.slate700,marginBottom:14}}>Admin Accounts</div>
         <p style={{fontSize:12,color:C.slate400,marginBottom:16,lineHeight:1.6}}>Usernames listed here require a password and get full admin access. Any other username is treated as a customer automatically.</p>
         <div style={{border:"1px solid "+C.slate200,borderRadius:12,overflow:"hidden",marginBottom:16}}>
@@ -1272,7 +1279,7 @@ function SettingsTab({data,setData,username}){
           </tbody></table>
         </div>
         <div style={{display:"flex",gap:10,alignItems:"end"}}><Inp label="Username" value={newU} onChange={setNewU} placeholder="username" style={{minWidth:160}}/><Inp label="Password" value={newP} onChange={setNewP} placeholder="password" style={{minWidth:160}}/><Btn onClick={addAdmin} style={{marginBottom:1}}>+ Add</Btn></div>
-      </Card>
+      </Card>}
 
       {/* Activity Log */}
       <Card style={{padding:24}}>
@@ -1409,19 +1416,22 @@ function AppInner(){
   const[firebaseUid,setFirebaseUid]=useState(null);
   const[dataReady,setDataReady]=useState(false);
   const[allowedTabs,setAllowedTabs]=useState(null);
+  const[allUsers,setAllUsers]=useState([]);
   const[collapsed,setCollapsed]=useState(false);const[menuOpen,setMenuOpen]=useState(false);
-  const tabs=role==="admin"?ADMIN_TABS:role==="manager"?(allowedTabs&&allowedTabs.length?allowedTabs.filter(t=>ADMIN_TABS.includes(t)):["Dashboard"]):CUST_TABS;
+  const isAdmin=role==="admin";const isManager=role==="manager";const isUser=role==="user";
+  const USER_TABS=["Dashboard","Vehicles","Containers","Towing","Rates","Invoices","Settings"];
+  const tabs=isAdmin?ADMIN_TABS:isManager?(allowedTabs&&allowedTabs.length?allowedTabs.filter(t=>ADMIN_TABS.includes(t)):["Dashboard"]):role==="customer"?CUST_TABS:USER_TABS;
 
   // ─── Init: Firebase auth listener OR localStorage fallback ───
+  const sharedUnsubRef=useRef(null);
   useEffect(()=>{
     if(FIREBASE_ENABLED){
-      // Timeout fallback — if Firebase hangs, show login after 5s
       const timeout=setTimeout(()=>{setLoaded(true);},5000);
       const unsub=onAuthChange(async(fbUser)=>{
         try{
           if(fbUser){
             const isSuperAdmin=fbUser.email==="support@sayarah.io";
-            const r=isSuperAdmin?"admin":(await getUserRole(fbUser.uid))||"customer";
+            const r=isSuperAdmin?"admin":(await getUserRole(fbUser.uid))||"user";
             setFirebaseUid(fbUser.uid);
             setUsername(fbUser.displayName||fbUser.email.split("@")[0]);
             setUserEmail(fbUser.email||"");
@@ -1434,23 +1444,34 @@ function AppInner(){
                 if(tabs)setAllowedTabs(tabs);
               }
             }else{setAllowedTabs(null);}
-            const cloudData=await loadAppData(fbUser.uid);
+            // Load shared data (all users read from same document)
+            const cloudData=await loadSharedData();
             if(cloudData)setData({...defaultData(),...cloudData});
             setDataReady(true);
+            // Listen for real-time shared data changes
+            if(sharedUnsubRef.current)sharedUnsubRef.current();
+            sharedUnsubRef.current=onSharedDataChange((d)=>{
+              setData(prev=>({...defaultData(),...d}));
+            });
+            // Load all users for admin vehicle assignment
+            if(r==="admin"||isSuperAdmin){
+              try{const users=await getAllUsers();setAllUsers(users);}catch{}
+            }
           }else{
-            // Firebase says user is signed out — reset everything
             setFirebaseUid(null);
             setLoggedIn(false);
             setUsername("");
             setUserEmail("");
             setRole("customer");
             setDataReady(false);
+            setAllUsers([]);
+            if(sharedUnsubRef.current){sharedUnsubRef.current();sharedUnsubRef.current=null;}
           }
         }catch(e){console.error("Auth init error:",e);}
         clearTimeout(timeout);
         setLoaded(true);
       });
-      return()=>{unsub();clearTimeout(timeout);};
+      return()=>{unsub();clearTimeout(timeout);if(sharedUnsubRef.current)sharedUnsubRef.current();};
     }else{
       try{const raw=localStorage.getItem(STORAGE_KEY);if(raw)setData({...defaultData(),...JSON.parse(raw)});}catch{}
       try{const s=localStorage.getItem("sayarah-sess-v3");if(s){const x=JSON.parse(s);setLoggedIn(true);setUsername(x.username);setUserEmail(x.email||"");setRole(x.role||"customer");}}catch{}
@@ -1459,17 +1480,19 @@ function AppInner(){
     }
   },[]);
 
-  // ─── Save data: Firestore OR localStorage (only after cloud data loaded) ───
+  // ─── Save data: Firestore shared OR localStorage (only after cloud data loaded, admin/manager only) ───
   useEffect(()=>{
     if(!loaded||!dataReady)return;
     if(FIREBASE_ENABLED&&firebaseUid){
-      const t=setTimeout(()=>{setSaving(true);saveAppData(firebaseUid,data).then(()=>setTimeout(()=>setSaving(false),400)).catch(()=>setSaving(false));},600);
+      // Only admin and manager can save shared data
+      if(role!=="admin"&&role!=="manager")return;
+      const t=setTimeout(()=>{setSaving(true);saveSharedData(data).then(()=>setTimeout(()=>setSaving(false),400)).catch(()=>setSaving(false));},600);
       return()=>clearTimeout(t);
     }else{
       const t=setTimeout(()=>{try{setSaving(true);localStorage.setItem(STORAGE_KEY,JSON.stringify(data));setTimeout(()=>setSaving(false),400);}catch{setSaving(false);}},400);
       return()=>clearTimeout(t);
     }
-  },[data,loaded,dataReady,firebaseUid]);
+  },[data,loaded,dataReady,firebaseUid,role]);
 
   const handleLogin=(u,r,uid,email)=>{setUsername(u);setUserEmail(email||"");setRole(r);setLoggedIn(true);setTab("Dashboard");if(uid)setFirebaseUid(uid);if(!FIREBASE_ENABLED)localStorage.setItem("sayarah-sess-v3",JSON.stringify({username:u,role:r,email:email||""}));};
   const handleLogout=async()=>{setLoggedIn(false);setUsername("");setUserEmail("");setRole("customer");setTab("Dashboard");setFirebaseUid(null);setDataReady(false);localStorage.removeItem("sayarah-sess-v3");if(FIREBASE_ENABLED){try{await firebaseSignOut();}catch{}}};
@@ -1557,17 +1580,17 @@ function AppInner(){
           <span style={{fontSize:13,fontWeight:700,color:"#fff",marginLeft:8}}>SAYARAH LOGISTICS</span>
         </div>
         <div style={{maxWidth:1200,margin:"0 auto",padding:"28px 32px"}}>
-          {tab==="Dashboard"&&<DashboardTab data={data} role={role} username={username} userEmail={userEmail}/>}
-          {tab==="Customers"&&role==="admin"&&<CustomersTab data={data} setData={setData}/>}
-          {tab==="Vehicles"&&(role==="admin"||role==="manager")&&<VehiclesTab data={data} setData={setData} role={role} username={username} userEmail={userEmail}/>}
-          {tab==="Containers"&&(role==="admin"||role==="manager")&&<ContainersTab data={data} setData={setData}/>}
-          {tab==="Towing"&&(role==="admin"||role==="manager")&&<TowingTab data={data} setData={setData}/>}
-          {tab==="Invoices"&&(role==="admin"||role==="manager")&&<InvoicesTab data={data} setData={setData} role={role} username={username} userEmail={userEmail}/>}
-          {tab==="Settings"&&role==="admin"&&<SettingsTab data={data} setData={setData} username={username}/>}
-          {tab==="My Shipments"&&role==="customer"&&<VehiclesTab data={data} setData={setData} role={role} username={username} userEmail={userEmail}/>}
-          {tab==="My Invoices"&&role==="customer"&&<InvoicesTab data={data} setData={setData} role={role} username={username} userEmail={userEmail}/>}
+          {tab==="Dashboard"&&<DashboardTab data={data} role={role} username={username} userEmail={userEmail} firebaseUid={firebaseUid}/>}
+          {tab==="Customers"&&isAdmin&&<CustomersTab data={data} setData={setData}/>}
+          {tab==="Vehicles"&&(isAdmin||isManager||isUser)&&<VehiclesTab data={data} setData={setData} role={role} username={username} userEmail={userEmail} firebaseUid={firebaseUid} allUsers={allUsers}/>}
+          {tab==="Containers"&&(isAdmin||isManager||isUser)&&<ContainersTab data={data} setData={setData} role={role}/>}
+          {tab==="Towing"&&(isAdmin||isManager||isUser)&&<TowingTab data={data} setData={setData} role={role}/>}
+          {tab==="Invoices"&&(isAdmin||isManager||isUser)&&<InvoicesTab data={data} setData={setData} role={role} username={username} userEmail={userEmail} firebaseUid={firebaseUid}/>}
+          {tab==="Settings"&&(isAdmin||isUser)&&<SettingsTab data={data} setData={setData} username={username} role={role}/>}
+          {tab==="My Shipments"&&role==="customer"&&<VehiclesTab data={data} setData={setData} role={role} username={username} userEmail={userEmail} firebaseUid={firebaseUid} allUsers={allUsers}/>}
+          {tab==="My Invoices"&&role==="customer"&&<InvoicesTab data={data} setData={setData} role={role} username={username} userEmail={userEmail} firebaseUid={firebaseUid}/>}
           {tab==="Rates"&&<RatesTab/>}
-          {tab==="Users"&&role==="admin"&&<UsersManagementTab/>}
+          {tab==="Users"&&isAdmin&&<UsersManagementTab/>}
         </div>
         <div style={{textAlign:"center",padding:"20px 0 32px",fontSize:11,color:C.slate400}}>Powered by <span style={{fontWeight:700}}>Sayarah Inc</span></div>
       </main>

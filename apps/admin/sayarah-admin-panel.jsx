@@ -326,6 +326,7 @@ function UsersView({ users, onRefresh }) {
             <tr style={{ background: B.cream, borderBottom: `2px solid ${B.grayLight}` }}>
               <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 10, fontWeight: 800, color: B.grayDark, textTransform: "uppercase", letterSpacing: ".05em" }}>User</th>
               <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 10, fontWeight: 800, color: B.grayDark, textTransform: "uppercase", letterSpacing: ".05em" }}>Role</th>
+              <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 10, fontWeight: 800, color: B.grayDark, textTransform: "uppercase", letterSpacing: ".05em" }}>App Access</th>
               <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 10, fontWeight: 800, color: B.grayDark, textTransform: "uppercase", letterSpacing: ".05em" }}>Auto Trade Hub Pages</th>
               <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 10, fontWeight: 800, color: B.grayDark, textTransform: "uppercase", letterSpacing: ".05em" }}>Logistics Pages</th>
               <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 10, fontWeight: 800, color: B.grayDark, textTransform: "uppercase", letterSpacing: ".05em" }}>Actions</th>
@@ -358,6 +359,21 @@ function UsersView({ users, onRefresh }) {
                       </select>
                     ) : (
                       <Badge color={roleInfo.color} bg={roleInfo.bg}>{roleInfo.icon(12, roleInfo.color)} {roleInfo.label}</Badge>
+                    )}
+                  </td>
+
+                  {/* App Access Toggles */}
+                  <td style={{ padding: "12px 14px" }}>
+                    {isEditing && !isSuperAdmin ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <button onClick={() => setEditUser({ ...editUser, auctionAccess: !editUser.auctionAccess })} style={{ fontSize: 9, padding: "4px 8px", borderRadius: 4, border: `1px solid ${editUser.auctionAccess ? B.green : B.grayLight}`, background: editUser.auctionAccess ? B.greenBg : "transparent", color: editUser.auctionAccess ? "#059669" : B.gray, cursor: "pointer", fontWeight: 600, fontFamily: font }}>{editUser.auctionAccess ? "✓" : "✗"} Auction</button>
+                        <button onClick={() => setEditUser({ ...editUser, logisticsAccess: !(editUser.logisticsAccess !== false) })} style={{ fontSize: 9, padding: "4px 8px", borderRadius: 4, border: `1px solid ${editUser.logisticsAccess !== false ? B.blue : B.grayLight}`, background: editUser.logisticsAccess !== false ? B.blueBg : "transparent", color: editUser.logisticsAccess !== false ? B.blue : B.gray, cursor: "pointer", fontWeight: 600, fontFamily: font }}>{editUser.logisticsAccess !== false ? "✓" : "✗"} Logistics</button>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                        <span style={{ fontSize: 9, fontWeight: 600, color: (isSuperAdmin || u.role === "admin" || u.auctionAccess) ? "#059669" : B.gray }}>{(isSuperAdmin || u.role === "admin" || u.auctionAccess) ? "✓" : "✗"} Auction</span>
+                        <span style={{ fontSize: 9, fontWeight: 600, color: (isSuperAdmin || u.role === "admin" || u.logisticsAccess !== false) ? B.blue : B.gray }}>{(isSuperAdmin || u.role === "admin" || u.logisticsAccess !== false) ? "✓" : "✗"} Logistics</span>
+                      </div>
                     )}
                   </td>
 
@@ -411,6 +427,8 @@ function UsersView({ users, onRefresh }) {
                         <Btn variant="success" onClick={() => {
                           savePerms(u.id, {
                             role: editUser.role,
+                            auctionAccess: !!editUser.auctionAccess,
+                            logisticsAccess: editUser.logisticsAccess !== false,
                             allowedTabs: editUser.allowedTabs || AUCTION_TABS,
                             allowedLogisticsTabs: editUser.allowedLogisticsTabs || LOGISTICS_TABS,
                           });
@@ -492,8 +510,8 @@ function ActivityView({ users }) {
                   <td style={{ padding: "10px 14px", fontWeight: 600 }}>{u.displayName || "—"}{isSuperAdmin && " (Super Admin)"}</td>
                   <td style={{ padding: "10px 14px", color: B.gray }}>{u.email}</td>
                   <td style={{ padding: "10px 14px" }}><Badge color={roleInfo.color} bg={roleInfo.bg}>{roleInfo.label}</Badge></td>
-                  <td style={{ padding: "10px 14px", fontSize: 10, color: B.grayDark }}>{isSuperAdmin || u.role === "admin" ? "Full" : (u.allowedTabs || ["Dashboard"]).length + " pages"}</td>
-                  <td style={{ padding: "10px 14px", fontSize: 10, color: B.grayDark }}>{isSuperAdmin || u.role === "admin" ? "Full" : (u.allowedLogisticsTabs || ["Dashboard"]).length + " pages"}</td>
+                  <td style={{ padding: "10px 14px", fontSize: 10, color: (isSuperAdmin || u.role === "admin" || u.auctionAccess) ? "#059669" : B.gray, fontWeight: 600 }}>{(isSuperAdmin || u.role === "admin" || u.auctionAccess) ? "✓ Yes" : "✗ No"}</td>
+                  <td style={{ padding: "10px 14px", fontSize: 10, color: (isSuperAdmin || u.role === "admin" || u.logisticsAccess !== false) ? B.blue : B.gray, fontWeight: 600 }}>{(isSuperAdmin || u.role === "admin" || u.logisticsAccess !== false) ? "✓ Yes" : "✗ No"}</td>
                 </tr>
               );
             })}

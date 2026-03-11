@@ -39,6 +39,8 @@ export async function firebaseSignUp(email, password, displayName) {
     email,
     displayName,
     role: "user",
+    logisticsAccess: true,
+    auctionAccess: false,
     createdAt: serverTimestamp(),
   });
   return cred.user;
@@ -54,6 +56,8 @@ export async function firebaseSignIn(email, password) {
       email: cred.user.email,
       displayName: cred.user.displayName || email.split("@")[0],
       role: "user",
+      logisticsAccess: true,
+      auctionAccess: false,
       createdAt: serverTimestamp(),
     });
   }
