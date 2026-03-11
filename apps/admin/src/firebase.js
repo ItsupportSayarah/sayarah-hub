@@ -182,6 +182,30 @@ export async function loadActivityLogFB() {
   return [];
 }
 
+// ─── Create user doc manually (admin adds user to Firestore) ───
+export async function createUserDoc(uid, email, displayName, role = "user") {
+  await setDoc(doc(db, "users", uid), {
+    uid,
+    email,
+    displayName: displayName || email.split("@")[0],
+    role,
+    createdAt: serverTimestamp(),
+  }, { merge: true });
+}
+
+// ─── Add user by email (creates Firestore doc using email-based ID) ───
+export async function addUserByEmail(email, displayName, role = "user") {
+  // Use a deterministic ID based on email so duplicates are prevented
+  const id = email.replace(/[^a-zA-Z0-9]/g, "_");
+  await setDoc(doc(db, "users", id), {
+    uid: id,
+    email,
+    displayName: displayName || email.split("@")[0],
+    role,
+    createdAt: serverTimestamp(),
+  }, { merge: true });
+}
+
 // ─── Users list for admin management ───
 export async function saveUsersFB(users) {
   await setDoc(doc(db, "auctionShared", "usersList"), { items: users, updatedAt: serverTimestamp() });

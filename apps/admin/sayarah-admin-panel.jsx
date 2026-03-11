@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData, onUsersChange } from "./src/firebase.js";
+import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData, onUsersChange, addUserByEmail } from "./src/firebase.js";
 
 const FIREBASE_ENABLED = (() => {
   try { return auth && auth.app && auth.app.options && auth.app.options.apiKey && !auth.app.options.apiKey.startsWith("YOUR_"); } catch { return false; }
@@ -207,6 +207,11 @@ function UsersView({ users, onRefresh }) {
   const [msg, setMsg] = useState("");
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [showAddUser, setShowAddUser] = useState(false);
+  const [newEmail, setNewEmail] = useState("");
+  const [newName, setNewName] = useState("");
+  const [newRole, setNewRole] = useState("user");
+  const [adding, setAdding] = useState(false);
 
   const savePerms = async (uid, updates) => {
     setSaving(true); setMsg("");
@@ -217,6 +222,19 @@ function UsersView({ users, onRefresh }) {
       setTimeout(() => setMsg(""), 3000);
     } catch (e) { setMsg("Error: " + e.message); }
     setSaving(false);
+  };
+
+  const handleAddUser = async () => {
+    if (!newEmail) { setMsg("Error: Email is required"); return; }
+    setAdding(true); setMsg("");
+    try {
+      await addUserByEmail(newEmail.trim(), newName.trim(), newRole);
+      setMsg("User added successfully!");
+      setNewEmail(""); setNewName(""); setNewRole("user"); setShowAddUser(false);
+      await onRefresh();
+      setTimeout(() => setMsg(""), 3000);
+    } catch (e) { setMsg("Error: " + e.message); }
+    setAdding(false);
   };
 
   const filtered = users.filter(u => {
@@ -235,8 +253,36 @@ function UsersView({ users, onRefresh }) {
           <div style={{ fontSize: 22, fontWeight: 900, color: B.navy }}>Users & Permissions</div>
           <div style={{ fontSize: 12, color: B.gray }}>Manage access across Auto Trade Hub & Sayarah Logistics</div>
         </div>
-        <Btn onClick={onRefresh}>↻ Refresh</Btn>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn onClick={() => setShowAddUser(!showAddUser)} variant={showAddUser ? "ghost" : "success"} style={{ fontSize: 12 }}>{showAddUser ? "Cancel" : "+ Add User"}</Btn>
+          <Btn onClick={onRefresh}>↻ Refresh</Btn>
+        </div>
       </div>
+
+      {/* Add User Form */}
+      {showAddUser && (
+        <Card style={{ marginBottom: 16, borderLeft: `4px solid ${B.green}` }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: B.navy, marginBottom: 12 }}>Add New User to Firestore</div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+            <div>
+              <label style={{ fontSize: 10, fontWeight: 700, color: B.grayDark, display: "block", marginBottom: 4 }}>Email *</label>
+              <input value={newEmail} onChange={e => setNewEmail(e.target.value)} type="email" placeholder="user@example.com" style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${B.grayLight}`, fontSize: 12, fontFamily: font, width: 220, outline: "none" }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 10, fontWeight: 700, color: B.grayDark, display: "block", marginBottom: 4 }}>Display Name</label>
+              <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Full Name" style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${B.grayLight}`, fontSize: 12, fontFamily: font, width: 180, outline: "none" }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 10, fontWeight: 700, color: B.grayDark, display: "block", marginBottom: 4 }}>Role</label>
+              <select value={newRole} onChange={e => setNewRole(e.target.value)} style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${B.grayLight}`, fontSize: 12, fontFamily: font, background: B.white }}>
+                {ROLES.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
+              </select>
+            </div>
+            <Btn onClick={handleAddUser} disabled={adding} variant="success" style={{ fontSize: 12 }}>{adding ? "Adding..." : "Add User"}</Btn>
+          </div>
+          <div style={{ fontSize: 10, color: B.gray, marginTop: 8 }}>Add users who exist in Firebase Auth but haven't signed in to any app yet. They will appear in the admin panel immediately.</div>
+        </Card>
+      )}
 
       {msg && <div style={{ background: msg.startsWith("Error") ? B.redBg : B.greenBg, color: msg.startsWith("Error") ? B.red : "#166534", padding: "10px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginBottom: 14 }}>{msg}</div>}
 
