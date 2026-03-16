@@ -3537,15 +3537,13 @@ function AppInner() {
           <div className="app-header-inner" style={{ maxWidth: 1280, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: 56 }}>
             {/* Left — Brand Box + Nav Items */}
             <div style={{ display: "flex", alignItems: "center", gap: 0, overflow: "hidden" }}>
-              {/* SAYARAH maroon box */}
+              {/* Auto Trade Hub Logo */}
               <div className="app-header-brand" onClick={() => setTab("Dashboard")} style={{
-                background: "#8B1A1A", color: "#fff", padding: "8px 16px", fontWeight: 900,
-                fontSize: 14, letterSpacing: "0.12em", cursor: "pointer", flexShrink: 0,
-                fontFamily: "inherit", marginRight: 20, borderRadius: 4,
+                cursor: "pointer", flexShrink: 0, marginRight: 20,
                 display: "flex", alignItems: "center", gap: 8,
               }}>
-                SAYARAH
-                {saving && <span style={{ fontSize: 8, color: "rgba(255,255,255,0.6)", fontWeight: 500, animation: "pulse 1.5s infinite" }}>Saving...</span>}
+                <img src="/logo.png" alt="Auto Trade Hub" style={{ height: 36, objectFit: "contain" }} />
+                {saving && <span style={{ fontSize: 8, color: "#8B1A1A", fontWeight: 500, animation: "pulse 1.5s infinite" }}>Saving...</span>}
               </div>
 
               {/* Center Nav Items */}
