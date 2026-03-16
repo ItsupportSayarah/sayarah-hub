@@ -898,7 +898,7 @@ const WIDGET_DEFS = [
   { id: "recent", label: "Recent Vehicles" },
 ];
 
-function DashboardTab({ data }) {
+function DashboardTab({ data, username, darkMode }) {
   const { vehicles, expenses, sales, mileage, holdCosts } = data;
   const sold = vehicles.filter(v => v.status === "Sold");
   const unsold = vehicles.filter(v => v.status !== "Sold");
@@ -966,6 +966,57 @@ function DashboardTab({ data }) {
 
   return (
     <div>
+      {/* ═══ Welcome Hero Section ═══ */}
+      <div style={{
+        position: "relative", overflow: "hidden",
+        background: darkMode ? "#1a1a1a" : "#f5f5f5",
+        borderRadius: 16, marginBottom: 20,
+        padding: "60px 40px", textAlign: "center",
+      }}>
+        {/* Decorative geometric shapes */}
+        <div style={{ position: "absolute", top: -40, left: -40, width: 180, height: 180, background: darkMode ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.04)", transform: "rotate(45deg)", borderRadius: 20 }} />
+        <div style={{ position: "absolute", top: 30, right: -60, width: 220, height: 220, background: darkMode ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.03)", transform: "rotate(30deg)", borderRadius: 24 }} />
+        <div style={{ position: "absolute", bottom: -50, left: "20%", width: 160, height: 160, background: darkMode ? "rgba(255,255,255,0.025)" : "rgba(0,0,0,0.035)", transform: "rotate(60deg)", borderRadius: 16 }} />
+        <div style={{ position: "absolute", bottom: 20, right: "15%", width: 100, height: 100, background: darkMode ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.025)", transform: "rotate(15deg)", borderRadius: 12 }} />
+        {/* Small diamond shapes in corners */}
+        <div style={{ position: "absolute", top: 20, left: 30, width: 14, height: 14, border: `2px solid ${darkMode ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.1)"}`, transform: "rotate(45deg)" }} />
+        <div style={{ position: "absolute", top: 50, right: 40, width: 10, height: 10, border: `2px solid ${darkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.08)"}`, transform: "rotate(45deg)" }} />
+        <div style={{ position: "absolute", bottom: 30, left: 50, width: 12, height: 12, border: `2px solid ${darkMode ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.08)"}`, transform: "rotate(45deg)" }} />
+        <div style={{ position: "absolute", bottom: 40, right: 60, width: 16, height: 16, border: `2px solid ${darkMode ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.07)"}`, transform: "rotate(45deg)" }} />
+
+        {/* Decorative corner brackets around welcome text */}
+        <div style={{ position: "relative", display: "inline-block", padding: "20px 40px" }}>
+          {/* Top-left bracket */}
+          <div style={{ position: "absolute", top: 0, left: 0, width: 20, height: 20, borderTop: "3px solid #8B1A1A", borderLeft: "3px solid #8B1A1A" }} />
+          {/* Top-right bracket */}
+          <div style={{ position: "absolute", top: 0, right: 0, width: 20, height: 20, borderTop: `3px solid ${darkMode ? "#aaa" : "#333"}`, borderRight: `3px solid ${darkMode ? "#aaa" : "#333"}` }} />
+          {/* Bottom-left bracket */}
+          <div style={{ position: "absolute", bottom: 0, left: 0, width: 20, height: 20, borderBottom: `3px solid ${darkMode ? "#aaa" : "#333"}`, borderLeft: `3px solid ${darkMode ? "#aaa" : "#333"}` }} />
+          {/* Bottom-right bracket */}
+          <div style={{ position: "absolute", bottom: 0, right: 0, width: 20, height: 20, borderBottom: "3px solid #8B1A1A", borderRight: "3px solid #8B1A1A" }} />
+
+          <div style={{
+            fontSize: 32, fontWeight: 900, color: BRAND.black,
+            textTransform: "uppercase", letterSpacing: "0.08em",
+            lineHeight: 1.2, marginBottom: 8,
+          }}>
+            Welcome, {username || "User"}
+          </div>
+          <div style={{ fontSize: 14, color: BRAND.gray, fontWeight: 400, letterSpacing: "0.02em" }}>
+            We're glad to have you here
+          </div>
+        </div>
+
+        {/* Decorative dots-and-line element */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 20 }}>
+          <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#8B1A1A" }} />
+          <div style={{ width: 40, height: 2, background: darkMode ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.12)", borderRadius: 1 }} />
+          <div style={{ width: 4, height: 4, borderRadius: "50%", background: darkMode ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.2)" }} />
+          <div style={{ width: 40, height: 2, background: darkMode ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.12)", borderRadius: 1 }} />
+          <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#8B1A1A" }} />
+        </div>
+      </div>
+
       {/* Widget Customization Toggle */}
       <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
         <button onClick={() => setShowWidgetConfig(p => !p)} style={{ background: "transparent", border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 600, color: BRAND.gray, cursor: "pointer", fontFamily: "inherit", display: "flex", alignItems: "center", gap: 4 }}>
@@ -3455,9 +3506,9 @@ function AppInner() {
       <style>{`
 @media(max-width:768px){
   .app-header-bar{padding:0 12px!important}
-  .app-nav-bar{padding:0 8px!important}
-  .app-header-inner{height:50px!important}
+  .app-header-inner{height:auto!important;flex-wrap:wrap!important;padding:8px 0!important}
   .app-header-actions .action-label{display:none!important}
+  .app-nav{overflow-x:auto!important;-webkit-overflow-scrolling:touch}
   .search-dropdown{width:calc(100vw - 32px)!important;right:-60px!important}
   .notif-dropdown{width:calc(100vw - 32px)!important;right:-60px!important}
   .auction-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
@@ -3475,32 +3526,66 @@ function AppInner() {
   .notif-dropdown{width:calc(100vw - 16px)!important;left:50%!important;right:auto!important;transform:translateX(-50%)!important}
 }
       `}</style>
-      {/* ═══ Premium Header ═══ */}
+      {/* ═══ Premium Header — Single Clean White Navbar ═══ */}
       <div style={{ position: "sticky", top: 0, zIndex: 100 }}>
-        {/* Top Bar — Logo + Actions */}
         <div className="app-header-bar" style={{
-          background: `linear-gradient(135deg, ${BRAND.red} 0%, #6B1010 100%)`,
+          background: darkMode ? "#1a1a1a" : "#fff",
           padding: "0 32px",
-          borderBottom: "1px solid rgba(255,255,255,0.08)",
-          boxShadow: "0 2px 20px rgba(0,0,0,0.3)",
+          borderBottom: `1px solid ${darkMode ? "#333" : "#E5E7EB"}`,
+          boxShadow: "0 1px 8px rgba(0,0,0,0.06)",
         }}>
-          <div className="app-header-inner" style={{ maxWidth: 1280, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: 60 }}>
-            {/* Brand — Left */}
-            <div className="app-header-brand" onClick={() => setTab("Dashboard")} style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0, cursor: "pointer" }}>
-              <img src="/logo.png" alt="Auto Trade Hub" style={{ height: 54, objectFit: "contain" }} />
-              {saving && <span style={{ fontSize: 9, color: "rgba(255,255,255,0.5)", marginLeft: 4, animation: "pulse 1.5s infinite" }}>Saving...</span>}
+          <div className="app-header-inner" style={{ maxWidth: 1280, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: 56 }}>
+            {/* Left — Brand Box + Nav Items */}
+            <div style={{ display: "flex", alignItems: "center", gap: 0, overflow: "hidden" }}>
+              {/* SAYARAH maroon box */}
+              <div className="app-header-brand" onClick={() => setTab("Dashboard")} style={{
+                background: "#8B1A1A", color: "#fff", padding: "8px 16px", fontWeight: 900,
+                fontSize: 14, letterSpacing: "0.12em", cursor: "pointer", flexShrink: 0,
+                fontFamily: "inherit", marginRight: 20, borderRadius: 4,
+                display: "flex", alignItems: "center", gap: 8,
+              }}>
+                SAYARAH
+                {saving && <span style={{ fontSize: 8, color: "rgba(255,255,255,0.6)", fontWeight: 500, animation: "pulse 1.5s infinite" }}>Saving...</span>}
+              </div>
+
+              {/* Center Nav Items */}
+              <nav className="app-nav" style={{ display: "flex", alignItems: "center", gap: 0, overflowX: "auto" }}>
+                {visibleTabs.map(t => {
+                  const isActive = tab === t;
+                  const hasDropdown = ["Reports", "Analytics", "Inventory"].includes(t);
+                  return (
+                    <button key={t} onClick={() => setTab(t)} style={{
+                      background: "transparent",
+                      color: isActive ? (darkMode ? "#fff" : "#111") : (darkMode ? "#9CA3AF" : "#6B7280"),
+                      border: "none", padding: "18px 12px", fontSize: 11,
+                      fontWeight: isActive ? 800 : 600, cursor: "pointer", fontFamily: "inherit",
+                      letterSpacing: "0.06em", textTransform: "uppercase",
+                      position: "relative", whiteSpace: "nowrap", flexShrink: 0,
+                      borderBottom: isActive ? `2px solid #8B1A1A` : "2px solid transparent",
+                      transition: "all 0.2s ease",
+                      display: "flex", alignItems: "center", gap: 4,
+                    }}>
+                      {t === "Dashboard" ? "DASHBOARD" : t.toUpperCase()}
+                      {t === "Approvals" && pendingApprovalCount > 0 && (
+                        <span style={{ background: "#8B1A1A", color: "#fff", fontSize: 8, fontWeight: 900, padding: "1px 5px", borderRadius: 8, marginLeft: 2 }}>{pendingApprovalCount}</span>
+                      )}
+                      {hasDropdown && <span style={{ fontSize: 9, marginLeft: 2, opacity: 0.5 }}>{"\u02C5"}</span>}
+                    </button>
+                  );
+                })}
+              </nav>
             </div>
 
             {/* Right Actions */}
-            <div className="app-header-actions" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <div className="app-header-actions" style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
               {/* Search */}
               <div style={{ position: "relative" }}>
                 <button onClick={() => setShowSearch(p => !p)} style={{
-                  background: showSearch ? "rgba(255,255,255,0.15)" : "transparent",
+                  background: showSearch ? (darkMode ? "rgba(255,255,255,0.1)" : "#f3f4f6") : "transparent",
                   border: "none", padding: 10, borderRadius: 8, cursor: "pointer",
                   display: "flex", alignItems: "center", transition: "all 0.2s",
                 }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={darkMode ? "#9CA3AF" : "#6B7280"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
                 </button>
                 {showSearch && (
                   <div className="search-dropdown" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, width: 380, background: BRAND.white, borderRadius: 14, boxShadow: "0 20px 60px rgba(0,0,0,0.25)", border: `1px solid ${BRAND.grayLight}`, zIndex: 200, overflow: "hidden" }}>
@@ -3533,19 +3618,19 @@ function AppInner() {
                 cursor: "pointer", display: "flex", alignItems: "center", transition: "all 0.2s",
               }}>
                 {darkMode
-                  ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-                  : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>}
+                  ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#D1D5DB" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+                  : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6B7280" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>}
               </button>
 
               {/* Notifications */}
               <div style={{ position: "relative" }}>
                 <button onClick={() => setShowNotifPanel(p => !p)} style={{
-                  background: showNotifPanel ? "rgba(255,255,255,0.15)" : "transparent",
+                  background: showNotifPanel ? (darkMode ? "rgba(255,255,255,0.1)" : "#f3f4f6") : "transparent",
                   border: "none", padding: 10, borderRadius: 8, cursor: "pointer",
                   position: "relative", display: "flex", alignItems: "center", transition: "all 0.2s",
                 }}>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-                  {notifications.length > 0 && <span style={{ position: "absolute", top: 4, right: 4, background: "#FBBF24", color: "#111", fontSize: 7, fontWeight: 900, width: 15, height: 15, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid " + BRAND.red, animation: "pulse 2s infinite" }}>{notifications.length}</span>}
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={darkMode ? "#9CA3AF" : "#6B7280"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                  {notifications.length > 0 && <span style={{ position: "absolute", top: 4, right: 4, background: "#FBBF24", color: "#111", fontSize: 7, fontWeight: 900, width: 15, height: 15, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", border: "2px solid " + (darkMode ? "#1a1a1a" : "#fff"), animation: "pulse 2s infinite" }}>{notifications.length}</span>}
                 </button>
                 {showNotifPanel && (
                   <div className="notif-dropdown" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, width: 360, background: BRAND.white, borderRadius: 14, boxShadow: "0 20px 60px rgba(0,0,0,0.25)", border: `1px solid ${BRAND.grayLight}`, zIndex: 200, maxHeight: 420, overflowY: "auto", overflow: "hidden" }}>
@@ -3568,87 +3653,47 @@ function AppInner() {
                 )}
               </div>
 
-              {/* Divider */}
-              <div style={{ width: 1, height: 24, background: "rgba(255,255,255,0.15)", margin: "0 8px" }} />
+              {/* Settings Gear */}
+              <button onClick={() => setTab("Activity")} title="Settings" style={{
+                background: "transparent", border: "none", padding: 10, borderRadius: 8,
+                cursor: "pointer", display: "flex", alignItems: "center", transition: "all 0.2s",
+              }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={darkMode ? "#9CA3AF" : "#6B7280"} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
 
-              {/* User Avatar + Name */}
+              {/* Divider */}
+              <div style={{ width: 1, height: 24, background: darkMode ? "#333" : "#E5E7EB", margin: "0 6px" }} />
+
+              {/* User Avatar */}
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginRight: 6 }}>
                 <div style={{
                   width: 32, height: 32, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-                  background: "rgba(255,255,255,0.15)", border: "2px solid rgba(255,255,255,0.25)",
-                  fontSize: 12, fontWeight: 800, color: "#fff", textTransform: "uppercase",
+                  background: darkMode ? "rgba(255,255,255,0.1)" : "#f3f4f6", border: `2px solid ${darkMode ? "#444" : "#E5E7EB"}`,
+                  fontSize: 12, fontWeight: 800, color: darkMode ? "#D1D5DB" : "#374151", textTransform: "uppercase",
                 }}>{username ? username.charAt(0) : "U"}</div>
                 <div className="action-label">
-                  <div style={{ fontSize: 11, fontWeight: 700, color: "#fff", lineHeight: 1.2 }}>{username}</div>
-                  <div style={{ fontSize: 9, color: "rgba(255,255,255,0.5)", textTransform: "uppercase", letterSpacing: "0.06em" }}>{adminMode ? "Admin" : managerMode ? "Manager" : "User"}</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.black, lineHeight: 1.2 }}>{username}</div>
+                  <div style={{ fontSize: 9, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.06em" }}>{adminMode ? "Admin" : managerMode ? "Manager" : "User"}</div>
                 </div>
               </div>
 
               {/* Sign Out */}
               <button onClick={handleLogout} style={{
-                background: "rgba(255,255,255,0.1)",
-                border: "1px solid rgba(255,255,255,0.25)",
-                color: "#fff", borderRadius: 8,
+                background: darkMode ? "rgba(255,255,255,0.08)" : "#f3f4f6",
+                border: `1px solid ${darkMode ? "#444" : "#E5E7EB"}`,
+                color: darkMode ? "#D1D5DB" : "#374151", borderRadius: 8,
                 padding: "8px 16px", fontSize: 11,
                 fontWeight: 700, cursor: "pointer",
                 fontFamily: "inherit", letterSpacing: "0.04em",
                 transition: "all 0.25s",
-                backdropFilter: "blur(4px)",
               }}>Sign Out</button>
             </div>
-          </div>
-        </div>
-
-        {/* Bottom Bar — Navigation Tabs */}
-        <div className="app-nav-bar" style={{
-          background: darkMode ? "#1a1a1a" : "#fff",
-          borderBottom: `1px solid ${BRAND.grayLight}`,
-          boxShadow: "0 1px 8px rgba(0,0,0,0.06)",
-          padding: "0 32px",
-        }}>
-          <div style={{ maxWidth: 1280, margin: "0 auto" }}>
-            <nav className="app-nav" style={{ display: "flex", gap: 0, alignItems: "center", overflowX: "auto" }}>
-              {visibleTabs.map(t => {
-                const isActive = tab === t;
-                const icons = {
-                  Dashboard: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>,
-                  Pipeline: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
-                  Inventory: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
-                  Mileage: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
-                  Analytics: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
-                  Calendar: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
-                  Reports: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>,
-                  Approvals: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
-                  Activity: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
-                  Users: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
-                };
-                return (
-                  <button key={t} onClick={() => setTab(t)} style={{
-                    background: isActive ? (darkMode ? "rgba(255,255,255,0.08)" : BRAND.redBg) : "transparent",
-                    color: isActive ? BRAND.red : BRAND.gray,
-                    border: "none", padding: "12px 16px", fontSize: 11,
-                    fontWeight: isActive ? 800 : 500, cursor: "pointer", fontFamily: "inherit",
-                    letterSpacing: "0.03em",
-                    position: "relative", whiteSpace: "nowrap", flexShrink: 0,
-                    borderBottom: isActive ? `3px solid ${BRAND.red}` : "3px solid transparent",
-                    transition: "all 0.2s ease",
-                    display: "flex", alignItems: "center", gap: 6,
-                  }}>
-                    {icons[t] || null}
-                    {t}
-                    {t === "Approvals" && pendingApprovalCount > 0 && (
-                      <span style={{ background: BRAND.red, color: "#fff", fontSize: 8, fontWeight: 900, padding: "1px 5px", borderRadius: 8, marginLeft: 2 }}>{pendingApprovalCount}</span>
-                    )}
-                  </button>
-                );
-              })}
-            </nav>
           </div>
         </div>
       </div>
       {/* Content */}
       <div className="auction-content" style={{ maxWidth: 1120, margin: "0 auto", padding: "20px 16px" }}>
-        {tab === "Dashboard" && <DashboardTab data={data} />}
+        {tab === "Dashboard" && <DashboardTab data={data} username={username} darkMode={darkMode} />}
         {tab === "Pipeline" && <PipelineTab data={data} setData={setData} />}
         {tab === "Inventory" && <InventoryTab data={data} setData={setData} role={userRole} currentUser={username} />}
         {tab === "Mileage" && <MileageTab data={data} setData={setData} />}

@@ -405,6 +405,46 @@ function DashboardTab({data,role,username,userEmail}){
 
   return(
     <div>
+      {/* ═══ WELCOME HERO SECTION ═══ */}
+      <div style={{background:"#f5f5f5",borderRadius:14,padding:"48px 32px",marginBottom:24,position:"relative",overflow:"hidden",textAlign:"center"}}>
+        {/* Decorative geometric shapes */}
+        <div style={{position:"absolute",top:-30,left:-30,width:140,height:140,background:"rgba(0,0,0,.06)",transform:"rotate(35deg)",borderRadius:12}}/>
+        <div style={{position:"absolute",top:20,right:40,width:100,height:100,background:"rgba(0,0,0,.04)",transform:"rotate(55deg)",borderRadius:10}}/>
+        <div style={{position:"absolute",bottom:-20,right:-10,width:120,height:120,background:"rgba(0,0,0,.05)",transform:"rotate(20deg)",borderRadius:10}}/>
+        <div style={{position:"absolute",bottom:10,left:60,width:80,height:80,background:"rgba(0,0,0,.03)",transform:"rotate(45deg)",borderRadius:8}}/>
+        <div style={{position:"absolute",top:50,left:"15%",width:100,height:100,background:"rgba(0,0,0,.08)",transform:"rotate(60deg)",borderRadius:14}}/>
+        <div style={{position:"absolute",bottom:30,right:"20%",width:60,height:60,background:"rgba(0,0,0,.04)",transform:"rotate(15deg)",borderRadius:6}}/>
+        {/* Diamond shapes in corners */}
+        <div style={{position:"absolute",top:18,right:18,width:14,height:14,border:"2px solid rgba(0,0,0,.12)",transform:"rotate(45deg)"}}/>
+        <div style={{position:"absolute",bottom:18,left:18,width:14,height:14,border:"2px solid rgba(0,0,0,.12)",transform:"rotate(45deg)"}}/>
+        <div style={{position:"absolute",top:18,left:80,width:10,height:10,border:"1.5px solid rgba(0,0,0,.08)",transform:"rotate(45deg)"}}/>
+        <div style={{position:"absolute",bottom:24,right:80,width:10,height:10,border:"1.5px solid rgba(0,0,0,.08)",transform:"rotate(45deg)"}}/>
+
+        {/* Corner brackets */}
+        <div style={{position:"relative",display:"inline-block",padding:"20px 40px"}}>
+          {/* Top-left bracket - dark red */}
+          <div style={{position:"absolute",top:0,left:0,width:20,height:20,borderTop:"3px solid #8B1A1A",borderLeft:"3px solid #8B1A1A"}}/>
+          {/* Top-right bracket - dark */}
+          <div style={{position:"absolute",top:0,right:0,width:20,height:20,borderTop:"3px solid #333",borderRight:"3px solid #333"}}/>
+          {/* Bottom-left bracket - dark */}
+          <div style={{position:"absolute",bottom:0,left:0,width:20,height:20,borderBottom:"3px solid #333",borderLeft:"3px solid #333"}}/>
+          {/* Bottom-right bracket - dark red */}
+          <div style={{position:"absolute",bottom:0,right:0,width:20,height:20,borderBottom:"3px solid #8B1A1A",borderRight:"3px solid #8B1A1A"}}/>
+
+          <div style={{fontSize:32,fontWeight:900,color:"#111",letterSpacing:".06em",lineHeight:1.2,textTransform:"uppercase",position:"relative",zIndex:1}}>WELCOME, {username}</div>
+          <div style={{fontSize:14,color:"#888",marginTop:8,fontWeight:400,position:"relative",zIndex:1}}>We're glad to have you here</div>
+        </div>
+
+        {/* Decorative dots-and-line element */}
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginTop:18,position:"relative",zIndex:1}}>
+          <div style={{width:6,height:6,borderRadius:"50%",background:"#8B1A1A"}}/>
+          <div style={{width:40,height:1.5,background:"rgba(0,0,0,.15)",borderRadius:1}}/>
+          <div style={{width:4,height:4,borderRadius:"50%",background:"rgba(0,0,0,.2)"}}/>
+          <div style={{width:40,height:1.5,background:"rgba(0,0,0,.15)",borderRadius:1}}/>
+          <div style={{width:6,height:6,borderRadius:"50%",background:"#8B1A1A"}}/>
+        </div>
+      </div>
+
       <PageHeader title="Dashboard" subtitle={role==="customer"?`Welcome, ${username} — your shipments and invoices`:"Overview of your logistics operations"}/>
 
       {/* Pipeline visualization */}
@@ -1527,85 +1567,84 @@ function AppInner(){
   if(!loaded)return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',system-ui,sans-serif",background:C.navy,gap:16}}><img src="/logo.png" alt="Sayarah Logistics" style={{height:60,opacity:.8}}/><div style={{width:28,height:28,border:"3px solid rgba(255,255,255,.15)",borderTopColor:"#fff",borderRadius:"50%",animation:"spin .8s linear infinite"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>;
   if(!loggedIn)return <div style={{fontFamily:"'Inter',system-ui,sans-serif"}}><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/><LoginPage onLogin={handleLogin} data={data}/></div>;
 
-  const sideW=collapsed?56:240;
-
   return(
-    <div style={{fontFamily:"'Inter',system-ui,sans-serif",display:"flex",minHeight:"100vh",color:C.black}}>
+    <div style={{fontFamily:"'Inter',system-ui,sans-serif",display:"flex",flexDirection:"column",minHeight:"100vh",color:C.black}}>
       <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
       <style>{`
 @media(max-width:768px){
-  .logi-sidebar{transform:translateX(-100%)!important;width:260px!important;box-shadow:none!important}
-  .logi-sidebar.open{transform:translateX(0)!important;box-shadow:20px 0 60px rgba(0,0,0,.5)!important}
-  .logi-main{margin-left:0!important}
-  .logi-overlay{display:block!important}
+  .logi-topnav-items{display:none!important}
   .logi-hamburger{display:flex!important}
-  .logi-collapse-btn{display:none!important}
+  .logi-mobile-menu{display:flex!important}
   .logi-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
   .logi-table-wrap table{min-width:700px}
 }
 @media(min-width:769px){
-  .logi-overlay{display:none!important}
   .logi-hamburger{display:none!important}
+  .logi-mobile-menu{display:none!important}
 }
 `}</style>
 
-      {/* ═══ SIDEBAR ═══ */}
-      <aside className={"logi-sidebar"+(menuOpen?" open":"")} style={{width:sideW,minHeight:"100vh",background:C.navy,display:"flex",flexDirection:"column",transition:"width .25s ease",overflow:"hidden",position:"fixed",left:0,top:0,bottom:0,zIndex:200}}>
-        {/* Logo area */}
-        <div style={{padding:collapsed?"14px 8px":"18px 20px",borderBottom:"1px solid rgba(255,255,255,.08)",display:"flex",alignItems:"center",justifyContent:"space-between",minHeight:64}}>
-          {!collapsed&&<div style={{display:"flex",alignItems:"center",gap:10}}>
-            <img src="/logo.png" alt="" style={{height:32,objectFit:"contain"}}/>
-            <div><div style={{fontSize:14,fontWeight:800,color:"#fff",letterSpacing:".02em",lineHeight:1}}>SAYARAH</div><div style={{fontSize:9,color:"rgba(255,255,255,.35)",letterSpacing:".1em",fontWeight:600}}>LOGISTICS</div></div>
-          </div>}
-          <button className="logi-collapse-btn" onClick={()=>setCollapsed(!collapsed)} style={{background:"rgba(255,255,255,.08)",border:"none",borderRadius:8,width:32,height:32,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:"rgba(255,255,255,.5)",fontSize:14,transition:"all .15s",flexShrink:0}} onMouseEnter={e=>e.currentTarget.style.background="rgba(255,255,255,.15)"} onMouseLeave={e=>e.currentTarget.style.background="rgba(255,255,255,.08)"}>{collapsed?"→":"←"}</button>
+      {/* ═══ TOP NAVBAR ═══ */}
+      <header style={{background:C.white,borderBottom:"1px solid "+C.slate200,boxShadow:"0 1px 3px rgba(0,0,0,.04)",position:"sticky",top:0,zIndex:200}}>
+        <div style={{display:"flex",alignItems:"center",height:56,padding:"0 20px",maxWidth:"100%"}}>
+          {/* Left: SAYARAH brand box */}
+          <div style={{background:"#4A0E0E",color:"#fff",padding:"8px 16px",fontWeight:900,fontSize:15,letterSpacing:".08em",borderRadius:6,marginRight:24,flexShrink:0,lineHeight:1}}>SAYARAH</div>
+
+          {/* Center: Nav items (desktop) */}
+          <nav className="logi-topnav-items" style={{display:"flex",alignItems:"center",gap:2,flex:1,overflow:"hidden"}}>
+            {tabs.map(t=>{
+              const active=tab===t;
+              return <button key={t} onClick={()=>{setTab(t);setMenuOpen(false);}} style={{
+                display:"flex",alignItems:"center",gap:6,padding:"8px 12px",borderRadius:6,border:"none",
+                background:active?"#F3F4F6":"transparent",
+                color:active?C.slate900:C.slate500,
+                cursor:"pointer",fontFamily:"inherit",fontSize:11,fontWeight:active?700:600,
+                transition:"all .15s",textTransform:"uppercase",letterSpacing:".04em",whiteSpace:"nowrap",
+                position:"relative",
+              }} onMouseEnter={e=>{if(!active){e.currentTarget.style.background="#F9FAFB";e.currentTarget.style.color=C.slate700;}}} onMouseLeave={e=>{if(!active){e.currentTarget.style.background="transparent";e.currentTarget.style.color=C.slate500;}}}>
+                <span style={{display:"flex",alignItems:"center",justifyContent:"center",width:16,flexShrink:0,color:active?C.red:C.slate400}}>{NAV_ICONS[t]||NAV_ICONS.Dashboard}</span>
+                <span>{t}</span>
+                {active&&<div style={{position:"absolute",bottom:-1,left:12,right:12,height:2,background:C.red,borderRadius:2}}/>}
+              </button>;
+            })}
+          </nav>
+
+          {/* Hamburger for mobile */}
+          <button className="logi-hamburger" onClick={()=>setMenuOpen(!menuOpen)} style={{display:"none",alignItems:"center",background:"none",border:"none",cursor:"pointer",padding:8,marginLeft:"auto",color:C.slate600}}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+
+          {/* Right: saving indicator, settings gear, user avatar, sign out */}
+          <div style={{display:"flex",alignItems:"center",gap:10,marginLeft:16,flexShrink:0}}>
+            {saving&&<span style={{fontSize:10,color:C.slate400,fontWeight:500}}>Saving...</span>}
+            <button onClick={()=>setTab("Settings")} style={{background:"none",border:"none",cursor:"pointer",padding:6,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:6,color:tab==="Settings"?C.red:C.slate400,transition:"color .15s"}} onMouseEnter={e=>e.currentTarget.style.color=C.slate700} onMouseLeave={e=>e.currentTarget.style.color=tab==="Settings"?C.red:C.slate400} title="Settings">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.32 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+            </button>
+            <div style={{width:34,height:34,borderRadius:"50%",background:"linear-gradient(135deg,#4A0E0E,#8B1A1A)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:"#fff",fontWeight:700,flexShrink:0,cursor:"default"}} title={`${username} (${role})`}>{(username||"U")[0].toUpperCase()}</div>
+            <button onClick={handleLogout} style={{padding:"6px 14px",background:"transparent",border:"1px solid "+C.slate200,borderRadius:6,color:C.slate500,fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"inherit",transition:"all .15s",whiteSpace:"nowrap"}} onMouseEnter={e=>{e.currentTarget.style.background=C.redLight;e.currentTarget.style.color=C.red;e.currentTarget.style.borderColor=C.red;}} onMouseLeave={e=>{e.currentTarget.style.background="transparent";e.currentTarget.style.color=C.slate500;e.currentTarget.style.borderColor=C.slate200;}}>Sign Out</button>
+          </div>
         </div>
 
-        {/* Nav items */}
-        <nav style={{flex:1,padding:"12px 8px",display:"flex",flexDirection:"column",gap:2}}>
+        {/* Mobile dropdown menu */}
+        {menuOpen&&<nav className="logi-mobile-menu" style={{display:"none",flexDirection:"column",padding:"8px 12px 12px",borderTop:"1px solid "+C.slate200,background:C.white}}>
           {tabs.map(t=>{
             const active=tab===t;
             return <button key={t} onClick={()=>{setTab(t);setMenuOpen(false);}} style={{
-              display:"flex",alignItems:"center",gap:12,padding:collapsed?"10px 0":"10px 14px",borderRadius:10,border:"none",
-              background:active?"rgba(139,26,26,.3)":"transparent",
-              color:active?"#fff":"rgba(255,255,255,.5)",
-              cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:active?600:500,
-              transition:"all .15s",width:"100%",textAlign:"left",justifyContent:collapsed?"center":"flex-start",
-              minHeight:40,
-            }} onMouseEnter={e=>{if(!active)e.currentTarget.style.background="rgba(255,255,255,.06)";e.currentTarget.style.color="#fff";}} onMouseLeave={e=>{if(!active)e.currentTarget.style.background="transparent";if(!active)e.currentTarget.style.color="rgba(255,255,255,.5)";}}>
-              <span style={{display:"flex",alignItems:"center",justifyContent:"center",width:20,flexShrink:0,color:active?"#FCA5A5":"inherit"}}>{NAV_ICONS[t]||NAV_ICONS.Dashboard}</span>
-              {!collapsed&&<span>{t}</span>}
-              {active&&!collapsed&&<div style={{marginLeft:"auto",width:4,height:16,borderRadius:2,background:C.red}}/>}
+              display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:8,border:"none",
+              background:active?"#F3F4F6":"transparent",
+              color:active?C.slate900:C.slate600,
+              cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:active?700:500,
+              transition:"all .15s",width:"100%",textAlign:"left",textTransform:"uppercase",letterSpacing:".03em",
+            }}>
+              <span style={{display:"flex",alignItems:"center",justifyContent:"center",width:18,color:active?C.red:C.slate400}}>{NAV_ICONS[t]||NAV_ICONS.Dashboard}</span>
+              <span>{t}</span>
             </button>;
           })}
-        </nav>
-
-        {/* Saving indicator */}
-        {saving&&!collapsed&&<div style={{padding:"6px 20px",fontSize:10,color:"rgba(255,255,255,.25)",textAlign:"center"}}>Saving...</div>}
-
-        {/* User section */}
-        <div style={{borderTop:"1px solid rgba(255,255,255,.08)",padding:collapsed?"12px 8px":"16px 20px"}}>
-          {collapsed?<div style={{display:"flex",justifyContent:"center"}}><div style={{width:32,height:32,borderRadius:10,background:"rgba(139,26,26,.4)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13,color:"#fff",fontWeight:700}}>{(username||"U")[0].toUpperCase()}</div></div>:
-          <>
-            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-              <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,rgba(139,26,26,.5),rgba(16,185,129,.3))",display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,color:"#fff",fontWeight:700}}>{(username||"U")[0].toUpperCase()}</div>
-              <div><div style={{fontSize:13,fontWeight:600,color:"#fff",lineHeight:1.2}}>{username}</div>
-              <Bdg color={role==="admin"?"#F59E0B":role==="manager"?"#60A5FA":"#34D399"} bg={role==="admin"?"rgba(245,158,11,.15)":role==="manager"?"rgba(96,165,250,.15)":"rgba(52,211,153,.15)"}>{role}</Bdg></div>
-            </div>
-            <button onClick={handleLogout} style={{width:"100%",padding:"8px 0",background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:8,color:"rgba(255,255,255,.5)",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",transition:"all .15s"}} onMouseEnter={e=>{e.currentTarget.style.background="rgba(239,68,68,.15)";e.currentTarget.style.color="#FCA5A5";e.currentTarget.style.borderColor="rgba(239,68,68,.3)";}} onMouseLeave={e=>{e.currentTarget.style.background="rgba(255,255,255,.06)";e.currentTarget.style.color="rgba(255,255,255,.5)";e.currentTarget.style.borderColor="rgba(255,255,255,.1)";}}>Sign Out</button>
-          </>}
-        </div>
-      </aside>
-
-      {/* Mobile overlay */}
-      <div className="logi-overlay" onClick={()=>setMenuOpen(false)} style={{display:"none",position:"fixed",inset:0,background:"rgba(0,0,0,.4)",zIndex:150}}/>
+        </nav>}
+      </header>
 
       {/* ═══ MAIN CONTENT ═══ */}
-      <main className="logi-main" style={{flex:1,background:C.bg,overflowY:"auto",marginLeft:sideW,transition:"margin-left .25s ease",minHeight:"100vh"}}>
-        <div className="logi-hamburger" style={{display:"none",alignItems:"center",padding:"12px 16px",background:C.navy,position:"sticky",top:0,zIndex:100}}>
-          <button onClick={()=>setMenuOpen(!menuOpen)} style={{background:"none",border:"none",color:"#fff",cursor:"pointer",padding:8,display:"flex",alignItems:"center"}}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg></button>
-          <img src="/logo.png" alt="" style={{height:28,objectFit:"contain",marginLeft:10}}/>
-          <span style={{fontSize:13,fontWeight:700,color:"#fff",marginLeft:8}}>SAYARAH LOGISTICS</span>
-        </div>
+      <main style={{flex:1,background:C.bg,overflowY:"auto",minHeight:"calc(100vh - 56px)"}}>
         <div style={{maxWidth:1200,margin:"0 auto",padding:"28px 32px"}}>
           {tab==="Dashboard"&&<DashboardTab data={data} role={role} username={username} userEmail={userEmail} firebaseUid={firebaseUid}/>}
           {tab==="Customers"&&isAdmin&&<CustomersTab data={data} setData={setData}/>}

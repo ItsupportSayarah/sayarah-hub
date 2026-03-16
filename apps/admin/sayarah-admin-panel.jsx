@@ -158,11 +158,12 @@ function LoginPage({ onLogin }) {
 // ═══════════════════════════════════════════════════════════════
 // DASHBOARD TAB — Overview of both apps
 // ═══════════════════════════════════════════════════════════════
-function DashboardView({ users }) {
+function DashboardView({ users, adminEmail }) {
   const totalUsers = users.length;
   const admins = users.filter(u => u.role === "admin").length;
   const managers = users.filter(u => u.role === "manager").length;
   const regularUsers = totalUsers - admins - managers;
+  const displayName = adminEmail ? adminEmail.split("@")[0].toUpperCase() : "ADMIN";
 
   const stats = [
     { label: "Total Users", value: totalUsers, icon: I.users, color: B.blue, bg: B.blueBg },
@@ -173,11 +174,53 @@ function DashboardView({ users }) {
 
   return (
     <div>
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ fontSize: 22, fontWeight: 900, color: B.navy }}>Dashboard</div>
-        <div style={{ fontSize: 12, color: B.gray }}>Overview of all Sayarah applications and users</div>
+      {/* Welcome Hero Section */}
+      <div style={{
+        position: "relative", overflow: "hidden", background: "#f5f5f5",
+        borderRadius: 16, marginBottom: 28, padding: "64px 40px", textAlign: "center",
+        minHeight: 260, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      }}>
+        {/* Decorative geometric shapes */}
+        <div style={{ position: "absolute", top: -40, left: -30, width: 180, height: 180, background: "rgba(0,0,0,0.04)", transform: "rotate(35deg)", borderRadius: 12 }} />
+        <div style={{ position: "absolute", bottom: -50, right: -20, width: 220, height: 220, background: "rgba(0,0,0,0.03)", transform: "rotate(25deg)", borderRadius: 14 }} />
+        <div style={{ position: "absolute", top: 30, right: 60, width: 120, height: 120, background: "rgba(0,0,0,0.025)", transform: "rotate(55deg)", borderRadius: 8 }} />
+        <div style={{ position: "absolute", bottom: 20, left: 80, width: 100, height: 100, background: "rgba(0,0,0,0.02)", transform: "rotate(15deg)", borderRadius: 6 }} />
+        {/* Diamond shapes in corners */}
+        <div style={{ position: "absolute", top: 24, left: 28, width: 14, height: 14, border: "2px solid rgba(0,0,0,0.12)", transform: "rotate(45deg)" }} />
+        <div style={{ position: "absolute", bottom: 24, right: 28, width: 14, height: 14, border: "2px solid rgba(0,0,0,0.12)", transform: "rotate(45deg)" }} />
+        <div style={{ position: "absolute", top: 24, right: 28, width: 10, height: 10, border: "2px solid rgba(0,0,0,0.08)", transform: "rotate(45deg)" }} />
+        <div style={{ position: "absolute", bottom: 24, left: 28, width: 10, height: 10, border: "2px solid rgba(0,0,0,0.08)", transform: "rotate(45deg)" }} />
+
+        {/* Corner brackets around welcome text */}
+        <div style={{ position: "relative", zIndex: 1, padding: "20px 40px" }}>
+          {/* Top-left bracket */}
+          <div style={{ position: "absolute", top: 0, left: 0, width: 20, height: 20, borderTop: "3px solid #8B1A1A", borderLeft: "3px solid #8B1A1A" }} />
+          {/* Top-right bracket */}
+          <div style={{ position: "absolute", top: 0, right: 0, width: 20, height: 20, borderTop: "3px solid #333", borderRight: "3px solid #333" }} />
+          {/* Bottom-left bracket */}
+          <div style={{ position: "absolute", bottom: 0, left: 0, width: 20, height: 20, borderBottom: "3px solid #333", borderLeft: "3px solid #333" }} />
+          {/* Bottom-right bracket */}
+          <div style={{ position: "absolute", bottom: 0, right: 0, width: 20, height: 20, borderBottom: "3px solid #8B1A1A", borderRight: "3px solid #8B1A1A" }} />
+
+          <div style={{ fontSize: 32, fontWeight: 900, color: "#111", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 8 }}>
+            Welcome, {displayName}
+          </div>
+          <div style={{ fontSize: 14, color: "#999", fontWeight: 400, letterSpacing: "0.02em" }}>
+            We're glad to have you here
+          </div>
+        </div>
+
+        {/* Decorative dots-and-line element */}
+        <div style={{ position: "relative", zIndex: 1, display: "flex", alignItems: "center", gap: 6, marginTop: 20 }}>
+          <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#8B1A1A" }} />
+          <div style={{ width: 40, height: 2, background: "#ccc", borderRadius: 1 }} />
+          <div style={{ width: 4, height: 4, borderRadius: "50%", background: "#bbb" }} />
+          <div style={{ width: 40, height: 2, background: "#ccc", borderRadius: 1 }} />
+          <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#8B1A1A" }} />
+        </div>
       </div>
 
+      {/* Stats Cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 24 }}>
         {stats.map(s => (
           <Card key={s.label} style={{ padding: 18, display: "flex", alignItems: "center", gap: 14, borderLeft: `4px solid ${s.color}` }}>
@@ -190,6 +233,7 @@ function DashboardView({ users }) {
         ))}
       </div>
 
+      {/* App Info Cards */}
       <div className="admin-2col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         <Card style={{ borderTop: `3px solid ${B.red}` }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
@@ -702,32 +746,37 @@ function AppInner() {
 `}</style>
 
       {/* Top Bar */}
-      <div className="admin-topbar" style={{ background: `linear-gradient(135deg, ${B.navy} 0%, ${B.navyLight} 100%)`, padding: "0 24px", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 4px 20px rgba(0,0,0,.3)" }}>
+      <div className="admin-topbar" style={{ background: "#FFFFFF", padding: "0 24px", position: "sticky", top: 0, zIndex: 100, borderBottom: "1px solid #E5E7EB", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
         <div className="admin-topbar-inner" style={{ maxWidth: 1400, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", height: 56 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <img src="/logo.png" alt="Sayarah" style={{ height: 32, objectFit: "contain" }} />
-            <div className="admin-brand-text">
-              <div style={{ fontSize: 14, fontWeight: 900, color: B.white, letterSpacing: "-.3px" }}>Sayarah Admin Panel</div>
-              <div style={{ fontSize: 8, color: B.gray, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".1em" }}>Unified Control Center</div>
-            </div>
+            <div style={{ background: "#4A0E0E", color: "#FFFFFF", padding: "8px 14px", fontWeight: 900, fontSize: 14, letterSpacing: "0.12em", lineHeight: 1 }}>SAYARAH</div>
           </div>
 
-          <nav className="admin-nav" style={{ display: "flex", gap: 2 }}>
+          <nav className="admin-nav" style={{ display: "flex", gap: 4 }}>
             {NAV_TABS.map(t => (
               <button key={t} onClick={() => setTab(t)} style={{
-                background: tab === t ? "rgba(255,255,255,.12)" : "transparent",
-                color: tab === t ? B.white : "rgba(255,255,255,.45)",
-                border: "none", borderRadius: 6, padding: "8px 16px", fontSize: 12, fontWeight: tab === t ? 800 : 500,
+                background: "transparent",
+                color: tab === t ? "#111" : "#6B7280",
+                border: "none", borderRadius: 0, padding: "8px 18px", fontSize: 12, fontWeight: tab === t ? 700 : 500,
                 cursor: "pointer", fontFamily: font, transition: "all .2s",
-                borderBottom: tab === t ? `2px solid ${B.blue}` : "2px solid transparent",
-              }}><span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>{t === "Users" ? I.users(14, tab === t ? B.white : "rgba(255,255,255,.45)") : t === "Dashboard" ? I.grid(14, tab === t ? B.white : "rgba(255,255,255,.45)") : t === "Activity" ? I.activity(14, tab === t ? B.white : "rgba(255,255,255,.45)") : I.settings(14, tab === t ? B.white : "rgba(255,255,255,.45)")} {t}</span></button>
+                textTransform: "uppercase", letterSpacing: "0.06em",
+                borderBottom: tab === t ? "2px solid #4A0E0E" : "2px solid transparent",
+              }}>{t.toUpperCase()}</button>
             ))}
           </nav>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <Badge color={B.amber} bg={B.amberBg}>{I.shield(12, B.amber)} Super Admin</Badge>
-            <span style={{ fontSize: 10, color: "rgba(255,255,255,.5)" }}>{adminEmail}</span>
-            <button onClick={handleLogout} style={{ background: "rgba(255,255,255,.08)", border: "1px solid rgba(255,255,255,.15)", color: "#fff", borderRadius: 6, padding: "6px 12px", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: font }}>Sign Out</button>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <button onClick={() => setTab("Settings")} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, display: "flex", alignItems: "center" }}>
+              {I.settings(18, "#6B7280")}
+            </button>
+            <div style={{
+              width: 34, height: 34, borderRadius: "50%", background: "#4A0E0E", color: "#fff",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 13, fontWeight: 700, fontFamily: font, cursor: "pointer",
+            }} title={adminEmail}>
+              {adminEmail ? adminEmail.charAt(0).toUpperCase() : "A"}
+            </div>
+            <button onClick={handleLogout} style={{ background: "transparent", border: "1px solid #E5E7EB", color: "#374151", borderRadius: 6, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font, transition: "all .2s" }}>Sign Out</button>
           </div>
         </div>
       </div>
@@ -741,7 +790,7 @@ function AppInner() {
           </div>
         ) : (
           <>
-            {tab === "Dashboard" && <DashboardView users={users} />}
+            {tab === "Dashboard" && <DashboardView users={users} adminEmail={adminEmail} />}
             {tab === "Users" && <UsersView users={users} onRefresh={loadUsers} />}
             {tab === "Activity" && <ActivityView users={users} />}
             {tab === "Settings" && <SettingsView adminEmail={adminEmail} />}
