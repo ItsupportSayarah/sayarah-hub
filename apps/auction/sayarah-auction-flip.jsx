@@ -3450,6 +3450,119 @@ function UsersTab() {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// SETTINGS TAB
+// ═══════════════════════════════════════════════════════════════
+function SettingsTab({ darkMode, username, userRole }) {
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [pwError, setPwError] = useState("");
+  const [pwSuccess, setPwSuccess] = useState(false);
+  const [pwLoading, setPwLoading] = useState(false);
+
+  const handleChangePw = async () => {
+    setPwError("");
+    if (!currentPw) { setPwError("Enter your current password"); return; }
+    if (!newPw) { setPwError("Enter a new password"); return; }
+    if (newPw.length < 6) { setPwError("New password must be at least 6 characters"); return; }
+    if (newPw !== confirmPw) { setPwError("New passwords do not match"); return; }
+    if (currentPw === newPw) { setPwError("New password must be different from current"); return; }
+    setPwLoading(true);
+    try {
+      await changePassword(currentPw, newPw);
+      setPwSuccess(true);
+      setCurrentPw(""); setNewPw(""); setConfirmPw("");
+    } catch (e) {
+      const msg = e.code === "auth/wrong-password" || e.code === "auth/invalid-credential" ? "Current password is incorrect"
+        : e.code === "auth/weak-password" ? "Password is too weak"
+        : e.code === "auth/requires-recent-login" ? "Session expired — sign out and back in"
+        : e.message || "Failed to change password";
+      setPwError(msg);
+    }
+    setPwLoading(false);
+  };
+
+  const inputStyle = { width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${darkMode ? "#444" : BRAND.grayLight}`, fontSize: 13, fontFamily: "inherit", outline: "none", boxSizing: "border-box", background: darkMode ? "#2a2a2a" : BRAND.white, color: darkMode ? "#e5e5e5" : BRAND.black };
+  const labelStyle = { fontSize: 11, fontWeight: 700, color: darkMode ? "#aaa" : BRAND.gray, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
+
+  return (
+    <div>
+      <div style={{ fontSize: 22, fontWeight: 900, color: BRAND.black, marginBottom: 4 }}>Settings</div>
+      <div style={{ fontSize: 12, color: BRAND.gray, marginBottom: 24 }}>Account settings and preferences</div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        {/* Change Password */}
+        <Card>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 8, background: BRAND.redBg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={BRAND.red} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </div>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: BRAND.black }}>Change Password</div>
+              <div style={{ fontSize: 11, color: BRAND.gray }}>Update your account password</div>
+            </div>
+          </div>
+          {pwSuccess ? (
+            <div style={{ background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: 10, padding: "16px 20px", textAlign: "center" }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 6 }}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#166534" }}>Password updated successfully!</div>
+              <button onClick={() => setPwSuccess(false)} style={{ marginTop: 10, background: "none", border: "none", color: BRAND.blue, fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Change again</button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div><label style={labelStyle}>Current Password</label><input type="password" value={currentPw} onChange={e => setCurrentPw(e.target.value)} placeholder="Enter current password" style={inputStyle} /></div>
+              <div><label style={labelStyle}>New Password</label><input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Min 6 characters" style={inputStyle} /></div>
+              <div><label style={labelStyle}>Confirm New Password</label><input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} onKeyDown={e => e.key === "Enter" && handleChangePw()} placeholder="Re-enter new password" style={inputStyle} /></div>
+              {pwError && <div style={{ background: "#FEF2F2", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600 }}>{pwError}</div>}
+              <Btn onClick={handleChangePw} disabled={pwLoading}>{pwLoading ? "Updating..." : "Update Password"}</Btn>
+            </div>
+          )}
+        </Card>
+
+        {/* Account Info */}
+        <Card>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 8, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            </div>
+            <div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: BRAND.black }}>Account Info</div>
+              <div style={{ fontSize: 11, color: BRAND.gray }}>Your profile details</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${BRAND.grayLight}` }}>
+              <span style={{ color: BRAND.gray, fontWeight: 600 }}>Name</span>
+              <span style={{ fontWeight: 700, color: BRAND.black }}>{username || "—"}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${BRAND.grayLight}` }}>
+              <span style={{ color: BRAND.gray, fontWeight: 600 }}>Email</span>
+              <span style={{ fontWeight: 700, color: BRAND.black }}>{auth.currentUser?.email || "—"}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${BRAND.grayLight}` }}>
+              <span style={{ color: BRAND.gray, fontWeight: 600 }}>Role</span>
+              <span style={{ fontWeight: 700, color: BRAND.black, textTransform: "capitalize" }}>{userRole}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0" }}>
+              <span style={{ color: BRAND.gray, fontWeight: 600 }}>Platform</span>
+              <span style={{ fontWeight: 700, color: BRAND.black }}>Auto Trade Hub</span>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      <Card style={{ marginTop: 16, background: darkMode ? "#1a1a1a" : "#F9FAFB" }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: BRAND.gray, marginBottom: 6 }}>About</div>
+        <div style={{ fontSize: 11, color: BRAND.gray, lineHeight: 1.8 }}>
+          Auto Trade Hub by Sayarah Inc — Vehicle auction flipping platform.<br/>
+          Data stored securely in Firebase Cloud Firestore. Files in Firebase Storage.
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 // CHANGE PASSWORD MODAL
 // ═══════════════════════════════════════════════════════════════
 function ChangePasswordModal({ onClose, darkMode }) {
@@ -3571,8 +3684,17 @@ function AppInner() {
 
   const adminMode = isAdmin(userRole);
   const managerMode = isManager(userRole);
-  const allAdminTabs = [...TABS, "Calendar", "Reports", "Approvals", "Activity", "Users"];
-  const visibleTabs = adminMode ? allAdminTabs : managerMode ? (allowedTabs && allowedTabs.length ? allowedTabs.filter(t => allAdminTabs.includes(t)) : ["Dashboard"]) : [...TABS, "Calendar"];
+  const allAdminTabs = [...TABS, "Calendar", "Reports", "Approvals", "Activity", "Users", "Settings"];
+  const visibleTabs = adminMode ? allAdminTabs : managerMode ? (allowedTabs && allowedTabs.length ? allowedTabs.filter(t => allAdminTabs.includes(t)) : ["Dashboard"]) : [...TABS, "Calendar", "Settings"];
+
+  // Grouped navigation
+  const NAV_GROUPS = [
+    { label: "Dashboard", tabs: ["Dashboard"] },
+    { label: "Operations", tabs: ["Pipeline", "Inventory", "Mileage", "Calendar"] },
+    { label: "Insights", tabs: ["Analytics", "Reports"] },
+    ...(adminMode || managerMode ? [{ label: "Team", tabs: ["Approvals", "Activity", ...(adminMode ? ["Users"] : [])] }] : []),
+  ];
+  const [openMenu, setOpenMenu] = useState(null);
 
   // Approvals & notifications check
   useEffect(() => {
@@ -3718,29 +3840,78 @@ function AppInner() {
                 {saving && <span style={{ fontSize: 8, color: "#8B1A1A", fontWeight: 500, animation: "pulse 1.5s infinite" }}>Saving...</span>}
               </div>
 
-              {/* Center Nav Items */}
+              {/* Center Nav Items — Grouped */}
               <nav className="app-nav" style={{ display: "flex", alignItems: "center", gap: 0, overflowX: "auto" }}>
-                {visibleTabs.map(t => {
-                  const isActive = tab === t;
-                  const hasDropdown = ["Reports", "Analytics", "Inventory"].includes(t);
+                {NAV_GROUPS.map(group => {
+                  const groupTabs = group.tabs.filter(t => visibleTabs.includes(t));
+                  if (groupTabs.length === 0) return null;
+                  const isSingle = groupTabs.length === 1;
+                  const isGroupActive = groupTabs.includes(tab);
+                  const isOpen = openMenu === group.label;
+
+                  if (isSingle) {
+                    const t = groupTabs[0];
+                    return (
+                      <button key={t} onClick={() => { setTab(t); setOpenMenu(null); }} style={{
+                        background: "transparent",
+                        color: tab === t ? (darkMode ? "#fff" : "#111") : (darkMode ? "#9CA3AF" : "#6B7280"),
+                        border: "none", padding: "18px 12px", fontSize: 11,
+                        fontWeight: tab === t ? 800 : 600, cursor: "pointer", fontFamily: "inherit",
+                        letterSpacing: "0.06em", textTransform: "uppercase",
+                        whiteSpace: "nowrap", flexShrink: 0,
+                        borderBottom: tab === t ? "2px solid #8B1A1A" : "2px solid transparent",
+                        transition: "all 0.2s ease",
+                      }}>
+                        {t.toUpperCase()}
+                      </button>
+                    );
+                  }
+
                   return (
-                    <button key={t} onClick={() => setTab(t)} style={{
-                      background: "transparent",
-                      color: isActive ? (darkMode ? "#fff" : "#111") : (darkMode ? "#9CA3AF" : "#6B7280"),
-                      border: "none", padding: "18px 12px", fontSize: 11,
-                      fontWeight: isActive ? 800 : 600, cursor: "pointer", fontFamily: "inherit",
-                      letterSpacing: "0.06em", textTransform: "uppercase",
-                      position: "relative", whiteSpace: "nowrap", flexShrink: 0,
-                      borderBottom: isActive ? `2px solid #8B1A1A` : "2px solid transparent",
-                      transition: "all 0.2s ease",
-                      display: "flex", alignItems: "center", gap: 4,
-                    }}>
-                      {t === "Dashboard" ? "DASHBOARD" : t.toUpperCase()}
-                      {t === "Approvals" && pendingApprovalCount > 0 && (
-                        <span style={{ background: "#8B1A1A", color: "#fff", fontSize: 8, fontWeight: 900, padding: "1px 5px", borderRadius: 8, marginLeft: 2 }}>{pendingApprovalCount}</span>
+                    <div key={group.label} style={{ position: "relative" }}
+                      onMouseEnter={() => setOpenMenu(group.label)} onMouseLeave={() => setOpenMenu(null)}>
+                      <button onClick={() => setOpenMenu(isOpen ? null : group.label)} style={{
+                        background: "transparent",
+                        color: isGroupActive ? (darkMode ? "#fff" : "#111") : (darkMode ? "#9CA3AF" : "#6B7280"),
+                        border: "none", padding: "18px 12px", fontSize: 11,
+                        fontWeight: isGroupActive ? 800 : 600, cursor: "pointer", fontFamily: "inherit",
+                        letterSpacing: "0.06em", textTransform: "uppercase",
+                        whiteSpace: "nowrap", flexShrink: 0,
+                        borderBottom: isGroupActive ? "2px solid #8B1A1A" : "2px solid transparent",
+                        transition: "all 0.2s ease",
+                        display: "flex", alignItems: "center", gap: 4,
+                      }}>
+                        {group.label.toUpperCase()}
+                        {group.label === "Team" && pendingApprovalCount > 0 && (
+                          <span style={{ background: "#8B1A1A", color: "#fff", fontSize: 8, fontWeight: 900, padding: "1px 5px", borderRadius: 8 }}>{pendingApprovalCount}</span>
+                        )}
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ opacity: 0.4, transform: isOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}><polyline points="6 9 12 15 18 9"/></svg>
+                      </button>
+                      {isOpen && (
+                        <div style={{
+                          position: "absolute", top: "100%", left: 0, minWidth: 160,
+                          background: darkMode ? "#2a2a2a" : BRAND.white, borderRadius: 10,
+                          boxShadow: "0 12px 36px rgba(0,0,0,0.18)", border: `1px solid ${darkMode ? "#444" : BRAND.grayLight}`,
+                          zIndex: 300, overflow: "hidden", paddingTop: 4, paddingBottom: 4,
+                        }}>
+                          {groupTabs.map(t => (
+                            <button key={t} onClick={() => { setTab(t); setOpenMenu(null); }} style={{
+                              display: "flex", alignItems: "center", gap: 8, width: "100%",
+                              background: tab === t ? (darkMode ? "rgba(139,26,26,0.2)" : "#FEF2F2") : "transparent",
+                              color: tab === t ? "#8B1A1A" : (darkMode ? "#D1D5DB" : BRAND.grayDark),
+                              border: "none", padding: "10px 16px", fontSize: 12,
+                              fontWeight: tab === t ? 700 : 500, cursor: "pointer", fontFamily: "inherit",
+                              textAlign: "left", transition: "background 0.15s",
+                            }}>
+                              {t}
+                              {t === "Approvals" && pendingApprovalCount > 0 && (
+                                <span style={{ background: "#8B1A1A", color: "#fff", fontSize: 8, fontWeight: 900, padding: "1px 5px", borderRadius: 8 }}>{pendingApprovalCount}</span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
                       )}
-                      {hasDropdown && <span style={{ fontSize: 9, marginLeft: 2, opacity: 0.5 }}>{"\u02C5"}</span>}
-                    </button>
+                    </div>
                   );
                 })}
               </nav>
@@ -3824,7 +3995,7 @@ function AppInner() {
               </div>
 
               {/* Settings Gear */}
-              <button onClick={() => setTab("Activity")} title="Settings" style={{
+              <button onClick={() => setTab("Settings")} title="Settings" style={{
                 background: "transparent", border: "none", padding: 10, borderRadius: 8,
                 cursor: "pointer", display: "flex", alignItems: "center", transition: "all 0.2s",
               }}>
@@ -3847,17 +4018,6 @@ function AppInner() {
                 </div>
               </div>
 
-              {/* Change Password */}
-              <button onClick={() => setShowChangePw(true)} title="Change Password" style={{
-                background: darkMode ? "rgba(255,255,255,0.08)" : "#f3f4f6",
-                border: `1px solid ${darkMode ? "#444" : "#E5E7EB"}`,
-                color: darkMode ? "#D1D5DB" : "#374151", borderRadius: 8,
-                padding: "8px", fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                transition: "all 0.25s",
-              }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-              </button>
-
               {/* Sign Out */}
               <button onClick={handleLogout} style={{
                 background: darkMode ? "rgba(255,255,255,0.08)" : "#f3f4f6",
@@ -3872,7 +4032,6 @@ function AppInner() {
           </div>
         </div>
       </div>
-      {showChangePw && <ChangePasswordModal onClose={() => setShowChangePw(false)} darkMode={darkMode} />}
       {/* Content */}
       <div className="auction-content" style={{ maxWidth: 1120, margin: "0 auto", padding: "20px 16px" }}>
         {tab === "Dashboard" && <DashboardTab data={data} username={username} darkMode={darkMode} />}
@@ -3885,6 +4044,7 @@ function AppInner() {
         {tab === "Approvals" && (adminMode || managerMode) && <ApprovalsTab data={data} setData={setData} />}
         {tab === "Activity" && (adminMode || managerMode) && <ActivityTab />}
         {tab === "Users" && adminMode && <UsersTab />}
+        {tab === "Settings" && <SettingsTab darkMode={darkMode} username={username} userRole={userRole} />}
       </div>
       {/* Footer */}
       <div style={{ textAlign: "center", padding: "24px 16px", borderTop: `1px solid ${BRAND.grayLight}`, marginTop: 40 }}>
