@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback, createContext, useContext, Component } from "react";
-import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserProfile, updateUserRole, getAllUsers, updateUserPermissions, getUserData, saveAppData, loadAppData, saveApprovalsFB, loadApprovalsFB, saveActivityLogFB, loadActivityLogFB, changePassword, resetPassword } from "./src/firebase.js";
+import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserProfile, updateUserRole, getAllUsers, updateUserPermissions, getUserData, saveAppData, loadAppData, saveApprovalsFB, loadApprovalsFB, saveActivityLogFB, loadActivityLogFB, changePassword, resetPassword, uploadFile, deleteFile } from "./src/firebase.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
 class ErrorBoundary extends Component {
@@ -1719,7 +1719,8 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
 
   // ─── Document form state (lifted from IIFE to avoid hooks violation) ───
   const [showDocForm, setShowDocForm] = useState(false);
-  const [docForm, setDocForm] = useState({ id: "", stockNum: v.stockNum, name: "", category: "", date: new Date().toISOString().slice(0, 10), notes: "" });
+  const [docForm, setDocForm] = useState({ id: "", stockNum: v.stockNum, name: "", category: "", date: new Date().toISOString().slice(0, 10), notes: "", fileUrl: "", filePath: "" });
+  const [uploading, setUploading] = useState(false);
 
   return (
     <div className="detail-modal-overlay" onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 12, backdropFilter: "blur(3px)" }}>
@@ -1834,19 +1835,34 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
           {/* ═══ DOCUMENT ATTACHMENTS ═══ */}
           {(() => {
             const docs = (data.documents || []).filter(d => d.stockNum === v.stockNum);
-            const saveDoc = () => {
+            const saveDoc = async () => {
               if (!docForm.name) return;
-              const newDoc = { ...docForm, id: docForm.id || genId() };
-              if (docForm.id && docs.find(d => d.id === docForm.id)) {
-                setData(d => ({ ...d, documents: (d.documents || []).map(dc => dc.id === docForm.id ? newDoc : dc) }));
-              } else {
-                setData(d => ({ ...d, documents: [...(d.documents || []), newDoc] }));
-              }
-              logActivity(currentUser, "added_document", `Added document "${newDoc.name}" to #${v.stockNum} ${v.year} ${v.make} ${v.model}`);
-              setShowDocForm(false);
-              setDocForm({ id: "", stockNum: v.stockNum, name: "", category: "", date: new Date().toISOString().slice(0, 10), notes: "" });
+              setUploading(true);
+              try {
+                let fileUrl = docForm.fileUrl || "";
+                let filePath = docForm.filePath || "";
+                // Upload file if a new file was selected
+                if (docForm._file) {
+                  const ext = docForm._file.name.split(".").pop();
+                  filePath = `auction/docs/${v.stockNum}/${genId()}.${ext}`;
+                  fileUrl = await uploadFile(filePath, docForm._file);
+                }
+                const newDoc = { ...docForm, id: docForm.id || genId(), fileUrl, filePath };
+                delete newDoc._file;
+                if (docForm.id && docs.find(d => d.id === docForm.id)) {
+                  setData(d => ({ ...d, documents: (d.documents || []).map(dc => dc.id === docForm.id ? newDoc : dc) }));
+                } else {
+                  setData(d => ({ ...d, documents: [...(d.documents || []), newDoc] }));
+                }
+                logActivity(currentUser, "added_document", `Added document "${newDoc.name}" to #${v.stockNum} ${v.year} ${v.make} ${v.model}`);
+                setShowDocForm(false);
+                setDocForm({ id: "", stockNum: v.stockNum, name: "", category: "", date: new Date().toISOString().slice(0, 10), notes: "", fileUrl: "", filePath: "" });
+              } catch (e) { console.error("Upload failed:", e); }
+              setUploading(false);
             };
-            const delDoc = id => {
+            const delDoc = async (id) => {
+              const d = docs.find(dc => dc.id === id);
+              if (d?.filePath) { try { await deleteFile(d.filePath); } catch {} }
               setData(d => ({ ...d, documents: (d.documents || []).filter(dc => dc.id !== id) }));
             };
             return (
@@ -1867,6 +1883,10 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
                           <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.black }}>{d.name}</div>
                           <div style={{ fontSize: 10, color: BRAND.gray }}>{d.category || "—"} · {d.date}{d.notes ? ` · ${d.notes}` : ""}</div>
                         </div>
+                        {d.fileUrl && <a href={d.fileUrl} target="_blank" rel="noopener noreferrer" style={{ fontSize: 10, fontWeight: 700, color: BRAND.blue, textDecoration: "none", padding: "4px 10px", borderRadius: 6, border: `1px solid ${BRAND.blue}`, display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                          View
+                        </a>}
                         {(admin || canEditProp) && <Btn variant="ghost" size="sm" onClick={() => delDoc(d.id)}>Remove</Btn>}
                       </div>
                     ))}
@@ -1874,16 +1894,29 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
                 )}
                 {showDocForm && (
                   <Card style={{ border: `2px solid ${BRAND.blue}`, marginBottom: 10 }}>
-                    <div style={{ fontSize: 12, fontWeight: 800, color: BRAND.blue, marginBottom: 10 }}>Add Document Reference</div>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: BRAND.blue, marginBottom: 10 }}>Add Document</div>
                     <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                       <Input label="Document Name" value={docForm.name} onChange={val => setDocForm(f => ({ ...f, name: val }))} placeholder="Title scan, receipt..." />
                       <Select label="Category" value={docForm.category} onChange={val => setDocForm(f => ({ ...f, category: val }))} options={DOC_CATEGORIES} placeholder="Select..." />
                       <Input label="Date" value={docForm.date} onChange={val => setDocForm(f => ({ ...f, date: val }))} type="date" />
                       <Input label="Notes" value={docForm.notes} onChange={val => setDocForm(f => ({ ...f, notes: val }))} placeholder="Optional notes" />
                     </div>
+                    {/* File Upload */}
+                    <div style={{ marginTop: 10 }}>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: BRAND.gray, display: "block", marginBottom: 5 }}>Upload File (PDF, Image, etc.)</label>
+                      <div style={{ position: "relative" }}>
+                        <input type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx" onChange={e => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            setDocForm(f => ({ ...f, _file: file, name: f.name || file.name.replace(/\.[^/.]+$/, "") }));
+                          }
+                        }} style={{ width: "100%", padding: "10px 12px", borderRadius: 8, border: `2px dashed ${docForm._file ? BRAND.green : BRAND.grayLight}`, fontSize: 12, fontFamily: "inherit", background: docForm._file ? "#F0FDF4" : "#FAFAFA", cursor: "pointer", boxSizing: "border-box" }} />
+                        {docForm._file && <div style={{ fontSize: 10, color: BRAND.green, fontWeight: 600, marginTop: 4 }}>Selected: {docForm._file.name} ({(docForm._file.size / 1024).toFixed(0)} KB)</div>}
+                      </div>
+                    </div>
                     <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 10 }}>
                       <Btn variant="secondary" size="sm" onClick={() => setShowDocForm(false)}>Cancel</Btn>
-                      <Btn size="sm" onClick={saveDoc} style={{ background: BRAND.blue }}>Save</Btn>
+                      <Btn size="sm" onClick={saveDoc} disabled={uploading} style={{ background: BRAND.blue }}>{uploading ? "Uploading..." : "Save"}</Btn>
                     </div>
                   </Card>
                 )}

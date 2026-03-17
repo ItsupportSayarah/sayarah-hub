@@ -6,6 +6,7 @@
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail } from "firebase/auth";
 import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, getDocs, deleteDoc, query, where, serverTimestamp } from "firebase/firestore";
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 
 // ──────────────────────────────────────────────────────────────
 // ⚠️  PASTE YOUR FIREBASE CONFIG HERE
@@ -24,6 +25,28 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+export const storage = getStorage(app);
+
+// ═══════════════════════════════════════════════════════════════
+//  FILE STORAGE — Vehicle photos & documents
+// ═══════════════════════════════════════════════════════════════
+
+// Upload a file and return its download URL
+export async function uploadFile(path, file) {
+  const fileRef = storageRef(storage, path);
+  await uploadBytes(fileRef, file);
+  return await getDownloadURL(fileRef);
+}
+
+// Delete a file from storage
+export async function deleteFile(path) {
+  try {
+    const fileRef = storageRef(storage, path);
+    await deleteObject(fileRef);
+  } catch (e) {
+    if (e.code !== "storage/object-not-found") throw e;
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════
 //  AUTH HELPERS
