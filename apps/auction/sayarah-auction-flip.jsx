@@ -3687,14 +3687,8 @@ function AppInner() {
   const allAdminTabs = [...TABS, "Calendar", "Reports", "Approvals", "Activity", "Users", "Settings"];
   const visibleTabs = adminMode ? allAdminTabs : managerMode ? (allowedTabs && allowedTabs.length ? allowedTabs.filter(t => allAdminTabs.includes(t)) : ["Dashboard"]) : [...TABS, "Calendar", "Settings"];
 
-  // Grouped navigation
-  const NAV_GROUPS = [
-    { label: "Dashboard", tabs: ["Dashboard"] },
-    { label: "Operations", tabs: ["Pipeline", "Inventory", "Mileage", "Calendar"] },
-    { label: "Insights", tabs: ["Analytics", "Reports"] },
-    ...(adminMode || managerMode ? [{ label: "Team", tabs: ["Approvals", "Activity", ...(adminMode ? ["Users"] : [])] }] : []),
-  ];
-  const [openMenu, setOpenMenu] = useState(null);
+  // Navigation — clean flat tabs, Settings accessed via gear icon only
+  const navTabs = visibleTabs.filter(t => t !== "Settings");
 
   // Approvals & notifications check
   useEffect(() => {
@@ -3877,78 +3871,27 @@ function AppInner() {
                 {saving && <span style={{ fontSize: 8, color: "#8B1A1A", fontWeight: 500, animation: "pulse 1.5s infinite" }}>Saving...</span>}
               </div>
 
-              {/* Center Nav Items — Grouped */}
+              {/* Nav Items */}
               <nav className="app-nav" style={{ display: "flex", alignItems: "center", gap: 0, overflowX: "auto" }}>
-                {NAV_GROUPS.map(group => {
-                  const groupTabs = group.tabs.filter(t => visibleTabs.includes(t));
-                  if (groupTabs.length === 0) return null;
-                  const isSingle = groupTabs.length === 1;
-                  const isGroupActive = groupTabs.includes(tab);
-                  const isOpen = openMenu === group.label;
-
-                  if (isSingle) {
-                    const t = groupTabs[0];
-                    return (
-                      <button key={t} onClick={() => { setTab(t); setOpenMenu(null); }} style={{
-                        background: "transparent",
-                        color: tab === t ? (darkMode ? "#fff" : "#111") : (darkMode ? "#9CA3AF" : "#6B7280"),
-                        border: "none", padding: "18px 12px", fontSize: 11,
-                        fontWeight: tab === t ? 800 : 600, cursor: "pointer", fontFamily: "inherit",
-                        letterSpacing: "0.06em", textTransform: "uppercase",
-                        whiteSpace: "nowrap", flexShrink: 0,
-                        borderBottom: tab === t ? "2px solid #8B1A1A" : "2px solid transparent",
-                        transition: "all 0.2s ease",
-                      }}>
-                        {t.toUpperCase()}
-                      </button>
-                    );
-                  }
-
+                {navTabs.map(t => {
+                  const isActive = tab === t;
                   return (
-                    <div key={group.label} style={{ position: "relative" }}
-                      onMouseEnter={() => setOpenMenu(group.label)} onMouseLeave={() => setOpenMenu(null)}>
-                      <button onClick={() => setOpenMenu(isOpen ? null : group.label)} style={{
-                        background: "transparent",
-                        color: isGroupActive ? (darkMode ? "#fff" : "#111") : (darkMode ? "#9CA3AF" : "#6B7280"),
-                        border: "none", padding: "18px 12px", fontSize: 11,
-                        fontWeight: isGroupActive ? 800 : 600, cursor: "pointer", fontFamily: "inherit",
-                        letterSpacing: "0.06em", textTransform: "uppercase",
-                        whiteSpace: "nowrap", flexShrink: 0,
-                        borderBottom: isGroupActive ? "2px solid #8B1A1A" : "2px solid transparent",
-                        transition: "all 0.2s ease",
-                        display: "flex", alignItems: "center", gap: 4,
-                      }}>
-                        {group.label.toUpperCase()}
-                        {group.label === "Team" && pendingApprovalCount > 0 && (
-                          <span style={{ background: "#8B1A1A", color: "#fff", fontSize: 8, fontWeight: 900, padding: "1px 5px", borderRadius: 8 }}>{pendingApprovalCount}</span>
-                        )}
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ opacity: 0.4, transform: isOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}><polyline points="6 9 12 15 18 9"/></svg>
-                      </button>
-                      {isOpen && (
-                        <div style={{
-                          position: "absolute", top: "100%", left: 0, minWidth: 160,
-                          background: darkMode ? "#2a2a2a" : BRAND.white, borderRadius: 10,
-                          boxShadow: "0 12px 36px rgba(0,0,0,0.18)", border: `1px solid ${darkMode ? "#444" : BRAND.grayLight}`,
-                          zIndex: 300, overflow: "hidden", paddingTop: 4, paddingBottom: 4,
-                        }}>
-                          {groupTabs.map(t => (
-                            <button key={t} onClick={() => { setTab(t); setOpenMenu(null); }} style={{
-                              display: "flex", alignItems: "center", gap: 8, width: "100%",
-                              background: tab === t ? (darkMode ? "rgba(139,26,26,0.2)" : "#FEF2F2") : "transparent",
-                              color: tab === t ? "#8B1A1A" : (darkMode ? "#D1D5DB" : BRAND.grayDark),
-                              border: "none", padding: "10px 16px", fontSize: 12,
-                              fontWeight: tab === t ? 700 : 500, cursor: "pointer", fontFamily: "inherit",
-                              textAlign: "left", transition: "background 0.15s",
-                            }}>
-                              {t}
-                              {t === "Approvals" && pendingApprovalCount > 0 && (
-                                <span style={{ background: "#8B1A1A", color: "#fff", fontSize: 8, fontWeight: 900, padding: "1px 5px", borderRadius: 8 }}>{pendingApprovalCount}</span>
-                              )}
-                            </button>
-                          ))}
-                        </div>
+                    <button key={t} onClick={() => setTab(t)} style={{
+                      background: "transparent",
+                      color: isActive ? (darkMode ? "#fff" : "#111") : (darkMode ? "#9CA3AF" : "#6B7280"),
+                      border: "none", padding: "18px 10px", fontSize: 10,
+                      fontWeight: isActive ? 800 : 600, cursor: "pointer", fontFamily: "inherit",
+                      letterSpacing: "0.05em", textTransform: "uppercase",
+                      position: "relative", whiteSpace: "nowrap", flexShrink: 0,
+                      borderBottom: isActive ? "2px solid #8B1A1A" : "2px solid transparent",
+                      transition: "all 0.2s ease",
+                      display: "flex", alignItems: "center", gap: 4,
+                    }}>
+                      {t.toUpperCase()}
+                      {t === "Approvals" && pendingApprovalCount > 0 && (
+                        <span style={{ background: "#8B1A1A", color: "#fff", fontSize: 7, fontWeight: 900, padding: "1px 4px", borderRadius: 6 }}>{pendingApprovalCount}</span>
                       )}
-                    </div>
+                    </button>
                   );
                 })}
               </nav>
