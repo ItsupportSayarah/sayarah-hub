@@ -239,17 +239,21 @@ export async function createUserDoc(uid, email, displayName, role = "user") {
 }
 
 // ─── Add user by email (creates Firestore doc using email-based ID) ───
-export async function addUserByEmail(email, displayName, role = "user") {
+export async function addUserByEmail(email, displayName, role = "user", { firstName, lastName } = {}) {
   // Check if user already exists by email
   const existing = await getDocs(collection(db, "users"));
   const dup = existing.docs.find(d => d.data().email === email);
   if (dup) throw new Error("User with this email already exists");
   // Use lowercase email as deterministic ID (preserves uniqueness)
   const id = email.toLowerCase().replace(/[^a-z0-9@._-]/g, "").replace(/[@.]/g, "_");
+  const fn = firstName || displayName?.split(" ")[0] || email.split("@")[0];
+  const ln = lastName || displayName?.split(" ").slice(1).join(" ") || "";
   await setDoc(doc(db, "users", id), {
     uid: id,
     email,
-    displayName: displayName || email.split("@")[0],
+    displayName: displayName || `${fn} ${ln}`.trim() || email.split("@")[0],
+    firstName: fn,
+    lastName: ln,
     role,
     logisticsAccess: true,
     auctionAccess: false,

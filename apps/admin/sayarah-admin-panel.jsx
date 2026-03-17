@@ -339,7 +339,8 @@ function UsersView({ users, onRefresh }) {
   const [search, setSearch] = useState("");
   const [showAddUser, setShowAddUser] = useState(false);
   const [newEmail, setNewEmail] = useState("");
-  const [newName, setNewName] = useState("");
+  const [newFirstName, setNewFirstName] = useState("");
+  const [newLastName, setNewLastName] = useState("");
   const [newRole, setNewRole] = useState("user");
   const [adding, setAdding] = useState(false);
 
@@ -359,9 +360,11 @@ function UsersView({ users, onRefresh }) {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail.trim())) { setMsg("Error: Enter a valid email address"); return; }
     setAdding(true); setMsg("");
     try {
-      await addUserByEmail(newEmail.trim(), newName.trim(), newRole);
+      const fn = newFirstName.trim();
+      const ln = newLastName.trim();
+      await addUserByEmail(newEmail.trim(), fn && ln ? `${fn} ${ln}` : fn || ln || "", newRole, { firstName: fn, lastName: ln });
       setMsg("User added successfully!");
-      setNewEmail(""); setNewName(""); setNewRole("user"); setShowAddUser(false);
+      setNewEmail(""); setNewFirstName(""); setNewLastName(""); setNewRole("user"); setShowAddUser(false);
       await onRefresh();
       setTimeout(() => setMsg(""), 3000);
     } catch (e) { setMsg("Error: " + e.message); }
@@ -400,8 +403,12 @@ function UsersView({ users, onRefresh }) {
               <input value={newEmail} onChange={e => setNewEmail(e.target.value)} type="email" placeholder="user@example.com" style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${B.grayLight}`, fontSize: 12, fontFamily: font, width: 220, outline: "none" }} />
             </div>
             <div>
-              <label style={{ fontSize: 10, fontWeight: 700, color: B.grayDark, display: "block", marginBottom: 4 }}>Display Name</label>
-              <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Full Name" style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${B.grayLight}`, fontSize: 12, fontFamily: font, width: 180, outline: "none" }} />
+              <label style={{ fontSize: 10, fontWeight: 700, color: B.grayDark, display: "block", marginBottom: 4 }}>First Name</label>
+              <input value={newFirstName} onChange={e => setNewFirstName(e.target.value)} placeholder="First name" style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${B.grayLight}`, fontSize: 12, fontFamily: font, width: 130, outline: "none" }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 10, fontWeight: 700, color: B.grayDark, display: "block", marginBottom: 4 }}>Last Name</label>
+              <input value={newLastName} onChange={e => setNewLastName(e.target.value)} placeholder="Last name" style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${B.grayLight}`, fontSize: 12, fontFamily: font, width: 130, outline: "none" }} />
             </div>
             <div>
               <label style={{ fontSize: 10, fontWeight: 700, color: B.grayDark, display: "block", marginBottom: 4 }}>Role</label>
@@ -451,14 +458,24 @@ function UsersView({ users, onRefresh }) {
                 <tr key={u.id} style={{ borderBottom: `1px solid ${B.grayLight}`, transition: "background .15s", background: isEditing ? B.blueBg : "transparent" }}>
                   {/* User Info */}
                   <td style={{ padding: "12px 14px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{ width: 36, height: 36, borderRadius: "50%", background: `linear-gradient(135deg, ${roleInfo.color}, ${roleInfo.bg})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: B.white, fontWeight: 800 }}>{(u.firstName || u.displayName || u.email || "?")[0].toUpperCase()}</div>
-                      <div>
-                        <div style={{ fontWeight: 700, color: B.navy, fontSize: 13 }}>{u.firstName && u.lastName ? `${u.firstName} ${u.lastName}` : u.displayName || "—"}</div>
+                    {isEditing && !isSuperAdmin ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        <div style={{ display: "flex", gap: 6 }}>
+                          <input value={editUser.firstName || ""} onChange={e => setEditUser({ ...editUser, firstName: e.target.value })} placeholder="First name" style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${B.grayLight}`, fontSize: 12, fontFamily: font, width: 100, outline: "none" }} />
+                          <input value={editUser.lastName || ""} onChange={e => setEditUser({ ...editUser, lastName: e.target.value })} placeholder="Last name" style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${B.grayLight}`, fontSize: 12, fontFamily: font, width: 100, outline: "none" }} />
+                        </div>
                         <div style={{ fontSize: 10, color: B.gray }}>{u.email || "—"}</div>
-                        {isSuperAdmin && <Badge color="#92400E" bg={B.amberBg}>{I.shield(12, "#92400E")} SUPER ADMIN</Badge>}
                       </div>
-                    </div>
+                    ) : (
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ width: 36, height: 36, borderRadius: "50%", background: `linear-gradient(135deg, ${roleInfo.color}, ${roleInfo.bg})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: B.white, fontWeight: 800 }}>{(u.firstName || u.displayName || u.email || "?")[0].toUpperCase()}</div>
+                        <div>
+                          <div style={{ fontWeight: 700, color: B.navy, fontSize: 13 }}>{u.firstName && u.lastName ? `${u.firstName} ${u.lastName}` : u.displayName || "—"}</div>
+                          <div style={{ fontSize: 10, color: B.gray }}>{u.email || "—"}</div>
+                          {isSuperAdmin && <Badge color="#92400E" bg={B.amberBg}>{I.shield(12, "#92400E")} SUPER ADMIN</Badge>}
+                        </div>
+                      </div>
+                    )}
                   </td>
 
                   {/* Last Login */}
@@ -546,8 +563,13 @@ function UsersView({ users, onRefresh }) {
                     : isEditing ? (
                       <div style={{ display: "flex", gap: 4 }}>
                         <Btn variant="success" onClick={() => {
+                          const fn = (editUser.firstName || "").trim();
+                          const ln = (editUser.lastName || "").trim();
                           savePerms(u.id, {
                             role: editUser.role,
+                            firstName: fn,
+                            lastName: ln,
+                            displayName: fn && ln ? `${fn} ${ln}` : fn || ln || editUser.displayName || "",
                             auctionAccess: !!editUser.auctionAccess,
                             logisticsAccess: editUser.logisticsAccess !== false,
                             allowedTabs: editUser.allowedTabs || AUCTION_TABS,
