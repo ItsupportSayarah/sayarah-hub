@@ -3738,14 +3738,36 @@ function AppInner() {
             } else { setAllowedTabs(null); }
             // Load SHARED data (all users see the same vehicles/expenses/sales)
             let cloudData = await loadSharedData();
-            if (!cloudData) {
-              // Migration: try loading from per-user data and promote to shared
+            // Migration: merge this user's per-user data into shared (dedup by id)
+            try {
               const perUserData = await loadAppData(fbUser.uid);
-              if (perUserData) {
-                cloudData = perUserData;
-                await saveSharedData(perUserData);
+              if (perUserData && perUserData.vehicles && perUserData.vehicles.length > 0) {
+                const shared = cloudData || defaultData();
+                const existingIds = new Set((shared.vehicles || []).map(v => v.id));
+                const newVehicles = perUserData.vehicles.filter(v => !existingIds.has(v.id));
+                const existingExpIds = new Set((shared.expenses || []).map(e => e.id));
+                const newExpenses = (perUserData.expenses || []).filter(e => !existingExpIds.has(e.id));
+                const existingSaleIds = new Set((shared.sales || []).map(s => s.id));
+                const newSales = (perUserData.sales || []).filter(s => !existingSaleIds.has(s.id));
+                const existingMileIds = new Set((shared.mileage || []).map(m => m.id));
+                const newMileage = (perUserData.mileage || []).filter(m => !existingMileIds.has(m.id));
+                const existingDocIds = new Set((shared.documents || []).map(d => d.id));
+                const newDocs = (perUserData.documents || []).filter(d => !existingDocIds.has(d.id));
+                if (newVehicles.length > 0 || newExpenses.length > 0 || newSales.length > 0 || newMileage.length > 0 || newDocs.length > 0) {
+                  const merged = {
+                    ...shared,
+                    vehicles: [...(shared.vehicles || []), ...newVehicles],
+                    expenses: [...(shared.expenses || []), ...newExpenses],
+                    sales: [...(shared.sales || []), ...newSales],
+                    mileage: [...(shared.mileage || []), ...newMileage],
+                    documents: [...(shared.documents || []), ...newDocs],
+                    nextStockNum: Math.max(shared.nextStockNum || 1, perUserData.nextStockNum || 1),
+                  };
+                  await saveSharedData(merged);
+                  cloudData = merged;
+                }
               }
-            }
+            } catch (e) { console.warn("Migration merge failed:", e); }
             if (cloudData) setData({ ...defaultData(), ...cloudData });
             setDataReady(true);
           } else {
