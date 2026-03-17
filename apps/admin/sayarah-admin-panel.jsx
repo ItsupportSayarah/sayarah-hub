@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext, Component } from "react";
-import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData, onUsersChange, addUserByEmail, getUserProfile } from "./src/firebase.js";
+import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData, onUsersChange, addUserByEmail, getUserProfile, changePassword } from "./src/firebase.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
 class ErrorBoundary extends Component {
@@ -664,6 +664,72 @@ function SettingsView({ adminEmail }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+// CHANGE PASSWORD MODAL
+// ═══════════════════════════════════════════════════════════════
+function ChangePasswordModal({ onClose }) {
+  const [currentPw, setCurrentPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async () => {
+    setError("");
+    if (!currentPw) { setError("Enter your current password"); return; }
+    if (!newPw) { setError("Enter a new password"); return; }
+    if (newPw.length < 6) { setError("New password must be at least 6 characters"); return; }
+    if (newPw !== confirmPw) { setError("New passwords do not match"); return; }
+    if (currentPw === newPw) { setError("New password must be different from current"); return; }
+    setLoading(true);
+    try { await changePassword(currentPw, newPw); setSuccess(true); }
+    catch (e) {
+      const msg = e.code === "auth/wrong-password" || e.code === "auth/invalid-credential" ? "Current password is incorrect"
+        : e.code === "auth/weak-password" ? "Password is too weak — use at least 6 characters"
+        : e.code === "auth/requires-recent-login" ? "Session expired — please sign out and sign back in first"
+        : e.message || "Failed to change password";
+      setError(msg);
+    }
+    setLoading(false);
+  };
+
+  const inp = { width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${B.grayLight}`, fontSize: 13, fontFamily: font, outline: "none", boxSizing: "border-box", background: B.white, color: B.navy };
+  const lbl = { fontSize: 11, fontWeight: 700, color: B.grayDark, display: "block", marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.06em" };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)" }} onClick={onClose}>
+      <div style={{ background: B.white, borderRadius: 16, padding: 28, width: "100%", maxWidth: 400, boxShadow: "0 25px 50px rgba(0,0,0,0.25)", position: "relative" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 900, color: B.navy }}>Change Password</div>
+            <div style={{ fontSize: 11, color: B.gray, marginTop: 2 }}>Update your account password</div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, color: B.gray, cursor: "pointer", padding: 4 }}>&times;</button>
+        </div>
+        {success ? (
+          <div>
+            <div style={{ background: B.greenBg, border: "1px solid #BBF7D0", borderRadius: 10, padding: "16px 20px", textAlign: "center" }}>
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 8 }}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              <div style={{ fontSize: 14, fontWeight: 700, color: "#166534", marginBottom: 4 }}>Password Changed!</div>
+              <div style={{ fontSize: 12, color: "#15803D" }}>Your password has been updated successfully.</div>
+            </div>
+            <button onClick={onClose} style={{ width: "100%", marginTop: 16, padding: "12px", background: B.red, color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: font }}>Done</button>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div><label style={lbl}>Current Password</label><input type="password" value={currentPw} onChange={e => setCurrentPw(e.target.value)} placeholder="Enter current password" style={inp} /></div>
+            <div><label style={lbl}>New Password</label><input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Min 6 characters" style={inp} /></div>
+            <div><label style={lbl}>Confirm New Password</label><input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSubmit()} placeholder="Re-enter new password" style={inp} /></div>
+            {error && <div style={{ background: B.redBg, color: B.red, padding: "10px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, border: "1px solid #FECACA" }}>{error}</div>}
+            <button onClick={handleSubmit} disabled={loading} style={{ width: "100%", padding: "12px", background: loading ? B.gray : `linear-gradient(135deg, ${B.red}, #A52422)`, color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: loading ? "wait" : "pointer", fontFamily: font, boxShadow: "0 4px 12px rgba(139,26,26,0.3)" }}>{loading ? "Updating..." : "Update Password"}</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════
 const NAV_TABS = ["Dashboard", "Users", "Activity", "Settings"];
@@ -675,6 +741,7 @@ function AppInner() {
   const [tab, setTab] = useState("Dashboard");
   const [users, setUsers] = useState([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
+  const [showChangePw, setShowChangePw] = useState(false);
 
   const loadUsers = async () => {
     setLoadingUsers(true);
@@ -808,10 +875,14 @@ function AppInner() {
             }} title={adminEmail}>
               {adminEmail ? adminEmail.charAt(0).toUpperCase() : "A"}
             </div>
+            <button onClick={() => setShowChangePw(true)} title="Change Password" style={{ background: "transparent", border: "1px solid #E5E7EB", color: "#374151", borderRadius: 6, padding: 6, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", transition: "all .2s" }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </button>
             <button onClick={handleLogout} style={{ background: "transparent", border: "1px solid #E5E7EB", color: "#374151", borderRadius: 6, padding: "6px 14px", fontSize: 11, fontWeight: 600, cursor: "pointer", fontFamily: font, transition: "all .2s" }}>Sign Out</button>
           </div>
         </div>
       </div>
+      {showChangePw && <ChangePasswordModal onClose={() => setShowChangePw(false)} />}
 
       {/* Content */}
       <div className="admin-content" style={{ maxWidth: 1400, margin: "0 auto", padding: "24px 20px" }}>
