@@ -1199,7 +1199,6 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
   const [confirm, setConfirm] = useState(null);
   const [filter, setFilter] = useState("All");
   const [sortBy, setSortBy] = useState("recent");
-  const [vehicleLog, setVehicleLog] = useState([]);
   const STATUS_OPTIONS = ["In Recon","Ready","Listed","Sold"];
   const admin = isAdmin(role);
   const canEdit = canEditVehicles(role);
@@ -1211,7 +1210,7 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
   const upd = (k, v) => { setFormError(""); setForm(f => ({ ...f, [k]: v })); };
 
   const openNew = () => { setForm(empty()); setEditing(null); setFormError(""); setShowForm(true); };
-  const openDetail = v => { setShowDetail(v.id); loadActivityLog().then(log => setVehicleLog(log.filter(l => l.details?.stockNum === v.stockNum || l.description?.includes(`#${v.stockNum}`)).slice(0, 20))).catch(() => setVehicleLog([])); };
+  const openDetail = v => { setShowDetail(v.id); };
   const openEditFromDetail = v => {
     if (!canEdit) return;
     setForm({ ...v, auctionSource: v.auctionSource || "custom", titleStatus: v.titleStatus || "clean" }); setEditing(v.id); setFormError(""); setShowForm(true);
@@ -1611,6 +1610,8 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
   const v = vehicle;
   const m = calcVehicleFullMetrics(v, sale, data.holdCosts);
   const titleInfo = TITLE_STATUS[v.titleStatus] || TITLE_STATUS.clean;
+  const [vehicleLog, setVehicleLog] = useState([]);
+  useEffect(() => { loadActivityLog().then(log => setVehicleLog(log.filter(l => l.details?.stockNum === v.stockNum || l.description?.includes(`#${v.stockNum}`)).slice(0, 20))).catch(() => setVehicleLog([])); }, [v.stockNum]);
 
   const handleExportPDF = () => {
     const users = loadUsers();
