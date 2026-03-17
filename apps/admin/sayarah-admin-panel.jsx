@@ -675,6 +675,146 @@ function ActivityView({ users }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// SESSIONS VIEW — All user login activity with IP & location
+// ═══════════════════════════════════════════════════════════════
+function SessionsView({ users }) {
+  // Sort by most recent login first
+  const sorted = [...users].filter(u => u.lastLoginAt).sort((a, b) => (b.lastLoginAt || "").localeCompare(a.lastLoginAt || ""));
+  const neverLoggedIn = users.filter(u => !u.lastLoginAt);
+
+  // Consider "active" if logged in within last 24 hours
+  const now = Date.now();
+  const activeUsers = sorted.filter(u => u.lastLoginAt && (now - new Date(u.lastLoginAt).getTime()) < 86400000);
+  const recentUsers = sorted.filter(u => u.lastLoginAt && (now - new Date(u.lastLoginAt).getTime()) >= 86400000);
+
+  const SessionRow = ({ u, isActive }) => {
+    const roleInfo = ROLES.find(r => r.key === u.role) || ROLES[3];
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 18px", borderBottom: `1px solid ${B.grayLight}`, transition: "background .1s" }}>
+        {/* Status dot */}
+        <div style={{ width: 10, height: 10, borderRadius: "50%", background: isActive ? "#22C55E" : "#D1D5DB", flexShrink: 0, boxShadow: isActive ? "0 0 8px rgba(34,197,94,0.4)" : "none" }} />
+        {/* Avatar */}
+        <div style={{ width: 38, height: 38, borderRadius: "50%", background: `linear-gradient(135deg, ${roleInfo.color}, ${roleInfo.bg})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, color: B.white, fontWeight: 800, flexShrink: 0 }}>{(u.firstName || u.displayName || u.email || "?")[0].toUpperCase()}</div>
+        {/* Name & Email */}
+        <div style={{ flex: "1 1 160px", minWidth: 0 }}>
+          <div style={{ fontWeight: 700, color: B.navy, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.firstName && u.lastName ? `${u.firstName} ${u.lastName}` : u.displayName || "—"}</div>
+          <div style={{ fontSize: 10, color: B.gray, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.email || "—"}</div>
+        </div>
+        {/* Role */}
+        <div style={{ flex: "0 0 80px" }}>
+          <Badge color={roleInfo.color} bg={roleInfo.bg}>{roleInfo.label}</Badge>
+        </div>
+        {/* Current Login */}
+        <div style={{ flex: "1 1 180px" }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: B.navy }}>{timeAgo(u.lastLoginAt)}</div>
+          <div style={{ fontSize: 10, color: B.grayDark, fontFamily: "monospace", marginTop: 1 }}>{u.lastLoginIp || "—"}</div>
+          {u.lastLoginLocation && u.lastLoginLocation !== "Unknown" && (
+            <div style={{ fontSize: 10, color: B.gray, marginTop: 1, display: "flex", alignItems: "center", gap: 3 }}>
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+              {u.lastLoginLocation}
+            </div>
+          )}
+        </div>
+        {/* Previous Login */}
+        <div style={{ flex: "1 1 180px" }}>
+          {u.prevLoginAt ? (
+            <>
+              <div style={{ fontSize: 11, color: B.grayDark }}>{timeAgo(u.prevLoginAt)}</div>
+              <div style={{ fontSize: 10, color: B.gray, fontFamily: "monospace", marginTop: 1 }}>{u.prevLoginIp || "—"}</div>
+              {u.prevLoginLocation && u.prevLoginLocation !== "Unknown" && (
+                <div style={{ fontSize: 10, color: B.gray, marginTop: 1, display: "flex", alignItems: "center", gap: 3 }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                  {u.prevLoginLocation}
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ fontSize: 10, color: B.gray }}>—</div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: B.navy }}>User Sessions</div>
+          <div style={{ fontSize: 12, color: B.gray }}>Monitor login activity, IP addresses, and locations</div>
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ padding: "8px 16px", background: "#F0FDF4", borderRadius: 8, border: "1px solid #BBF7D0", textAlign: "center" }}>
+            <div style={{ fontSize: 20, fontWeight: 900, color: "#16A34A" }}>{activeUsers.length}</div>
+            <div style={{ fontSize: 9, color: "#15803D", fontWeight: 600 }}>ACTIVE (24h)</div>
+          </div>
+          <div style={{ padding: "8px 16px", background: B.cream, borderRadius: 8, border: `1px solid ${B.grayLight}`, textAlign: "center" }}>
+            <div style={{ fontSize: 20, fontWeight: 900, color: B.navy }}>{users.length}</div>
+            <div style={{ fontSize: 9, color: B.gray, fontWeight: 600 }}>TOTAL USERS</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Column Headers */}
+      <Card style={{ padding: 0, overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 18px", background: B.cream, borderBottom: `2px solid ${B.grayLight}` }}>
+          <div style={{ width: 10 }} />
+          <div style={{ width: 38 }} />
+          <div style={{ flex: "1 1 160px", fontSize: 10, fontWeight: 800, color: B.grayDark, textTransform: "uppercase", letterSpacing: ".05em" }}>User</div>
+          <div style={{ flex: "0 0 80px", fontSize: 10, fontWeight: 800, color: B.grayDark, textTransform: "uppercase", letterSpacing: ".05em" }}>Role</div>
+          <div style={{ flex: "1 1 180px", fontSize: 10, fontWeight: 800, color: B.grayDark, textTransform: "uppercase", letterSpacing: ".05em" }}>Current Login</div>
+          <div style={{ flex: "1 1 180px", fontSize: 10, fontWeight: 800, color: B.grayDark, textTransform: "uppercase", letterSpacing: ".05em" }}>Previous Login</div>
+        </div>
+
+        {/* Active Users */}
+        {activeUsers.length > 0 && (
+          <div style={{ borderBottom: `1px solid ${B.grayLight}` }}>
+            <div style={{ padding: "8px 18px", background: "#F0FDF4", fontSize: 10, fontWeight: 800, color: "#16A34A", letterSpacing: ".05em", display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#22C55E" }} /> ACTIVE NOW ({activeUsers.length})
+            </div>
+            {activeUsers.map(u => <SessionRow key={u.id} u={u} isActive={true} />)}
+          </div>
+        )}
+
+        {/* Recent Users */}
+        {recentUsers.length > 0 && (
+          <div>
+            <div style={{ padding: "8px 18px", background: B.cream, fontSize: 10, fontWeight: 800, color: B.grayDark, letterSpacing: ".05em" }}>INACTIVE ({recentUsers.length})</div>
+            {recentUsers.map(u => <SessionRow key={u.id} u={u} isActive={false} />)}
+          </div>
+        )}
+
+        {/* Never Logged In */}
+        {neverLoggedIn.length > 0 && (
+          <div>
+            <div style={{ padding: "8px 18px", background: B.cream, fontSize: 10, fontWeight: 800, color: B.gray, letterSpacing: ".05em" }}>NEVER LOGGED IN ({neverLoggedIn.length})</div>
+            {neverLoggedIn.map(u => {
+              const roleInfo = ROLES.find(r => r.key === u.role) || ROLES[3];
+              return (
+                <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 18px", borderBottom: `1px solid ${B.grayLight}`, opacity: 0.5 }}>
+                  <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#D1D5DB" }} />
+                  <div style={{ width: 38, height: 38, borderRadius: "50%", background: B.grayLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, color: B.gray, fontWeight: 800 }}>{(u.firstName || u.displayName || u.email || "?")[0].toUpperCase()}</div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 700, color: B.grayDark, fontSize: 13 }}>{u.firstName && u.lastName ? `${u.firstName} ${u.lastName}` : u.displayName || "—"}</div>
+                    <div style={{ fontSize: 10, color: B.gray }}>{u.email || "—"}</div>
+                  </div>
+                  <Badge color={roleInfo.color} bg={roleInfo.bg}>{roleInfo.label}</Badge>
+                  <div style={{ fontSize: 10, color: B.gray }}>No login recorded</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {sorted.length === 0 && neverLoggedIn.length === 0 && (
+          <div style={{ padding: 40, textAlign: "center", color: B.gray, fontSize: 12 }}>No users found</div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 // SETTINGS VIEW
 // ═══════════════════════════════════════════════════════════════
 function SettingsView({ adminEmail }) {
@@ -794,7 +934,7 @@ function ChangePasswordModal({ onClose }) {
 
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════
-const NAV_TABS = ["Dashboard", "Users", "Activity", "Settings"];
+const NAV_TABS = ["Dashboard", "Users", "Sessions", "Activity", "Settings"];
 
 function AppInner() {
   const [loggedIn, setLoggedIn] = useState(false);
@@ -957,6 +1097,7 @@ function AppInner() {
           <>
             {tab === "Dashboard" && <DashboardView users={users} adminEmail={adminEmail} />}
             {tab === "Users" && <UsersView users={users} onRefresh={loadUsers} />}
+            {tab === "Sessions" && <SessionsView users={users} />}
             {tab === "Activity" && <ActivityView users={users} />}
             {tab === "Settings" && <SettingsView adminEmail={adminEmail} />}
           </>
