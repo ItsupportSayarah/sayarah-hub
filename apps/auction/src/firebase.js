@@ -108,21 +108,34 @@ export async function changePassword(currentPassword, newPassword) {
   await updatePassword(user, newPassword);
 }
 
-// Record login timestamp and location
+// Record login timestamp, location, and IP
 export async function recordLoginEvent(uid) {
   try {
     let location = "Unknown";
+    let ip = "Unknown";
     try {
       const res = await fetch("https://ipapi.co/json/");
       if (res.ok) {
         const geo = await res.json();
         location = [geo.city, geo.region, geo.country_name].filter(Boolean).join(", ");
+        ip = geo.ip || "Unknown";
       }
     } catch {}
-    await setDoc(doc(db, "users", uid), {
+    // Read current login info to save as "previous"
+    const snap = await getDoc(doc(db, "users", uid));
+    const prev = snap.exists() ? snap.data() : {};
+    const update = {
       lastLoginAt: new Date().toISOString(),
       lastLoginLocation: location,
-    }, { merge: true });
+      lastLoginIp: ip,
+    };
+    // Save previous login info (only if there was a previous login)
+    if (prev.lastLoginAt) {
+      update.prevLoginAt = prev.lastLoginAt;
+      update.prevLoginLocation = prev.lastLoginLocation || "Unknown";
+      update.prevLoginIp = prev.lastLoginIp || "Unknown";
+    }
+    await setDoc(doc(db, "users", uid), update, { merge: true });
   } catch (e) {
     console.warn("Failed to record login event:", e);
   }

@@ -481,10 +481,18 @@ function UsersView({ users, onRefresh }) {
                   {/* Last Login */}
                   <td style={{ padding: "12px 14px" }}>
                     <div style={{ fontSize: 11, fontWeight: 600, color: B.navy }}>{u.lastLoginAt ? timeAgo(u.lastLoginAt) : "Never"}</div>
+                    {u.lastLoginIp && u.lastLoginIp !== "Unknown" && (
+                      <div style={{ fontSize: 9, color: B.grayDark, marginTop: 2, fontFamily: "monospace" }}>{u.lastLoginIp}</div>
+                    )}
                     {u.lastLoginLocation && u.lastLoginLocation !== "Unknown" && (
-                      <div style={{ fontSize: 9, color: B.gray, marginTop: 2, display: "flex", alignItems: "center", gap: 3 }}>
+                      <div style={{ fontSize: 9, color: B.gray, marginTop: 1, display: "flex", alignItems: "center", gap: 3 }}>
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
                         {u.lastLoginLocation}
+                      </div>
+                    )}
+                    {u.prevLoginAt && (
+                      <div style={{ fontSize: 8, color: B.gray, marginTop: 4, borderTop: `1px solid ${B.grayLight}`, paddingTop: 3 }}>
+                        Prev: {timeAgo(u.prevLoginAt)}{u.prevLoginIp && u.prevLoginIp !== "Unknown" ? ` · ${u.prevLoginIp}` : ""}
                       </div>
                     )}
                   </td>
