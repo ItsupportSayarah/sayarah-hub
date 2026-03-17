@@ -22,7 +22,7 @@ app.use(helmet({
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
       imgSrc: ["'self'", "data:", "blob:", "https://*.googleapis.com", "https://*.googleusercontent.com", "https://firebasestorage.googleapis.com"],
-      connectSrc: ["'self'", "https://*.firebaseio.com", "https://*.googleapis.com", "https://*.firebaseapp.com", "wss://*.firebaseio.com", "https://firebasestorage.googleapis.com", "https://identitytoolkit.googleapis.com", "https://securetoken.googleapis.com"],
+      connectSrc: ["'self'", "https://*.firebaseio.com", "https://*.googleapis.com", "https://*.firebaseapp.com", "wss://*.firebaseio.com", "https://firebasestorage.googleapis.com", "https://identitytoolkit.googleapis.com", "https://securetoken.googleapis.com", "https://ipapi.co"],
       frameSrc: ["'self'", "https://*.firebaseapp.com"],
     },
   },

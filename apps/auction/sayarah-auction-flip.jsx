@@ -3420,7 +3420,7 @@ function UsersTab() {
                       {isSuperAdmin ? <span style={{ fontSize: 9, color: BRAND.gray }}>Protected</span>
                       : isEditing ? (
                         <div style={{ display: "flex", gap: 4 }}>
-                          <Btn onClick={() => { savePerms(u.id, { role: editUser.role, allowedTabs: editUser.allowedTabs || ALL_AUCTION_TABS }); setEditUser(null); }} disabled={saving}>{saving ? "Saving..." : "Save"}</Btn>
+                          <Btn onClick={() => { savePerms(u.id, { role: editUser.role, allowedTabs: editUser.allowedTabs || ALL_AUCTION_TABS, auctionAccess: true }); setEditUser(null); }} disabled={saving}>{saving ? "Saving..." : "Save"}</Btn>
                           <Btn variant="secondary" onClick={() => setEditUser(null)}>Cancel</Btn>
                         </div>
                       ) : (
@@ -3717,9 +3717,16 @@ function AppInner() {
         try {
           if (fbUser) {
             const isSuperAdmin = fbUser.email === "support@sayarah.io";
-            const role = isSuperAdmin ? "admin" : (await getUserRole(fbUser.uid)) || "user";
-            setFirebaseUid(fbUser.uid);
             const profile = await getUserProfile(fbUser.uid);
+            const role = isSuperAdmin ? "admin" : (profile?.role || "user");
+            // Check auction access — same logic as firebaseLogin
+            if (!isSuperAdmin && role !== "admin" && role !== "manager" && profile?.auctionAccess !== true) {
+              await firebaseSignOut();
+              setLoaded(true);
+              clearTimeout(timeout);
+              return;
+            }
+            setFirebaseUid(fbUser.uid);
             const fname = profile?.firstName || (fbUser.displayName || fbUser.email.split("@")[0]).split(" ")[0];
             setUsername(fname);
             setUserRole(role);
