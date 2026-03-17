@@ -176,10 +176,48 @@ export async function getAllUsers() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  DATA HELPERS — Replaces localStorage
+//  DATA HELPERS — Shared data (all users read/write same document)
 // ═══════════════════════════════════════════════════════════════
 
-// Save main app data — Auction uses its own collection
+// Save shared app data — ALL users share one document
+export async function saveSharedData(data) {
+  await setDoc(doc(db, "auctionShared", "appData"), {
+    ...data,
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+}
+
+// Save only specific fields to avoid overwriting concurrent changes
+export async function saveSharedFields(fields) {
+  await setDoc(doc(db, "auctionShared", "appData"), {
+    ...fields,
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+}
+
+// Load shared data once
+export async function loadSharedData() {
+  const snap = await getDoc(doc(db, "auctionShared", "appData"));
+  if (snap.exists()) {
+    const d = snap.data();
+    delete d.updatedAt;
+    return d;
+  }
+  return null;
+}
+
+// Listen to shared data changes in real-time
+export function onSharedDataChange(callback) {
+  return onSnapshot(doc(db, "auctionShared", "appData"), (snap) => {
+    if (snap.exists()) {
+      const d = snap.data();
+      delete d.updatedAt;
+      callback(d);
+    }
+  });
+}
+
+// ─── Legacy per-user data (kept for migration) ───
 export async function saveAppData(uid, data) {
   await setDoc(doc(db, "auctionData", uid), {
     ...data,
@@ -187,7 +225,6 @@ export async function saveAppData(uid, data) {
   });
 }
 
-// Load app data once
 export async function loadAppData(uid) {
   const snap = await getDoc(doc(db, "auctionData", uid));
   if (snap.exists()) {
@@ -198,7 +235,6 @@ export async function loadAppData(uid) {
   return null;
 }
 
-// Listen to app data changes in real-time
 export function onAppDataChange(uid, callback) {
   return onSnapshot(doc(db, "auctionData", uid), (snap) => {
     if (snap.exists()) {

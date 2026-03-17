@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback, createContext, useContext, Component } from "react";
-import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserProfile, updateUserRole, getAllUsers, updateUserPermissions, getUserData, saveAppData, loadAppData, saveApprovalsFB, loadApprovalsFB, saveActivityLogFB, loadActivityLogFB, changePassword, resetPassword, uploadFile, deleteFile } from "./src/firebase.js";
+import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserProfile, updateUserRole, getAllUsers, updateUserPermissions, getUserData, saveAppData, loadAppData, saveSharedData, loadSharedData, onSharedDataChange, saveApprovalsFB, loadApprovalsFB, saveActivityLogFB, loadActivityLogFB, changePassword, resetPassword, uploadFile, deleteFile } from "./src/firebase.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
 class ErrorBoundary extends Component {
@@ -3736,8 +3736,16 @@ function AppInner() {
               const ud = await getUserData(fbUser.uid);
               if (ud && ud.allowedTabs) setAllowedTabs(ud.allowedTabs);
             } else { setAllowedTabs(null); }
-            // Load data from Firestore BEFORE enabling saves
-            const cloudData = await loadAppData(fbUser.uid);
+            // Load SHARED data (all users see the same vehicles/expenses/sales)
+            let cloudData = await loadSharedData();
+            if (!cloudData) {
+              // Migration: try loading from per-user data and promote to shared
+              const perUserData = await loadAppData(fbUser.uid);
+              if (perUserData) {
+                cloudData = perUserData;
+                await saveSharedData(perUserData);
+              }
+            }
             if (cloudData) setData({ ...defaultData(), ...cloudData });
             setDataReady(true);
           } else {
@@ -3768,13 +3776,13 @@ function AppInner() {
     }
   }, []);
 
-  // ─── Save data: Firestore OR localStorage (only after cloud data loaded) ───
+  // ─── Save data: Shared Firestore OR localStorage (only after cloud data loaded) ───
   useEffect(() => {
     if (!loaded || !dataReady) return;
     if (FIREBASE_ENABLED && firebaseUid) {
       const t = setTimeout(() => {
         setSaving(true);
-        saveAppData(firebaseUid, data).then(() => setTimeout(() => setSaving(false), 400)).catch(() => setSaving(false));
+        saveSharedData(data).then(() => setTimeout(() => setSaving(false), 400)).catch(() => setSaving(false));
       }, 600);
       return () => clearTimeout(t);
     } else {
