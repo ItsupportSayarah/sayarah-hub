@@ -1173,6 +1173,7 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
   const [confirm, setConfirm] = useState(null);
   const [filter, setFilter] = useState("All");
   const [sortBy, setSortBy] = useState("recent");
+  const [vehicleLog, setVehicleLog] = useState([]);
   const STATUS_OPTIONS = ["In Recon","Ready","Listed","Sold"];
   const admin = isAdmin(role);
   const canEdit = canEditVehicles(role);
@@ -1184,7 +1185,7 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
   const upd = (k, v) => { setFormError(""); setForm(f => ({ ...f, [k]: v })); };
 
   const openNew = () => { setForm(empty()); setEditing(null); setFormError(""); setShowForm(true); };
-  const openDetail = v => { setShowDetail(v.id); };
+  const openDetail = v => { setShowDetail(v.id); loadActivityLog().then(log => setVehicleLog(log.filter(l => l.details?.stockNum === v.stockNum || l.description?.includes(`#${v.stockNum}`)).slice(0, 20))).catch(() => setVehicleLog([])); };
   const openEditFromDetail = v => {
     if (!canEdit) return;
     setForm({ ...v, auctionSource: v.auctionSource || "custom", titleStatus: v.titleStatus || "clean" }); setEditing(v.id); setFormError(""); setShowForm(true);
@@ -1773,8 +1774,7 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
             if (v.purchaseDate) events.push({ date: v.purchaseDate, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>, label: "Purchased", detail: `${fmt$(p(v.purchasePrice))} from ${(AUCTION_FEE_TIERS[v.auctionSource] || {}).name || "—"}`, color: BRAND.red });
             expenses.forEach(e => events.push({ date: e.date, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>, label: `Expense: ${e.category || "—"}`, detail: `${fmt$2(p(e.amount))}${e.description ? " — " + e.description : ""}`, color: "#D97706" }));
             if (sale) events.push({ date: sale.date, icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><line x1="12" y1="6" x2="12" y2="18"/><path d="M6 12h.01"/><path d="M18 12h.01"/></svg>, label: "Sold", detail: `${fmt$(p(sale.grossPrice))} to ${sale.buyerName || "—"}`, color: BRAND.green });
-            // Add status change events from activity log
-            const log = loadActivityLog().filter(l => l.details?.stockNum === v.stockNum || l.description?.includes(`#${v.stockNum}`)).slice(0, 20);
+            const log = vehicleLog;
             log.forEach(l => {
               if (!events.find(e => e.date === l.timestamp?.slice(0, 10) && e.label === l.action)) {
                 events.push({ date: l.timestamp?.slice(0, 10) || "", icon: l.action.includes("edit") ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg> : l.action.includes("delete") ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="17" x2="12" y2="3"/><path d="M5 12l7-9 7 9"/><line x1="19" y1="21" x2="5" y2="21"/></svg>, label: l.action.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()), detail: l.user, color: BRAND.gray });
