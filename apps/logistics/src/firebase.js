@@ -87,35 +87,31 @@ export async function changePassword(currentPassword, newPassword) {
   await updatePassword(user, newPassword);
 }
 
+// Fetch IP and location with multiple fallback APIs
+async function fetchGeoInfo() {
+  const apis = [
+    { url: "https://api.ipify.org?format=json", parse: (d) => ({ ip: d.ip }) },
+    { url: "https://ipapi.co/json/", parse: (d) => ({ ip: d.ip, location: [d.city, d.region, d.country_name].filter(Boolean).join(", ") }) },
+    { url: "https://ip-api.com/json/?fields=query,city,regionName,country", parse: (d) => ({ ip: d.query, location: [d.city, d.regionName, d.country].filter(Boolean).join(", ") }) },
+  ];
+  let ip = "Unknown", location = "Unknown";
+  try { const res = await fetch(apis[0].url); if (res.ok) { const d = await res.json(); ip = d.ip || "Unknown"; } } catch {}
+  for (let i = 1; i < apis.length; i++) {
+    try { const res = await fetch(apis[i].url); if (res.ok) { const d = await res.json(); const p = apis[i].parse(d); if (p.location && p.location !== "Unknown") location = p.location; if (ip === "Unknown" && p.ip) ip = p.ip; if (location !== "Unknown") break; } } catch {}
+  }
+  return { ip, location };
+}
+
 // Record login timestamp, location, and IP
 export async function recordLoginEvent(uid) {
   try {
-    let location = "Unknown";
-    let ip = "Unknown";
-    try {
-      const res = await fetch("https://ipapi.co/json/");
-      if (res.ok) {
-        const geo = await res.json();
-        location = [geo.city, geo.region, geo.country_name].filter(Boolean).join(", ");
-        ip = geo.ip || "Unknown";
-      }
-    } catch {}
+    const { ip, location } = await fetchGeoInfo();
     const snap = await getDoc(doc(db, "users", uid));
     const prev = snap.exists() ? snap.data() : {};
-    const update = {
-      lastLoginAt: new Date().toISOString(),
-      lastLoginLocation: location,
-      lastLoginIp: ip,
-    };
-    if (prev.lastLoginAt) {
-      update.prevLoginAt = prev.lastLoginAt;
-      update.prevLoginLocation = prev.lastLoginLocation || "Unknown";
-      update.prevLoginIp = prev.lastLoginIp || "Unknown";
-    }
+    const update = { lastLoginAt: new Date().toISOString(), lastLoginLocation: location, lastLoginIp: ip };
+    if (prev.lastLoginAt) { update.prevLoginAt = prev.lastLoginAt; update.prevLoginLocation = prev.lastLoginLocation || "Unknown"; update.prevLoginIp = prev.lastLoginIp || "Unknown"; }
     await setDoc(doc(db, "users", uid), update, { merge: true });
-  } catch (e) {
-    console.warn("Failed to record login event:", e);
-  }
+  } catch (e) { console.warn("Failed to record login event:", e); }
 }
 
 // Sign out
