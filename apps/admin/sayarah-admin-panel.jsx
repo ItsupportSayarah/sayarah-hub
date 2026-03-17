@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext, Component } from "react";
-import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData, onUsersChange, addUserByEmail } from "./src/firebase.js";
+import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData, onUsersChange, addUserByEmail, getUserProfile } from "./src/firebase.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
 class ErrorBoundary extends Component {
@@ -163,7 +163,13 @@ function DashboardView({ users, adminEmail }) {
   const admins = users.filter(u => u.role === "admin").length;
   const managers = users.filter(u => u.role === "manager").length;
   const regularUsers = totalUsers - admins - managers;
-  const displayName = adminEmail ? adminEmail.split("@")[0].toUpperCase() : "ADMIN";
+  const [displayName, setDisplayName] = useState(adminEmail ? adminEmail.split("@")[0].toUpperCase() : "ADMIN");
+  useEffect(() => {
+    if (!auth.currentUser) return;
+    getUserProfile(auth.currentUser.uid).then(p => {
+      if (p?.firstName) setDisplayName(p.firstName.toUpperCase());
+    }).catch(() => {});
+  }, [adminEmail]);
 
   const stats = [
     { label: "Total Users", value: totalUsers, icon: I.users, color: B.blue, bg: B.blueBg },
@@ -276,6 +282,20 @@ function DashboardView({ users, adminEmail }) {
   );
 }
 
+function timeAgo(isoString) {
+  if (!isoString) return "Never";
+  const diff = Date.now() - new Date(isoString).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return `${months}mo ago`;
+}
+
 // ═══════════════════════════════════════════════════════════════
 // USERS MANAGEMENT — Controls both apps
 // ═══════════════════════════════════════════════════════════════
@@ -382,6 +402,7 @@ function UsersView({ users, onRefresh }) {
           <thead>
             <tr style={{ background: B.cream, borderBottom: `2px solid ${B.grayLight}` }}>
               <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 10, fontWeight: 800, color: B.grayDark, textTransform: "uppercase", letterSpacing: ".05em" }}>User</th>
+              <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 10, fontWeight: 800, color: B.grayDark, textTransform: "uppercase", letterSpacing: ".05em" }}>Last Login</th>
               <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 10, fontWeight: 800, color: B.grayDark, textTransform: "uppercase", letterSpacing: ".05em" }}>Role</th>
               <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 10, fontWeight: 800, color: B.grayDark, textTransform: "uppercase", letterSpacing: ".05em" }}>App Access</th>
               <th style={{ textAlign: "left", padding: "12px 14px", fontSize: 10, fontWeight: 800, color: B.grayDark, textTransform: "uppercase", letterSpacing: ".05em" }}>Auto Trade Hub Pages</th>
@@ -399,13 +420,24 @@ function UsersView({ users, onRefresh }) {
                   {/* User Info */}
                   <td style={{ padding: "12px 14px" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{ width: 36, height: 36, borderRadius: "50%", background: `linear-gradient(135deg, ${roleInfo.color}, ${roleInfo.bg})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: B.white, fontWeight: 800 }}>{(u.displayName || u.email || "?")[0].toUpperCase()}</div>
+                      <div style={{ width: 36, height: 36, borderRadius: "50%", background: `linear-gradient(135deg, ${roleInfo.color}, ${roleInfo.bg})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: B.white, fontWeight: 800 }}>{(u.firstName || u.displayName || u.email || "?")[0].toUpperCase()}</div>
                       <div>
-                        <div style={{ fontWeight: 700, color: B.navy, fontSize: 13 }}>{u.displayName || "—"}</div>
+                        <div style={{ fontWeight: 700, color: B.navy, fontSize: 13 }}>{u.firstName && u.lastName ? `${u.firstName} ${u.lastName}` : u.displayName || "—"}</div>
                         <div style={{ fontSize: 10, color: B.gray }}>{u.email || "—"}</div>
                         {isSuperAdmin && <Badge color="#92400E" bg={B.amberBg}>{I.shield(12, "#92400E")} SUPER ADMIN</Badge>}
                       </div>
                     </div>
+                  </td>
+
+                  {/* Last Login */}
+                  <td style={{ padding: "12px 14px" }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: B.navy }}>{u.lastLoginAt ? timeAgo(u.lastLoginAt) : "Never"}</div>
+                    {u.lastLoginLocation && u.lastLoginLocation !== "Unknown" && (
+                      <div style={{ fontSize: 9, color: B.gray, marginTop: 2, display: "flex", alignItems: "center", gap: 3 }}>
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                        {u.lastLoginLocation}
+                      </div>
+                    )}
                   </td>
 
                   {/* Role */}

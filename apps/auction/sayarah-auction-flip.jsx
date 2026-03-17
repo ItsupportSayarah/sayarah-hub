@@ -336,18 +336,19 @@ async function firebaseLogin(email, password) {
   const user = await firebaseSignIn(email, password);
   const profile = await getUserProfile(user.uid);
   const role = profile?.role || "user";
+  const firstName = profile?.firstName || (user.displayName || email.split("@")[0]).split(" ")[0];
   // Check auctionAccess — admin/manager always have access, others need explicit permission
   const isSuperAdmin = email === "support@sayarah.io";
   if (!isSuperAdmin && role !== "admin" && role !== "manager" && profile?.auctionAccess !== true) {
     await firebaseSignOut();
     throw { code: "auth/unauthorized", message: "You don't have access to Auto Trade Hub. Contact your admin to request access." };
   }
-  return { uid: user.uid, username: user.displayName || email.split("@")[0], email, role };
+  return { uid: user.uid, username: firstName, email, role };
 }
 
-async function firebaseRegister(email, password, displayName) {
+async function firebaseRegister(email, password, displayName, firstName, lastName) {
   // New registrations via auction app don't get auction access by default — admin must grant it
-  const user = await firebaseSignUp(email, password, displayName);
+  const user = await firebaseSignUp(email, password, displayName, { firstName, lastName });
   await firebaseSignOut();
   throw { code: "auth/unauthorized", message: "Account created! However, you need admin approval to access Auto Trade Hub. Contact your admin." };
 }
@@ -622,7 +623,8 @@ function LoginPage({ onLogin }) {
   const [user, setUser] = useState(""); const [pass, setPass] = useState(""); const [error, setError] = useState(""); const [loading, setLoading] = useState(false); const [showForgot, setShowForgot] = useState(false);
   const [focused, setFocused] = useState(null);
   const [isSignUp, setIsSignUp] = useState(false);
-  const [signUpName, setSignUpName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
 
   const go = async () => {
     if (FIREBASE_ENABLED) {
@@ -634,8 +636,10 @@ function LoginPage({ onLogin }) {
       setLoading(true); setError("");
       try {
         if (isSignUp) {
-          if (!signUpName.trim()) { setError("Enter your name"); setLoading(false); return; }
-          const result = await firebaseRegister(user.trim(), pass, signUpName.trim());
+          if (!firstName.trim()) { setError("Enter your first name"); setLoading(false); return; }
+          if (!lastName.trim()) { setError("Enter your last name"); setLoading(false); return; }
+          const fullName = `${firstName.trim()} ${lastName.trim()}`;
+          const result = await firebaseRegister(user.trim(), pass, fullName, firstName.trim(), lastName.trim());
           onLogin(result.username, result.role, result.uid);
         } else {
           const result = await firebaseLogin(user.trim(), pass);
@@ -786,16 +790,28 @@ function LoginPage({ onLogin }) {
 
           {/* Form */}
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {/* Name field — only for Firebase sign-up */}
+            {/* Name fields — only for Firebase sign-up */}
             {FIREBASE_ENABLED && isSignUp && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                <label style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: BRAND.gray }}>Full Name</label>
-                <div style={{ position: "relative" }}>
-                  <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: focused === "name" ? BRAND.red : BRAND.gray, transition: "color 0.2s" }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <div style={{ display: "flex", gap: 12 }}>
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 5 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: BRAND.gray }}>First Name</label>
+                  <div style={{ position: "relative" }}>
+                    <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: focused === "fname" ? BRAND.red : BRAND.gray, transition: "color 0.2s" }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    </div>
+                    <input value={firstName} onChange={e => setFirstName(e.target.value)} onFocus={() => setFocused("fname")} onBlur={() => setFocused(null)} placeholder="First name"
+                      style={{ width: "100%", border: `2px solid ${focused === "fname" ? BRAND.red : BRAND.grayLight}`, borderRadius: 10, padding: "12px 12px 12px 38px", fontSize: 14, background: BRAND.white, outline: "none", boxSizing: "border-box", transition: "border-color 0.2s, box-shadow 0.2s", boxShadow: focused === "fname" ? "0 0 0 3px rgba(139,26,26,0.1)" : "none", fontFamily: "inherit" }} />
                   </div>
-                  <input value={signUpName} onChange={e => setSignUpName(e.target.value)} onFocus={() => setFocused("name")} onBlur={() => setFocused(null)} placeholder="Your full name"
-                    style={{ width: "100%", border: `2px solid ${focused === "name" ? BRAND.red : BRAND.grayLight}`, borderRadius: 10, padding: "12px 12px 12px 38px", fontSize: 14, background: BRAND.white, outline: "none", boxSizing: "border-box", transition: "border-color 0.2s, box-shadow 0.2s", boxShadow: focused === "name" ? "0 0 0 3px rgba(139,26,26,0.1)" : "none", fontFamily: "inherit" }} />
+                </div>
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 5 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: BRAND.gray }}>Last Name</label>
+                  <div style={{ position: "relative" }}>
+                    <div style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: focused === "lname" ? BRAND.red : BRAND.gray, transition: "color 0.2s" }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    </div>
+                    <input value={lastName} onChange={e => setLastName(e.target.value)} onFocus={() => setFocused("lname")} onBlur={() => setFocused(null)} placeholder="Last name"
+                      style={{ width: "100%", border: `2px solid ${focused === "lname" ? BRAND.red : BRAND.grayLight}`, borderRadius: 10, padding: "12px 12px 12px 38px", fontSize: 14, background: BRAND.white, outline: "none", boxSizing: "border-box", transition: "border-color 0.2s, box-shadow 0.2s", boxShadow: focused === "lname" ? "0 0 0 3px rgba(139,26,26,0.1)" : "none", fontFamily: "inherit" }} />
+                  </div>
                 </div>
               </div>
             )}
@@ -3234,6 +3250,20 @@ const SUPER_ADMIN_EMAIL = "support@sayarah.io";
 const ALL_AUCTION_TABS = ["Dashboard", "Pipeline", "Inventory", "Mileage", "Analytics", "Calendar", "Reports", "Approvals", "Activity", "Settings"];
 const USER_ROLES = [{ key: "admin", label: "Admin", color: "#D97706", bg: "#FEF3C7" }, { key: "manager", label: "Manager", color: "#2563EB", bg: "#DBEAFE" }, { key: "user", label: "User", color: "#059669", bg: "#D1FAE5" }];
 
+function timeAgo(isoString) {
+  if (!isoString) return "Never";
+  const diff = Date.now() - new Date(isoString).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "Just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  const months = Math.floor(days / 30);
+  return `${months}mo ago`;
+}
+
 function UsersTab() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -3271,6 +3301,7 @@ function UsersTab() {
             <thead><tr style={{ borderBottom: `2px solid ${BRAND.grayLight}` }}>
               <th style={{ textAlign: "left", padding: "8px 10px", fontSize: 10, fontWeight: 800, color: BRAND.gray, textTransform: "uppercase" }}>User</th>
               <th style={{ textAlign: "left", padding: "8px 10px", fontSize: 10, fontWeight: 800, color: BRAND.gray, textTransform: "uppercase" }}>Email</th>
+              <th style={{ textAlign: "left", padding: "8px 10px", fontSize: 10, fontWeight: 800, color: BRAND.gray, textTransform: "uppercase" }}>Last Login</th>
               <th style={{ textAlign: "left", padding: "8px 10px", fontSize: 10, fontWeight: 800, color: BRAND.gray, textTransform: "uppercase" }}>Role</th>
               <th style={{ textAlign: "left", padding: "8px 10px", fontSize: 10, fontWeight: 800, color: BRAND.gray, textTransform: "uppercase" }}>Allowed Pages</th>
               <th style={{ textAlign: "left", padding: "8px 10px", fontSize: 10, fontWeight: 800, color: BRAND.gray, textTransform: "uppercase" }}>Actions</th>
@@ -3282,10 +3313,19 @@ function UsersTab() {
                 return (
                   <tr key={u.id} style={{ borderBottom: `1px solid ${BRAND.grayLight}` }}>
                     <td style={{ padding: "10px" }}>
-                      <div style={{ fontWeight: 700 }}>{u.displayName || "—"}</div>
+                      <div style={{ fontWeight: 700 }}>{u.firstName && u.lastName ? `${u.firstName} ${u.lastName}` : u.displayName || "—"}</div>
                       {isSuperAdmin && <span style={{ fontSize: 8, background: "#FEF3C7", color: "#92400E", padding: "1px 6px", borderRadius: 4, fontWeight: 800 }}>SUPER ADMIN</span>}
                     </td>
                     <td style={{ padding: "10px" }}><span style={{ fontSize: 11, color: BRAND.gray }}>{u.email || "—"}</span></td>
+                    <td style={{ padding: "10px" }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: BRAND.black }}>{timeAgo(u.lastLoginAt)}</div>
+                      {u.lastLoginLocation && u.lastLoginLocation !== "Unknown" && (
+                        <div style={{ fontSize: 9, color: BRAND.gray, marginTop: 2, display: "flex", alignItems: "center", gap: 3 }}>
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                          {u.lastLoginLocation}
+                        </div>
+                      )}
+                    </td>
                     <td style={{ padding: "10px" }}>
                       {isEditing && !isSuperAdmin ? (
                         <select value={editUser.role || "user"} onChange={e => setEditUser({ ...editUser, role: e.target.value })} style={{ fontSize: 11, padding: "4px 8px", borderRadius: 6, border: `1px solid ${BRAND.grayLight}`, fontFamily: "inherit" }}>
@@ -3427,7 +3467,9 @@ function AppInner() {
             const isSuperAdmin = fbUser.email === "support@sayarah.io";
             const role = isSuperAdmin ? "admin" : (await getUserRole(fbUser.uid)) || "user";
             setFirebaseUid(fbUser.uid);
-            setUsername(fbUser.displayName || fbUser.email.split("@")[0]);
+            const profile = await getUserProfile(fbUser.uid);
+            const fname = profile?.firstName || (fbUser.displayName || fbUser.email.split("@")[0]).split(" ")[0];
+            setUsername(fname);
             setUserRole(role);
             setLoggedIn(true);
             // Load user permissions for manager role

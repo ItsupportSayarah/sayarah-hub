@@ -52,17 +52,42 @@ export async function firebaseSignIn(email, password) {
   // Ensure user doc exists in Firestore
   const snap = await getDoc(doc(db, "users", cred.user.uid));
   if (!snap.exists()) {
+    const name = cred.user.displayName || email.split("@")[0];
     await setDoc(doc(db, "users", cred.user.uid), {
       uid: cred.user.uid,
       email: cred.user.email,
-      displayName: cred.user.displayName || email.split("@")[0],
+      displayName: name,
+      firstName: name.split(" ")[0] || "",
+      lastName: name.split(" ").slice(1).join(" ") || "",
       role: "user",
       logisticsAccess: true,
       auctionAccess: false,
       createdAt: serverTimestamp(),
     });
   }
+  // Record login event
+  await recordLoginEvent(cred.user.uid);
   return cred.user;
+}
+
+// Record login timestamp and location
+export async function recordLoginEvent(uid) {
+  try {
+    let location = "Unknown";
+    try {
+      const res = await fetch("https://ipapi.co/json/");
+      if (res.ok) {
+        const geo = await res.json();
+        location = [geo.city, geo.region, geo.country_name].filter(Boolean).join(", ");
+      }
+    } catch {}
+    await setDoc(doc(db, "users", uid), {
+      lastLoginAt: new Date().toISOString(),
+      lastLoginLocation: location,
+    }, { merge: true });
+  } catch (e) {
+    console.warn("Failed to record login event:", e);
+  }
 }
 
 // Sign out

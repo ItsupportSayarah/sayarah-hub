@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback, createContext, useContext, Component } from "react";
-import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserData, getUserProfile, saveSharedData, saveSharedFields, loadSharedData, onSharedDataChange, getAllUsers, updateUserPermissions, saveApprovalsFB, loadApprovalsFB, saveActivityLogFB, loadActivityLogFB, uploadFile, deleteFile } from "./src/firebase.js";
+import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserData, getUserProfile, saveSharedData, saveSharedFields, loadSharedData, onSharedDataChange, getAllUsers, updateUserPermissions, saveApprovalsFB, loadApprovalsFB, saveActivityLogFB, loadActivityLogFB, uploadFile, deleteFile, recordLoginEvent } from "./src/firebase.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
 class ErrorBoundary extends Component {
@@ -303,7 +303,7 @@ const NAV_ICONS={
 // ═══════════════════════════════════════════════════════════════
 function LoginPage({onLogin,data}){
   const[user,setUser]=useState("");const[pass,setPass]=useState("");const[err,setErr]=useState("");const[loading,setLoading]=useState(false);
-  const[isSignUp,setIsSignUp]=useState(false);const[signUpName,setSignUpName]=useState("");
+  const[isSignUp,setIsSignUp]=useState(false);const[firstName,setFirstName]=useState("");const[lastName,setLastName]=useState("");
 
   const go=async()=>{
     if(FIREBASE_ENABLED){
@@ -314,14 +314,19 @@ function LoginPage({onLogin,data}){
       setLoading(true);setErr("");
       try{
         if(isSignUp){
-          if(!signUpName.trim()){setErr("Enter your name");setLoading(false);return;}
-          const cred=await firebaseSignUp(user.trim(),pass,signUpName.trim());
+          if(!firstName.trim()){setErr("Enter your first name");setLoading(false);return;}
+          if(!lastName.trim()){setErr("Enter your last name");setLoading(false);return;}
+          const fullName=`${firstName.trim()} ${lastName.trim()}`;
+          const cred=await firebaseSignUp(user.trim(),pass,fullName,{firstName:firstName.trim(),lastName:lastName.trim()});
           const role=await getUserRole(cred.uid);
-          onLogin(cred.displayName||user.split("@")[0],role,cred.uid,cred.email);
+          const profile=await getUserProfile(cred.uid);
+          onLogin(profile?.firstName||firstName.trim(),role,cred.uid,cred.email);
         }else{
           const cred=await firebaseSignIn(user.trim(),pass);
           const role=await getUserRole(cred.uid);
-          onLogin(cred.displayName||user.split("@")[0],role,cred.uid,cred.email);
+          const profile=await getUserProfile(cred.uid);
+          const fname=profile?.firstName||(cred.displayName||user.split("@")[0]).split(" ")[0];
+          onLogin(fname,role,cred.uid,cred.email);
         }
       }catch(e){
         const msg=e.code==="auth/user-not-found"?"No account found with this email"
@@ -353,7 +358,7 @@ function LoginPage({onLogin,data}){
           <h2 style={{fontSize:22,fontWeight:800,color:C.black,margin:"0 0 4px"}}>{isSignUp?"Create Account":"Welcome back"}</h2>
           <p style={{fontSize:13,color:C.slate400,margin:"0 0 28px"}}>{isSignUp?"Sign up to get started":"Sign in to your account"}</p>
           <div style={{display:"flex",flexDirection:"column",gap:16}}>
-            {FIREBASE_ENABLED&&isSignUp&&<Inp label="Full Name" value={signUpName} onChange={setSignUpName} placeholder="Your full name"/>}
+            {FIREBASE_ENABLED&&isSignUp&&<div style={{display:"flex",gap:10}}><div style={{flex:1}}><Inp label="First Name" value={firstName} onChange={setFirstName} placeholder="First name"/></div><div style={{flex:1}}><Inp label="Last Name" value={lastName} onChange={setLastName} placeholder="Last name"/></div></div>}
             <Inp label={FIREBASE_ENABLED?"Email":"Username"} value={user} onChange={setUser} placeholder={FIREBASE_ENABLED?"you@email.com":"Enter username"}/>
             <Inp label="Password" value={pass} onChange={setPass} type="password" placeholder={isSignUp?"Min 6 characters":"Enter password"}/>
             {err&&<div style={{background:C.redLight,color:C.redDark,padding:"10px 14px",borderRadius:10,fontSize:12,fontWeight:600}}>{err}</div>}
@@ -1500,7 +1505,9 @@ function AppInner(){
             const isSuperAdmin=fbUser.email==="support@sayarah.io";
             const r=isSuperAdmin?"admin":(await getUserRole(fbUser.uid))||"user";
             setFirebaseUid(fbUser.uid);
-            setUsername(fbUser.displayName||fbUser.email.split("@")[0]);
+            const prof=await getUserProfile(fbUser.uid);
+            const fname=prof?.firstName||(fbUser.displayName||fbUser.email.split("@")[0]).split(" ")[0];
+            setUsername(fname);
             setUserEmail(fbUser.email||"");
             setRole(r);
             setLoggedIn(true);
