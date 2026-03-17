@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback, createContext, useContext, Component } from "react";
-import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserProfile, updateUserRole, getAllUsers, updateUserPermissions, getUserData, saveAppData, loadAppData, saveApprovalsFB, loadApprovalsFB, saveActivityLogFB, loadActivityLogFB, changePassword } from "./src/firebase.js";
+import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserProfile, updateUserRole, getAllUsers, updateUserPermissions, getUserData, saveAppData, loadAppData, saveApprovalsFB, loadApprovalsFB, saveActivityLogFB, loadActivityLogFB, changePassword, resetPassword } from "./src/firebase.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
 class ErrorBoundary extends Component {
@@ -625,6 +625,9 @@ function LoginPage({ onLogin }) {
   const [isSignUp, setIsSignUp] = useState(false);
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetStatus, setResetStatus] = useState(""); // "sent", "error:...", ""
+  const [resetLoading, setResetLoading] = useState(false);
 
   const go = async () => {
     if (FIREBASE_ENABLED) {
@@ -879,14 +882,37 @@ function LoginPage({ onLogin }) {
 
             {/* Forgot password */}
             <div style={{ textAlign: "center", marginTop: 4 }}>
-              <button onClick={() => setShowForgot(!showForgot)} style={{ background: "none", border: "none", color: BRAND.gray, fontSize: 12, cursor: "pointer", fontFamily: "inherit", transition: "color 0.2s" }}
+              <button onClick={() => { setShowForgot(!showForgot); setResetStatus(""); setResetEmail(user); }} style={{ background: "none", border: "none", color: BRAND.gray, fontSize: 12, cursor: "pointer", fontFamily: "inherit", transition: "color 0.2s" }}
                 onMouseEnter={e => e.target.style.color = BRAND.red} onMouseLeave={e => e.target.style.color = BRAND.gray}>
-                Need help signing in?
+                Forgot your password?
               </button>
               {showForgot && (
-                <div style={{ marginTop: 10, background: "linear-gradient(135deg, #EFF6FF, #DBEAFE)", border: "1px solid #BFDBFE", borderRadius: 10, padding: "12px 16px", fontSize: 12, color: BRAND.blue, lineHeight: 1.6, animation: "slideUp 0.3s ease" }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ verticalAlign: "middle", marginRight: 6 }}><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-                  {FIREBASE_ENABLED ? "Use the password reset option or contact your admin." : <>Reach out to <strong>Didar</strong> (Admin) to reset your password or get access.</>}
+                <div style={{ marginTop: 10, background: "linear-gradient(135deg, #EFF6FF, #DBEAFE)", border: "1px solid #BFDBFE", borderRadius: 10, padding: "16px", fontSize: 12, color: BRAND.blue, lineHeight: 1.6, animation: "slideUp 0.3s ease", textAlign: "left" }}>
+                  {resetStatus === "sent" ? (
+                    <div style={{ textAlign: "center" }}>
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#16A34A" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 6 }}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                      <div style={{ fontWeight: 700, color: "#166534", marginBottom: 4 }}>Reset email sent!</div>
+                      <div style={{ color: "#15803D", fontSize: 11 }}>Check your inbox (and spam folder) for a password reset link.</div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{ fontWeight: 700, marginBottom: 8 }}>Reset your password</div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <input value={resetEmail} onChange={e => setResetEmail(e.target.value)} placeholder="Enter your email" type="email"
+                          style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: "1px solid #BFDBFE", fontSize: 12, fontFamily: "inherit", outline: "none", background: "#fff" }} />
+                        <button onClick={async () => {
+                          if (!resetEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resetEmail.trim())) { setResetStatus("error:Enter a valid email"); return; }
+                          setResetLoading(true); setResetStatus("");
+                          try { await resetPassword(resetEmail.trim()); setResetStatus("sent"); }
+                          catch (e) { setResetStatus("error:" + (e.code === "auth/user-not-found" ? "No account found with this email" : e.message || "Failed to send reset email")); }
+                          setResetLoading(false);
+                        }} disabled={resetLoading} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: "#2563EB", color: "#fff", fontSize: 11, fontWeight: 700, cursor: resetLoading ? "wait" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                          {resetLoading ? "Sending..." : "Send Link"}
+                        </button>
+                      </div>
+                      {resetStatus.startsWith("error:") && <div style={{ marginTop: 8, color: "#DC2626", fontSize: 11, fontWeight: 600 }}>{resetStatus.slice(6)}</div>}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

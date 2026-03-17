@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback, createContext, useContext, Component } from "react";
-import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserData, getUserProfile, saveSharedData, saveSharedFields, loadSharedData, onSharedDataChange, getAllUsers, updateUserPermissions, saveApprovalsFB, loadApprovalsFB, saveActivityLogFB, loadActivityLogFB, uploadFile, deleteFile, recordLoginEvent, changePassword } from "./src/firebase.js";
+import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserData, getUserProfile, saveSharedData, saveSharedFields, loadSharedData, onSharedDataChange, getAllUsers, updateUserPermissions, saveApprovalsFB, loadApprovalsFB, saveActivityLogFB, loadActivityLogFB, uploadFile, deleteFile, recordLoginEvent, changePassword, resetPassword } from "./src/firebase.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
 class ErrorBoundary extends Component {
@@ -304,6 +304,7 @@ const NAV_ICONS={
 function LoginPage({onLogin,data}){
   const[user,setUser]=useState("");const[pass,setPass]=useState("");const[err,setErr]=useState("");const[loading,setLoading]=useState(false);
   const[isSignUp,setIsSignUp]=useState(false);const[firstName,setFirstName]=useState("");const[lastName,setLastName]=useState("");
+  const[showForgot,setShowForgot]=useState(false);const[resetEmail,setResetEmail]=useState("");const[resetStatus,setResetStatus]=useState("");const[resetLoading,setResetLoading]=useState(false);
 
   const go=async()=>{
     if(FIREBASE_ENABLED){
@@ -366,6 +367,34 @@ function LoginPage({onLogin,data}){
             {FIREBASE_ENABLED&&<div style={{textAlign:"center",marginTop:4}}>
               <span style={{fontSize:12,color:C.slate400}}>{isSignUp?"Already have an account? ":"Don't have an account? "}</span>
               <button onClick={()=>{setIsSignUp(!isSignUp);setErr("");}} style={{background:"none",border:"none",color:C.red,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>{isSignUp?"Sign In":"Sign Up"}</button>
+            </div>}
+            {FIREBASE_ENABLED&&!isSignUp&&<div style={{textAlign:"center",marginTop:4}}>
+              <button onClick={()=>{setShowForgot(!showForgot);setResetStatus("");setResetEmail(user);}} style={{background:"none",border:"none",color:C.slate400,fontSize:12,cursor:"pointer",fontFamily:"inherit"}}>Forgot your password?</button>
+              {showForgot&&(
+                <div style={{marginTop:10,background:"#EFF6FF",border:"1px solid #BFDBFE",borderRadius:10,padding:16,fontSize:12,color:"#1D4ED8",textAlign:"left",animation:"fadeIn .3s"}}>
+                  {resetStatus==="sent"?(
+                    <div style={{textAlign:"center"}}>
+                      <div style={{fontWeight:700,color:"#166534",marginBottom:4}}>Reset email sent!</div>
+                      <div style={{color:"#15803D",fontSize:11}}>Check your inbox (and spam folder) for a password reset link.</div>
+                    </div>
+                  ):(
+                    <div>
+                      <div style={{fontWeight:700,marginBottom:8}}>Reset your password</div>
+                      <div style={{display:"flex",gap:8}}>
+                        <input value={resetEmail} onChange={e=>setResetEmail(e.target.value)} placeholder="Enter your email" type="email" style={{flex:1,padding:"8px 12px",borderRadius:8,border:"1px solid #BFDBFE",fontSize:12,fontFamily:"inherit",outline:"none",background:"#fff"}}/>
+                        <button onClick={async()=>{
+                          if(!resetEmail.trim()||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resetEmail.trim())){setResetStatus("error:Enter a valid email");return;}
+                          setResetLoading(true);setResetStatus("");
+                          try{await resetPassword(resetEmail.trim());setResetStatus("sent");}
+                          catch(e){setResetStatus("error:"+(e.code==="auth/user-not-found"?"No account found with this email":e.message||"Failed to send reset email"));}
+                          setResetLoading(false);
+                        }} disabled={resetLoading} style={{padding:"8px 14px",borderRadius:8,border:"none",background:"#2563EB",color:"#fff",fontSize:11,fontWeight:700,cursor:resetLoading?"wait":"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>{resetLoading?"Sending...":"Send Link"}</button>
+                      </div>
+                      {resetStatus.startsWith("error:")&&<div style={{marginTop:8,color:"#DC2626",fontSize:11,fontWeight:600}}>{resetStatus.slice(6)}</div>}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>}
           </div>
         </div>

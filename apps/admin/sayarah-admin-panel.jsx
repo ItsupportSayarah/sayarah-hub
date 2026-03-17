@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext, Component } from "react";
-import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData, onUsersChange, addUserByEmail, getUserProfile, changePassword } from "./src/firebase.js";
+import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData, onUsersChange, addUserByEmail, getUserProfile, changePassword, resetPassword } from "./src/firebase.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
 class ErrorBoundary extends Component {
@@ -109,6 +109,10 @@ function LoginPage({ onLogin }) {
   const [pass, setPass] = useState("");
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showForgot, setShowForgot] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetStatus, setResetStatus] = useState("");
+  const [resetLoading, setResetLoading] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -148,7 +152,35 @@ function LoginPage({ onLogin }) {
             {err && <div style={{ background: B.redBg, color: B.red, padding: "8px 12px", borderRadius: 8, fontSize: 11, fontWeight: 600, marginBottom: 14 }}>{err}</div>}
             <Btn onClick={submit} disabled={loading} style={{ width: "100%", padding: "12px", fontSize: 14 }}>{loading ? "Signing in..." : "Sign In"}</Btn>
           </form>
-          <div style={{ textAlign: "center", marginTop: 16, fontSize: 10, color: B.gray }}>Admin access only — support@sayarah.io</div>
+          <div style={{ textAlign: "center", marginTop: 16 }}>
+            <button onClick={() => { setShowForgot(!showForgot); setResetStatus(""); setResetEmail(email); }} style={{ background: "none", border: "none", color: B.gray, fontSize: 11, cursor: "pointer", fontFamily: font }}>Forgot your password?</button>
+            {showForgot && (
+              <div style={{ marginTop: 10, background: B.blueBg, border: "1px solid #BFDBFE", borderRadius: 8, padding: 14, fontSize: 12, color: B.blue, textAlign: "left" }}>
+                {resetStatus === "sent" ? (
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontWeight: 700, color: "#166534", marginBottom: 4 }}>Reset email sent!</div>
+                    <div style={{ color: "#15803D", fontSize: 11 }}>Check your inbox for a password reset link.</div>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ fontWeight: 700, marginBottom: 8 }}>Reset your password</div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input value={resetEmail} onChange={e => setResetEmail(e.target.value)} placeholder="Enter your email" type="email" style={{ flex: 1, padding: "8px 12px", borderRadius: 6, border: "1px solid #BFDBFE", fontSize: 12, fontFamily: font, outline: "none", background: "#fff" }} />
+                      <button onClick={async () => {
+                        if (!resetEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resetEmail.trim())) { setResetStatus("error:Enter a valid email"); return; }
+                        setResetLoading(true); setResetStatus("");
+                        try { await resetPassword(resetEmail.trim()); setResetStatus("sent"); }
+                        catch (e) { setResetStatus("error:" + (e.code === "auth/user-not-found" ? "No account found" : e.message || "Failed")); }
+                        setResetLoading(false);
+                      }} disabled={resetLoading} style={{ padding: "8px 14px", borderRadius: 6, border: "none", background: B.blue, color: "#fff", fontSize: 11, fontWeight: 700, cursor: resetLoading ? "wait" : "pointer", fontFamily: font, whiteSpace: "nowrap" }}>{resetLoading ? "Sending..." : "Send Link"}</button>
+                    </div>
+                    {resetStatus.startsWith("error:") && <div style={{ marginTop: 8, color: B.red, fontSize: 11, fontWeight: 600 }}>{resetStatus.slice(6)}</div>}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <div style={{ textAlign: "center", marginTop: 10, fontSize: 10, color: B.gray }}>Admin access only — support@sayarah.io</div>
         </Card>
       </div>
     </div>

@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { initializeApp } from "firebase/app";
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "firebase/auth";
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail } from "firebase/auth";
 import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, getDocs, deleteDoc, query, where, serverTimestamp } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 
@@ -71,6 +71,11 @@ export async function firebaseSignIn(email, password) {
   // Record login event
   await recordLoginEvent(cred.user.uid);
   return cred.user;
+}
+
+// Send password reset email
+export async function resetPassword(email) {
+  await sendPasswordResetEmail(auth, email);
 }
 
 // Change user password (requires re-authentication)
