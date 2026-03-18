@@ -56,6 +56,23 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// ─── Claude AI proxy for billing tool (keeps API key server-side) ───
+const aiLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 20, message: { error: "AI rate limit reached. Try again in an hour." } });
+app.post("/api/ai/analyze", aiLimiter, async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: "AI not configured. Set ANTHROPIC_API_KEY env var." });
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify(req.body),
+    });
+    const data = await resp.json();
+    if (!resp.ok) return res.status(resp.status).json(data);
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: "AI request failed: " + e.message }); }
+});
+
 // ─── Health check ───
 app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", uptime: process.uptime(), timestamp: new Date().toISOString() });

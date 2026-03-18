@@ -344,21 +344,19 @@ async function runAI() {
 
     var apiResp;
     try {
-      apiResp = await fetch("https://api.anthropic.com/v1/messages", {
+      apiResp = await fetch("/api/ai/analyze", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "anthropic-dangerous-direct-browser-access": "true"
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(fetchBody)
       });
     } catch(fetchErr) {
-      throw new Error("Cannot reach Claude API. This AI feature only works when viewing the app inside Claude.ai (not in a downloaded file opened in a browser). For standalone use, fill the form manually and click Generate.");
+      throw new Error("Cannot reach AI service. Please try again.");
     }
 
     if (!apiResp.ok) {
       var errBody = await apiResp.text();
-      throw new Error("API returned " + apiResp.status + ": " + errBody.substring(0, 200));
+      try { var errJson = JSON.parse(errBody); throw new Error(errJson.error || "AI request failed"); } catch(pe) { if (pe.message !== errBody) throw pe; }
+      throw new Error("AI returned error " + apiResp.status);
     }
 
     var data = await apiResp.json();
