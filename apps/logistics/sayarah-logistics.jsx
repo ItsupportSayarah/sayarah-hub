@@ -330,8 +330,8 @@ function LoginPage({onLogin,data}){
           onLogin(fname,role,cred.uid,cred.email);
         }
       }catch(e){
-        const msg=e.code==="auth/user-not-found"?"No account found with this email"
-          :e.code==="auth/wrong-password"?"Incorrect password"
+        const msg=e.code==="auth/user-not-found"?"Invalid email or password"
+          :e.code==="auth/wrong-password"?"Invalid email or password"
           :e.code==="auth/invalid-email"?"Invalid email format"
           :e.code==="auth/email-already-in-use"?"Email already registered — try signing in"
           :e.code==="auth/weak-password"?"Password must be at least 6 characters"
@@ -1402,7 +1402,7 @@ function SettingsTab({data,setData,username,role}){
 // ═══════════════════════════════════════════════════════════════
 // USERS MANAGEMENT — Admin Only
 // ═══════════════════════════════════════════════════════════════
-const SUPER_ADMIN="support@sayarah.io";
+const SUPER_ADMIN=import.meta.env.VITE_SUPER_ADMIN_EMAIL || "support@sayarah.io";
 const ALL_TABS_LIST=["Dashboard","Customers","Vehicles","Containers","Towing","Rates","Invoices","Settings"];
 const ROLES=[{key:"admin",label:"Admin",color:"#D97706",bg:"#FEF3C7"},{key:"manager",label:"Manager",color:"#2563EB",bg:"#DBEAFE"},{key:"customer",label:"Customer",color:"#059669",bg:"#D1FAE5"}];
 
@@ -1590,7 +1590,7 @@ function AppInner(){
       const unsub=onAuthChange(async(fbUser)=>{
         try{
           if(fbUser){
-            const isSuperAdmin=fbUser.email==="support@sayarah.io";
+            const isSuperAdmin=fbUser.email===SUPER_ADMIN;
             const r=isSuperAdmin?"admin":(await getUserRole(fbUser.uid))||"user";
             setFirebaseUid(fbUser.uid);
             const prof=await getUserProfile(fbUser.uid);
@@ -1657,7 +1657,7 @@ function AppInner(){
   },[data,loaded,dataReady,firebaseUid,role]);
 
   const handleLogin=(u,r,uid,email)=>{setUsername(u);setUserEmail(email||"");setRole(r);setLoggedIn(true);setTab("Dashboard");if(uid)setFirebaseUid(uid);if(!FIREBASE_ENABLED)localStorage.setItem("sayarah-sess-v3",JSON.stringify({username:u,role:r,email:email||""}));toast(`Welcome back, ${u}!`);};
-  const handleLogout=async()=>{setLoggedIn(false);setUsername("");setUserEmail("");setRole("customer");setTab("Dashboard");setFirebaseUid(null);setDataReady(false);localStorage.removeItem("sayarah-sess-v3");if(FIREBASE_ENABLED){try{await firebaseSignOut();}catch{}}};
+  const handleLogout=async()=>{setLoggedIn(false);setUsername("");setUserEmail("");setRole("customer");setTab("Dashboard");setFirebaseUid(null);setDataReady(false);["sayarah-sess-v3"].forEach(k=>localStorage.removeItem(k));if(FIREBASE_ENABLED){try{await firebaseSignOut();}catch{}}};
 
   if(!loaded)return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',system-ui,sans-serif",background:C.navy,gap:16}}><img src="/logo.png" alt="Sayarah Logistics" style={{height:60,opacity:.8}}/><div style={{width:28,height:28,border:"3px solid rgba(255,255,255,.15)",borderTopColor:"#fff",borderRadius:"50%",animation:"spin .8s linear infinite"}}/><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>;
   if(!loggedIn)return <div style={{fontFamily:"'Inter',system-ui,sans-serif"}}><link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/><LoginPage onLogin={handleLogin} data={data}/></div>;

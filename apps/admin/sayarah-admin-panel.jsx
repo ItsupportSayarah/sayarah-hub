@@ -27,7 +27,7 @@ const FIREBASE_ENABLED = (() => {
   try { return auth && auth.app && auth.app.options && auth.app.options.apiKey && !auth.app.options.apiKey.startsWith("YOUR_"); } catch { return false; }
 })();
 
-const SUPER_ADMIN = "support@sayarah.io";
+const SUPER_ADMIN = import.meta.env.VITE_SUPER_ADMIN_EMAIL || "support@sayarah.io";
 
 // ═══════════════════════════════════════════════════════════════
 // BRAND & STYLES
@@ -170,7 +170,7 @@ function LoginPage({ onLogin }) {
                         if (!resetEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resetEmail.trim())) { setResetStatus("error:Enter a valid email"); return; }
                         setResetLoading(true); setResetStatus("");
                         try { await resetPassword(resetEmail.trim()); setResetStatus("sent"); }
-                        catch (e) { setResetStatus("error:" + (e.code === "auth/user-not-found" ? "No account found" : e.message || "Failed")); }
+                        catch (e) { setResetStatus("error:" + (e.code === "auth/user-not-found" ? "If this email exists, a reset link has been sent" : e.message || "Failed")); }
                         setResetLoading(false);
                       }} disabled={resetLoading} style={{ padding: "8px 14px", borderRadius: 6, border: "none", background: B.blue, color: "#fff", fontSize: 11, fontWeight: 700, cursor: resetLoading ? "wait" : "pointer", fontFamily: font, whiteSpace: "nowrap" }}>{resetLoading ? "Sending..." : "Send Link"}</button>
                     </div>

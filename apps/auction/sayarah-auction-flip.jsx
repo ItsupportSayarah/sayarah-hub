@@ -338,7 +338,7 @@ async function firebaseLogin(email, password) {
   const role = profile?.role || "user";
   const firstName = profile?.firstName || (user.displayName || email.split("@")[0]).split(" ")[0];
   // Check auctionAccess — admin/manager always have access, others need explicit permission
-  const isSuperAdmin = email === "support@sayarah.io";
+  const isSuperAdmin = email === (import.meta.env.VITE_SUPER_ADMIN_EMAIL || "support@sayarah.io");
   if (!isSuperAdmin && role !== "admin" && role !== "manager" && profile?.auctionAccess !== true) {
     await firebaseSignOut();
     throw { code: "auth/unauthorized", message: "You don't have access to Auto Trade Hub. Contact your admin to request access." };
@@ -649,8 +649,8 @@ function LoginPage({ onLogin }) {
           onLogin(result.username, result.role, result.uid);
         }
       } catch (err) {
-        const msg = err.code === "auth/user-not-found" ? "No account found with this email"
-          : err.code === "auth/wrong-password" ? "Incorrect password"
+        const msg = err.code === "auth/user-not-found" ? "Invalid email or password"
+          : err.code === "auth/wrong-password" ? "Invalid email or password"
           : err.code === "auth/invalid-email" ? "Invalid email format"
           : err.code === "auth/email-already-in-use" ? "Email already registered — try signing in"
           : err.code === "auth/weak-password" ? "Password must be at least 6 characters"
@@ -904,7 +904,7 @@ function LoginPage({ onLogin }) {
                           if (!resetEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(resetEmail.trim())) { setResetStatus("error:Enter a valid email"); return; }
                           setResetLoading(true); setResetStatus("");
                           try { await resetPassword(resetEmail.trim()); setResetStatus("sent"); }
-                          catch (e) { setResetStatus("error:" + (e.code === "auth/user-not-found" ? "No account found with this email" : e.message || "Failed to send reset email")); }
+                          catch (e) { setResetStatus("error:" + (e.code === "auth/user-not-found" ? "If this email exists, a reset link has been sent" : e.message || "Failed to send reset email")); }
                           setResetLoading(false);
                         }} disabled={resetLoading} style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: "#2563EB", color: "#fff", fontSize: 11, fontWeight: 700, cursor: resetLoading ? "wait" : "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
                           {resetLoading ? "Sending..." : "Send Link"}
@@ -3306,7 +3306,7 @@ function ActivityTab() {
 // ═══════════════════════════════════════════════════════════════
 // USERS MANAGEMENT — Firebase Admin Panel
 // ═══════════════════════════════════════════════════════════════
-const SUPER_ADMIN_EMAIL = "support@sayarah.io";
+const SUPER_ADMIN_EMAIL = import.meta.env.VITE_SUPER_ADMIN_EMAIL || "support@sayarah.io";
 const ALL_AUCTION_TABS = ["Dashboard", "Pipeline", "Inventory", "Mileage", "Analytics", "Calendar", "Reports", "Approvals", "Activity", "Settings"];
 const USER_ROLES = [{ key: "admin", label: "Admin", color: "#D97706", bg: "#FEF3C7" }, { key: "manager", label: "Manager", color: "#2563EB", bg: "#DBEAFE" }, { key: "user", label: "User", color: "#059669", bg: "#D1FAE5" }];
 
@@ -3777,7 +3777,7 @@ function AppInner() {
       const unsub = onAuthChange(async (fbUser) => {
         try {
           if (fbUser) {
-            const isSuperAdmin = fbUser.email === "support@sayarah.io";
+            const isSuperAdmin = fbUser.email === (import.meta.env.VITE_SUPER_ADMIN_EMAIL || "support@sayarah.io");
             const profile = await getUserProfile(fbUser.uid);
             const role = isSuperAdmin ? "admin" : (profile?.role || "user");
             // Check auction access — same logic as firebaseLogin
@@ -3882,7 +3882,8 @@ function AppInner() {
   };
   const handleLogout = async () => {
     setLoggedIn(false); setUsername(""); setUserRole("user"); setFirebaseUid(null); setDataReady(false);
-    localStorage.removeItem("sayarah-session-v2");
+    // Clear all sensitive localStorage data on logout
+    ["sayarah-session-v2", "sayarah-notifications-v1", "sayarah-widget-prefs-v1"].forEach(k => localStorage.removeItem(k));
     if (FIREBASE_ENABLED) { try { await firebaseSignOut(); } catch {} }
   };
 
