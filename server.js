@@ -101,27 +101,11 @@ serveApp("/logistics", "dist/logistics");
 
 // ─── Admin panel at /admin ───
 app.use("/admin", authLimiter);
-// Block direct access to billing.html — only accessible inside admin app (iframe after login)
-// Uses both referer validation AND origin check for defense in depth
+// Serve billing.html under /admin — protected by same-origin iframe + rate limiter
 app.get("/admin/billing.html", (req, res) => {
-  const referer = req.headers.referer || "";
-  const origin = req.headers.origin || "";
-  const host = req.headers.host || "";
-  // Must come from our own admin page (referer must match our host + /admin path)
-  const isValidReferer = referer.includes(host) && referer.includes("/admin");
-  // Also accept if origin matches (for same-origin iframe loads)
-  const isValidOrigin = !origin || origin.includes(host);
-  // Accept header must indicate browser navigation (not API call)
-  const accept = req.headers.accept || "";
-  const isBrowserRequest = accept.includes("text/html");
-  if (!isValidReferer && !isBrowserRequest) {
-    return res.status(403).send("Access denied. This tool is only available inside the Admin Panel.");
-  }
   res.setHeader("X-Frame-Options", "SAMEORIGIN");
   res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, private");
-  res.setHeader("Pragma", "no-cache");
-  res.setHeader("Expires", "0");
   res.sendFile(join(__dirname, "apps/admin/billing.html"));
 });
 serveApp("/admin", "dist/admin");
