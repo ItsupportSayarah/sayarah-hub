@@ -815,6 +815,29 @@ function SessionsView({ users }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// INVOICING VIEW — Bill of Sale & Invoice Generator
+// ═══════════════════════════════════════════════════════════════
+function InvoicingView() {
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: B.navy }}>Billing & Invoicing</div>
+          <div style={{ fontSize: 12, color: B.gray }}>Generate Bill of Sale and invoices for vehicle transactions</div>
+        </div>
+        <a href="/billing.html" target="_blank" rel="noopener noreferrer" style={{ padding: "8px 16px", background: B.navy, color: "#fff", borderRadius: 8, fontSize: 12, fontWeight: 700, textDecoration: "none", display: "flex", alignItems: "center", gap: 6, fontFamily: font }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          Open in New Tab
+        </a>
+      </div>
+      <div style={{ background: B.white, borderRadius: 12, overflow: "hidden", border: `1px solid ${B.grayLight}`, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
+        <iframe src="/billing.html" style={{ width: "100%", height: "calc(100vh - 180px)", border: "none", display: "block" }} title="Bill of Sale Generator" />
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 // SETTINGS VIEW
 // ═══════════════════════════════════════════════════════════════
 function SettingsView({ adminEmail }) {
@@ -934,7 +957,7 @@ function ChangePasswordModal({ onClose }) {
 
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════
-const NAV_TABS = ["Dashboard", "Users", "Sessions", "Activity", "Settings"];
+const NAV_TABS = ["Dashboard", "Users", "Sessions", "Invoicing", "Activity", "Settings"];
 
 function AppInner() {
   const [loggedIn, setLoggedIn] = useState(false);
@@ -1098,6 +1121,7 @@ function AppInner() {
             {tab === "Dashboard" && <DashboardView users={users} adminEmail={adminEmail} />}
             {tab === "Users" && <UsersView users={users} onRefresh={loadUsers} />}
             {tab === "Sessions" && <SessionsView users={users} />}
+            {tab === "Invoicing" && <InvoicingView />}
             {tab === "Activity" && <ActivityView users={users} />}
             {tab === "Settings" && <SettingsView adminEmail={adminEmail} />}
           </>
