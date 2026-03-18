@@ -311,7 +311,7 @@ function LoginPage({onLogin,data}){
       if(!user.trim()){setErr("Enter your email");return;}
       if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user.trim())){setErr("Enter a valid email address");return;}
       if(!pass.trim()){setErr("Enter a password");return;}
-      if(isSignUp&&pass.length<6){setErr("Password must be at least 6 characters");return;}
+      if(isSignUp&&pass.length<8){setErr("Password must be at least 6 characters");return;}
       setLoading(true);setErr("");
       try{
         if(isSignUp){
@@ -361,7 +361,7 @@ function LoginPage({onLogin,data}){
           <div style={{display:"flex",flexDirection:"column",gap:16}}>
             {FIREBASE_ENABLED&&isSignUp&&<div style={{display:"flex",gap:10}}><div style={{flex:1}}><Inp label="First Name" value={firstName} onChange={setFirstName} placeholder="First name"/></div><div style={{flex:1}}><Inp label="Last Name" value={lastName} onChange={setLastName} placeholder="Last name"/></div></div>}
             <Inp label={FIREBASE_ENABLED?"Email":"Username"} value={user} onChange={setUser} placeholder={FIREBASE_ENABLED?"you@email.com":"Enter username"}/>
-            <Inp label="Password" value={pass} onChange={setPass} type="password" placeholder={isSignUp?"Min 6 characters":"Enter password"}/>
+            <Inp label="Password" value={pass} onChange={setPass} type="password" placeholder={isSignUp?"Min 8 characters":"Enter password"}/>
             {err&&<div style={{background:C.redLight,color:C.redDark,padding:"10px 14px",borderRadius:10,fontSize:12,fontWeight:600}}>{err}</div>}
             <button onClick={go} disabled={loading} style={{width:"100%",padding:"13px",background:loading?C.slate400:`linear-gradient(135deg,${C.red},${C.redDark})`,color:"#fff",border:"none",borderRadius:12,fontSize:14,fontWeight:700,cursor:loading?"wait":"pointer",fontFamily:"inherit",boxShadow:"0 4px 14px rgba(139,26,26,.35)",transition:"all .2s"}}>{loading?(isSignUp?"Creating account...":"Signing in..."):(isSignUp?"CREATE ACCOUNT":"SIGN IN")}</button>
             {FIREBASE_ENABLED&&<div style={{textAlign:"center",marginTop:4}}>
@@ -1553,7 +1553,7 @@ function ChangePasswordModal({onClose}){
         ):(
           <div style={{display:"flex",flexDirection:"column",gap:14}}>
             <div><label style={lbl}>Current Password</label><input type="password" value={currentPw} onChange={e=>setCurrentPw(e.target.value)} placeholder="Enter current password" style={inp}/></div>
-            <div><label style={lbl}>New Password</label><input type="password" value={newPw} onChange={e=>setNewPw(e.target.value)} placeholder="Min 6 characters" style={inp}/></div>
+            <div><label style={lbl}>New Password</label><input type="password" value={newPw} onChange={e=>setNewPw(e.target.value)} placeholder="Min 8 characters" style={inp}/></div>
             <div><label style={lbl}>Confirm New Password</label><input type="password" value={confirmPw} onChange={e=>setConfirmPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleSubmit()} placeholder="Re-enter new password" style={inp}/></div>
             {error&&<div style={{background:"#FEF2F2",color:"#DC2626",padding:"10px 14px",borderRadius:8,fontSize:12,fontWeight:600,border:"1px solid #FECACA"}}>{error}</div>}
             <button onClick={handleSubmit} disabled={loading} style={{width:"100%",padding:"12px",background:loading?C.slate400:`linear-gradient(135deg,${C.red},${C.redDark})`,color:"#fff",border:"none",borderRadius:8,fontSize:13,fontWeight:700,cursor:loading?"wait":"pointer",fontFamily:"inherit",boxShadow:"0 4px 12px rgba(139,26,26,0.3)"}}>{loading?"Updating...":"Update Password"}</button>

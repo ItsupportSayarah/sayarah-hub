@@ -904,7 +904,7 @@ function ChangePasswordModal({ onClose }) {
     setError("");
     if (!currentPw) { setError("Enter your current password"); return; }
     if (!newPw) { setError("Enter a new password"); return; }
-    if (newPw.length < 6) { setError("New password must be at least 6 characters"); return; }
+    if (newPw.length < 8) { setError("New password must be at least 8 characters"); return; }
     if (newPw !== confirmPw) { setError("New passwords do not match"); return; }
     if (currentPw === newPw) { setError("New password must be different from current"); return; }
     setLoading(true);
@@ -944,7 +944,7 @@ function ChangePasswordModal({ onClose }) {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div><label style={lbl}>Current Password</label><input type="password" value={currentPw} onChange={e => setCurrentPw(e.target.value)} placeholder="Enter current password" style={inp} /></div>
-            <div><label style={lbl}>New Password</label><input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Min 6 characters" style={inp} /></div>
+            <div><label style={lbl}>New Password</label><input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Min 8 characters" style={inp} /></div>
             <div><label style={lbl}>Confirm New Password</label><input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSubmit()} placeholder="Re-enter new password" style={inp} /></div>
             {error && <div style={{ background: B.redBg, color: B.red, padding: "10px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, border: "1px solid #FECACA" }}>{error}</div>}
             <button onClick={handleSubmit} disabled={loading} style={{ width: "100%", padding: "12px", background: loading ? B.gray : `linear-gradient(135deg, ${B.red}, #A52422)`, color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: loading ? "wait" : "pointer", fontFamily: font, boxShadow: "0 4px 12px rgba(139,26,26,0.3)" }}>{loading ? "Updating..." : "Update Password"}</button>

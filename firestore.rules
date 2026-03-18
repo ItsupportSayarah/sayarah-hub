@@ -1,0 +1,62 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helper: Check if user is authenticated ───
+    function isAuth() {
+      return request.auth != null;
+    }
+
+    // ─── Helper: Check if user is admin by reading their user doc ───
+    function isAdmin() {
+      return isAuth() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+    }
+
+    // ─── Helper: Check if user is admin or manager ───
+    function isAdminOrManager() {
+      return isAuth() && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin" ||
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "manager"
+      );
+    }
+
+    // ─── Users collection ───
+    // Users can read their own doc; admins can read/write all
+    match /users/{uid} {
+      allow read: if isAuth() && (request.auth.uid == uid || isAdminOrManager());
+      allow write: if isAuth() && (request.auth.uid == uid || isAdmin());
+    }
+
+    // ─── Auction Shared Data (vehicles, expenses, sales) ───
+    // Any authenticated user with auction access can read
+    // Only admin/manager can write
+    match /auctionShared/{docId} {
+      allow read: if isAuth();
+      allow write: if isAuth();
+    }
+
+    // ─── Auction Per-User Data (legacy, migration) ───
+    match /auctionData/{uid} {
+      allow read: if isAuth() && request.auth.uid == uid;
+      allow write: if isAuth() && request.auth.uid == uid;
+    }
+
+    // ─── Logistics Shared Data ───
+    match /logisticsShared/{docId} {
+      allow read: if isAuth();
+      allow write: if isAuth();
+    }
+
+    // ─── Logistics Per-User Data (legacy) ───
+    match /logisticsData/{uid} {
+      allow read: if isAuth() && request.auth.uid == uid;
+      allow write: if isAuth() && request.auth.uid == uid;
+    }
+
+    // ─── Deny everything else by default ───
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

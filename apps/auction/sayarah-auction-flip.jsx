@@ -635,7 +635,7 @@ function LoginPage({ onLogin }) {
       if (!user.trim()) { setError("Enter your email"); return; }
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user.trim())) { setError("Enter a valid email address"); return; }
       if (!pass.trim()) { setError("Enter a password"); return; }
-      if (isSignUp && pass.length < 6) { setError("Password must be at least 6 characters"); return; }
+      if (isSignUp && pass.length < 8) { setError("Password must be at least 8 characters"); return; }
       setLoading(true); setError("");
       try {
         if (isSignUp) {
@@ -653,7 +653,7 @@ function LoginPage({ onLogin }) {
           : err.code === "auth/wrong-password" ? "Invalid email or password"
           : err.code === "auth/invalid-email" ? "Invalid email format"
           : err.code === "auth/email-already-in-use" ? "Email already registered — try signing in"
-          : err.code === "auth/weak-password" ? "Password must be at least 6 characters"
+          : err.code === "auth/weak-password" ? "Password must be at least 8 characters"
           : err.code === "auth/invalid-credential" ? "Invalid email or password"
           : err.message || "Authentication failed";
         setError(msg); setLoading(false);
@@ -3476,7 +3476,7 @@ function SettingsTab({ darkMode, username, userRole, firebaseUid }) {
     setPwError("");
     if (!currentPw) { setPwError("Enter your current password"); return; }
     if (!newPw) { setPwError("Enter a new password"); return; }
-    if (newPw.length < 6) { setPwError("New password must be at least 6 characters"); return; }
+    if (newPw.length < 8) { setPwError("New password must be at least 8 characters"); return; }
     if (newPw !== confirmPw) { setPwError("New passwords do not match"); return; }
     if (currentPw === newPw) { setPwError("New password must be different from current"); return; }
     setPwLoading(true);
@@ -3523,7 +3523,7 @@ function SettingsTab({ darkMode, username, userRole, firebaseUid }) {
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <div><label style={labelStyle}>Current Password</label><input type="password" value={currentPw} onChange={e => setCurrentPw(e.target.value)} placeholder="Enter current password" style={inputStyle} /></div>
-              <div><label style={labelStyle}>New Password</label><input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Min 6 characters" style={inputStyle} /></div>
+              <div><label style={labelStyle}>New Password</label><input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Min 8 characters" style={inputStyle} /></div>
               <div><label style={labelStyle}>Confirm New Password</label><input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} onKeyDown={e => e.key === "Enter" && handleChangePw()} placeholder="Re-enter new password" style={inputStyle} /></div>
               {pwError && <div style={{ background: "#FEF2F2", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600 }}>{pwError}</div>}
               <Btn onClick={handleChangePw} disabled={pwLoading}>{pwLoading ? "Updating..." : "Update Password"}</Btn>
@@ -3644,7 +3644,7 @@ function ChangePasswordModal({ onClose, darkMode }) {
     setError("");
     if (!currentPw) { setError("Enter your current password"); return; }
     if (!newPw) { setError("Enter a new password"); return; }
-    if (newPw.length < 6) { setError("New password must be at least 6 characters"); return; }
+    if (newPw.length < 8) { setError("New password must be at least 8 characters"); return; }
     if (newPw !== confirmPw) { setError("New passwords do not match"); return; }
     if (currentPw === newPw) { setError("New password must be different from current"); return; }
     setLoading(true);
@@ -3653,7 +3653,7 @@ function ChangePasswordModal({ onClose, darkMode }) {
       setSuccess(true);
     } catch (e) {
       const msg = e.code === "auth/wrong-password" || e.code === "auth/invalid-credential" ? "Current password is incorrect"
-        : e.code === "auth/weak-password" ? "Password is too weak — use at least 6 characters"
+        : e.code === "auth/weak-password" ? "Password is too weak — use at least 8 characters"
         : e.code === "auth/requires-recent-login" ? "Session expired — please sign out and sign back in first"
         : e.message || "Failed to change password";
       setError(msg);
@@ -3687,7 +3687,7 @@ function ChangePasswordModal({ onClose, darkMode }) {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div><label style={labelStyle}>Current Password</label><input type="password" value={currentPw} onChange={e => setCurrentPw(e.target.value)} placeholder="Enter current password" style={inputStyle} /></div>
-            <div><label style={labelStyle}>New Password</label><input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Min 6 characters" style={inputStyle} /></div>
+            <div><label style={labelStyle}>New Password</label><input type="password" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="Min 8 characters" style={inputStyle} /></div>
             <div><label style={labelStyle}>Confirm New Password</label><input type="password" value={confirmPw} onChange={e => setConfirmPw(e.target.value)} onKeyDown={e => e.key === "Enter" && handleSubmit()} placeholder="Re-enter new password" style={inputStyle} /></div>
             {error && <div style={{ background: "#FEF2F2", color: "#DC2626", padding: "10px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, border: "1px solid #FECACA" }}>{error}</div>}
             <button onClick={handleSubmit} disabled={loading} style={{ width: "100%", padding: "12px", background: loading ? BRAND.gray : `linear-gradient(135deg, ${BRAND.red}, ${BRAND.redLight || "#A52422"})`, color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: loading ? "wait" : "pointer", fontFamily: "inherit", boxShadow: "0 4px 12px rgba(139,26,26,0.3)" }}>{loading ? "Updating..." : "Update Password"}</button>
