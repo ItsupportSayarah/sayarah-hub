@@ -335,16 +335,31 @@ async function runAI() {
     }
     messages[0].content.push({type: "text", text: prompt + "\n\nRespond ONLY with a JSON object (no markdown, no backticks). Fields: {buyer_name, buyer_street, buyer_city, buyer_state, buyer_zip, vehicle_year, vehicle_make, vehicle_model, vehicle_body (Sedan|SUV|Truck|Coupe|Hatchback|Van|Wagon|Convertible), vehicle_ext_color, vehicle_int_color, vehicle_vin, odometer, odometer_status (Actual Mileage|Exceeds Limits|NOT Actual), payment_method (Cash|Wire Transfer|Certified Check|Credit Card), payment_status (received|pending), warranty (asis|limited), auction_charges [{desc,amount,notes}], dealer_fees [{desc,amount,notes}], summary}"});
 
-    var apiResp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 2000,
-        system: "You extract vehicle transaction data from receipts. Return ONLY valid JSON. No markdown. No backticks.",
-        messages: messages
-      })
-    });
+    var fetchBody = {
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 2000,
+      system: "You extract vehicle transaction data from receipts for Atlantic Car Connect LLC dealer. Return ONLY valid JSON. No markdown. No backticks. No explanation text before or after the JSON.",
+      messages: messages
+    };
+
+    var apiResp;
+    try {
+      apiResp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "anthropic-dangerous-direct-browser-access": "true"
+        },
+        body: JSON.stringify(fetchBody)
+      });
+    } catch(fetchErr) {
+      throw new Error("Cannot reach Claude API. This AI feature only works when viewing the app inside Claude.ai (not in a downloaded file opened in a browser). For standalone use, fill the form manually and click Generate.");
+    }
+
+    if (!apiResp.ok) {
+      var errBody = await apiResp.text();
+      throw new Error("API returned " + apiResp.status + ": " + errBody.substring(0, 200));
+    }
 
     var data = await apiResp.json();
     if (data.error) throw new Error(data.error.message || 'API error');
