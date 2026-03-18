@@ -25,6 +25,7 @@ app.use(helmet({
       connectSrc: ["'self'", "blob:", "https://*.firebaseio.com", "https://*.googleapis.com", "https://*.firebaseapp.com", "wss://*.firebaseio.com", "https://firebasestorage.googleapis.com", "https://identitytoolkit.googleapis.com", "https://securetoken.googleapis.com", "https://ipapi.co", "https://api.ipify.org", "http://ip-api.com", "https://api.anthropic.com", "https://unpkg.com", "https://cdn.jsdelivr.net"],
       frameSrc: ["'self'", "https://*.firebaseapp.com"],
       workerSrc: ["'self'", "blob:"],
+      scriptSrcAttr: ["'unsafe-inline'"],
     },
   },
   crossOriginEmbedderPolicy: false,
