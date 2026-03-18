@@ -13,13 +13,13 @@ import { getStorage, ref as storageRef, uploadBytes, getDownloadURL, deleteObjec
 //     Get it from: Firebase Console → Project Settings → Your Apps
 // ──────────────────────────────────────────────────────────────
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FB_API_KEY,
-  authDomain: import.meta.env.VITE_FB_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FB_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FB_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FB_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FB_APP_ID,
-  measurementId: import.meta.env.VITE_FB_MEASUREMENT_ID,
+  apiKey: import.meta.env.VITE_FB_API_KEY || "AIzaSyBKMJB6qdSStpzWBqxr6hW4YAigT-DyaOg",
+  authDomain: import.meta.env.VITE_FB_AUTH_DOMAIN || "sayarah-hub.firebaseapp.com",
+  projectId: import.meta.env.VITE_FB_PROJECT_ID || "sayarah-hub",
+  storageBucket: import.meta.env.VITE_FB_STORAGE_BUCKET || "sayarah-hub.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FB_MESSAGING_SENDER_ID || "807394144397",
+  appId: import.meta.env.VITE_FB_APP_ID || "1:807394144397:web:07a07c9720cf809924b2c4",
+  measurementId: import.meta.env.VITE_FB_MEASUREMENT_ID || "G-J4W3YENY76",
 };
 
 const app = initializeApp(firebaseConfig);
