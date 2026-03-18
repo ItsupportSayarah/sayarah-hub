@@ -97,15 +97,21 @@ serveApp("/logistics", "dist/logistics");
 
 // ─── Admin panel at /admin ───
 app.use("/admin", authLimiter);
-// Serve billing.html only under /admin (not publicly accessible)
+// Block direct access to billing.html — only accessible inside admin app (iframe after login)
 app.get("/admin/billing.html", (req, res) => {
+  const referer = req.headers.referer || "";
+  if (!referer.includes("/admin")) {
+    return res.status(403).send("Access denied. This tool is only available inside the Admin Panel.");
+  }
+  res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
   res.sendFile(join(__dirname, "apps/admin/billing.html"));
 });
 serveApp("/admin", "dist/admin");
 
-// ─── Block direct access to billing.html (admin-only tool) ───
+// ─── Block direct access to billing.html ───
 app.get("/billing.html", (req, res) => {
-  res.redirect(302, "/admin/billing.html");
+  res.status(404).send("Not found");
 });
 
 // ─── Landing page at / (must be last) ───
