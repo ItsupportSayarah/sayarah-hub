@@ -44,7 +44,7 @@ return(
 <div key={col.t}><div style={{fontSize:11,letterSpacing:"0.12em",color:R,fontFamily:D,fontWeight:800,marginBottom:16,textTransform:"uppercase",display:"flex",alignItems:"center",gap:8}}><div className="rdot"/>{col.t}</div>{col.ls.map(lnk=>lnk.href?<a key={lnk.l} href={lnk.href} target="_blank" rel="noopener noreferrer" className="nl" style={{fontSize:13,fontFamily:D,marginBottom:11,cursor:"pointer",color:"#6B7280",fontWeight:500,textDecoration:"none",display:"block"}}>{lnk.l}</a>:<div key={lnk.l} onClick={lnk.a} className="nl" style={{fontSize:13,fontFamily:D,marginBottom:11,cursor:"pointer",color:"#6B7280",fontWeight:500}}>{lnk.l}</div>)}</div>
 )}</div>
 <div className="glow"/>
-<div style={{padding:"20px 0 28px",display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:11,fontFamily:D,color:"#9CA3AF"}}><span>© 2025 Sayarah Group. All rights reserved.</span><div style={{display:"flex",gap:16,alignItems:"center"}}><span>Boston, MA</span><div style={{display:"flex",gap:3}}>{[1,2,3].map(i=><div key={i} style={{width:4,height:4,background:R,opacity:.2+i*.2,borderRadius:1}}/>)}</div></div></div>
+<div style={{padding:"20px 0 28px",display:"flex",justifyContent:"space-between",alignItems:"center",fontSize:11,fontFamily:D,color:"#9CA3AF"}}><span>© 2025 Sayarah Inc. All rights reserved. Atlantic Car Connect is a company of Sayarah Inc.</span><div style={{display:"flex",gap:16,alignItems:"center"}}><span>Boston, MA</span><div style={{display:"flex",gap:3}}>{[1,2,3].map(i=><div key={i} style={{width:4,height:4,background:R,opacity:.2+i*.2,borderRadius:1}}/>)}</div></div></div>
 </div></footer>
 </div>);}
 function HomePage({go,reg,vis}){return<>

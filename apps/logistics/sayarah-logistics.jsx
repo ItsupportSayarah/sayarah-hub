@@ -398,7 +398,7 @@ function LoginPage({onLogin,data}){
             </div>}
           </div>
         </div>
-        <p style={{textAlign:"center",fontSize:11,color:"rgba(255,255,255,.25)",marginTop:28}}>Powered by <span style={{fontWeight:700,color:"rgba(255,255,255,.4)"}}>Sayarah Inc</span></p>
+        <p style={{textAlign:"center",fontSize:11,color:"rgba(255,255,255,.25)",marginTop:28}}>&copy; 2025 Sayarah Inc. All rights reserved. Atlantic Car Connect is a company of Sayarah Inc.</p>
       </div>
     </div>
   );
@@ -663,7 +663,7 @@ function StatementView({customer,data,onClose}){
         </div>
         <div ref={ref} style={{background:"#fff",borderRadius:4,padding:40,fontFamily:"'DM Sans',sans-serif",fontSize:12}}>
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:24}}>
-            <div><img src="/logo.png" alt="Sayarah Logistics" style={{height:50,objectFit:"contain",marginBottom:6}}/><div style={{fontSize:9,color:C.slate400,letterSpacing:".1em"}}>POWERED BY SAYARAH INC</div><div style={{fontSize:10,color:C.slate400,marginTop:6,lineHeight:1.7}}>{co.name}<br/>{co.address}<br/>{co.city}</div></div>
+            <div><img src="/logo.png" alt="Sayarah Logistics" style={{height:50,objectFit:"contain",marginBottom:6}}/><div style={{fontSize:9,color:C.slate400,letterSpacing:".1em"}}>ATLANTIC CAR CONNECT — A SAYARAH INC COMPANY</div><div style={{fontSize:10,color:C.slate400,marginTop:6,lineHeight:1.7}}>{co.name}<br/>{co.address}<br/>{co.city}</div></div>
             <div style={{textAlign:"right"}}><div style={{fontSize:20,fontWeight:900,color:C.brandRed}}>STATEMENT</div><div style={{fontSize:11,marginTop:6,lineHeight:1.8}}><div>Date: {today()}</div><div>Customer: <b>{customer.name}</b></div>{customer.address&&<div>{customer.address}</div>}{customer.phone&&<div>{customer.phone}</div>}</div></div>
           </div>
           <table style={{width:"100%",borderCollapse:"collapse",marginBottom:20,fontSize:11}}>
@@ -1316,7 +1316,7 @@ function InvViewer({invoice,data,onClose}){
         <div style={{display:"flex",justifyContent:"space-between",marginBottom:16}}><div style={{display:"flex",alignItems:"center",gap:8}}><h3 style={{margin:0,color:C.slate800,fontSize:18,fontWeight:700}}>{invoice.invoiceNum}</h3><IBdg statusKey={invoice.status}/></div><div style={{display:"flex",gap:8}}><Btn v="teal" onClick={print}>Print / PDF</Btn><Btn v="ghost" onClick={onClose}>✕</Btn></div></div>
         <div ref={ref} style={{background:"#fff",borderRadius:4,padding:"36px 44px",fontFamily:"'DM Sans',sans-serif",fontSize:12,color:"#111"}}>
           {/* Header */}
-          <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20}}><div style={{height:3,flex:1,background:C.brandRed}}/><div style={{textAlign:"center"}}><img src="/logo.png" alt="Sayarah Logistics" style={{height:50,objectFit:"contain"}}/><div style={{fontSize:9,color:C.slate400,letterSpacing:".1em",marginTop:4}}>POWERED BY SAYARAH INC</div></div><div style={{height:3,flex:1,background:C.brandRed}}/></div>
+          <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:20}}><div style={{height:3,flex:1,background:C.brandRed}}/><div style={{textAlign:"center"}}><img src="/logo.png" alt="Sayarah Logistics" style={{height:50,objectFit:"contain"}}/><div style={{fontSize:9,color:C.slate400,letterSpacing:".1em",marginTop:4}}>ATLANTIC CAR CONNECT — A SAYARAH INC COMPANY</div></div><div style={{height:3,flex:1,background:C.brandRed}}/></div>
           <div style={{display:"flex",justifyContent:"space-between",marginBottom:20}}>
             <div style={{fontSize:11,lineHeight:1.7}}><div style={{fontWeight:800}}>{co.name}</div><div>{co.address}</div><div>{co.city}</div><div>{co.email}</div></div>
             <div style={{textAlign:"right",fontSize:11,lineHeight:1.8}}><div style={{fontSize:18,fontWeight:900,color:C.brandRed,marginBottom:2}}>Invoice</div><div><span style={L}>No.:</span> <b style={MO}>{invoice.invoiceNum}</b></div><div><span style={L}>Date:</span> {invoice.date}</div><div><span style={L}>Due:</span> {invoice.dueDate||"—"}</div><div><span style={L}>Received:</span> [{f$2(pd)}]</div>{pastDue>0&&<div><span style={L}>Past Due:</span> [{pastDue}]</div>}<div><span style={L}>Currency:</span> {invoice.currency||"AED"}</div><div style={{fontWeight:800,fontSize:13,marginTop:3}}>Balance (USD): {f$2(bal)}</div></div>
@@ -1343,7 +1343,7 @@ function InvViewer({invoice,data,onClose}){
 
           {/* ═══ PAGE 2 ═══ */}
           <div style={{pageBreakBefore:"always",borderTop:"3px solid "+C.slate200,marginTop:36,paddingTop:36}}>
-            <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:24}}><div style={{height:3,flex:1,background:C.brandRed}}/><div style={{textAlign:"center"}}><img src="/logo.png" alt="Sayarah Logistics" style={{height:50,objectFit:"contain"}}/><div style={{fontSize:9,color:C.slate400,letterSpacing:".1em",marginTop:4}}>POWERED BY SAYARAH INC</div></div><div style={{height:3,flex:1,background:C.brandRed}}/></div>
+            <div style={{display:"flex",alignItems:"center",gap:14,marginBottom:24}}><div style={{height:3,flex:1,background:C.brandRed}}/><div style={{textAlign:"center"}}><img src="/logo.png" alt="Sayarah Logistics" style={{height:50,objectFit:"contain"}}/><div style={{fontSize:9,color:C.slate400,letterSpacing:".1em",marginTop:4}}>ATLANTIC CAR CONNECT — A SAYARAH INC COMPANY</div></div><div style={{height:3,flex:1,background:C.brandRed}}/></div>
             <table style={{width:"80%",margin:"0 auto 24px",borderCollapse:"collapse",border:"1px solid #999"}}><thead><tr><th colSpan={2} style={{background:"#D6E8F7",padding:"9px 14px",fontSize:12,fontWeight:800,textAlign:"center",border:"1px solid #999"}}>Wire Instructions (U.S. business bank account)</th></tr></thead><tbody>
               {[["Account number:",bk.accountNum],["Routing number:",bk.routingPaper],["",bk.routingWire],["Title on Account:",bk.titleOnAccount],["Address:",bk.bankAddress],["Mobile:",bk.bankMobile],["Bank:",bk.bankName]].map(([l,v],i)=><tr key={i} style={{background:i%2===0?"#EBF3FA":"#D6E8F7"}}><td style={{padding:"7px 14px",border:"1px solid #999",fontWeight:600,color:"#374151",width:"35%",fontSize:11}}>{l}</td><td style={{padding:"7px 14px",border:"1px solid #999",fontWeight:800,fontSize:11}}>{v}</td></tr>)}
             </tbody></table>
@@ -1757,7 +1757,7 @@ function AppInner(){
           {tab==="Rates"&&<RatesTab/>}
           {tab==="Users"&&isAdmin&&<UsersManagementTab/>}
         </div>
-        <div style={{textAlign:"center",padding:"20px 0 32px",fontSize:11,color:C.slate400}}>Powered by <span style={{fontWeight:700}}>Sayarah Inc</span></div>
+        <div style={{textAlign:"center",padding:"20px 0 32px",fontSize:11,color:C.slate400}}>&copy; 2025 Sayarah Inc. All rights reserved. Atlantic Car Connect is a company of Sayarah Inc.</div>
       </main>
     </div>
   );

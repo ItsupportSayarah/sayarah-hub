@@ -1130,7 +1130,7 @@ function AppInner() {
 
       {/* Footer */}
       <div style={{ textAlign: "center", padding: "24px 0", borderTop: `1px solid ${B.grayLight}`, marginTop: 40 }}>
-        <div style={{ fontSize: 10, color: B.gray }}>Powered by <b>Sayarah Inc</b> — Unified Admin Panel v1.0</div>
+        <div style={{ fontSize: 10, color: B.gray }}>&copy; 2025 Sayarah Inc. All rights reserved. Atlantic Car Connect is a company of Sayarah Inc.</div>
       </div>
     </div>
   );
