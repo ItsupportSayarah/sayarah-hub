@@ -355,12 +355,18 @@ async function runAI() {
 
     if (!apiResp.ok) {
       var errBody = await apiResp.text();
-      try { var errJson = JSON.parse(errBody); throw new Error(errJson.error || "AI request failed"); } catch(pe) { if (pe.message !== errBody) throw pe; }
-      throw new Error("AI returned error " + apiResp.status);
+      try {
+        var errJson = JSON.parse(errBody);
+        var errMsg = (errJson.error && typeof errJson.error === 'object') ? (errJson.error.message || errJson.error.type || JSON.stringify(errJson.error)) : (errJson.error || "AI request failed");
+        throw new Error(errMsg);
+      } catch(pe) { if (pe instanceof SyntaxError) throw new Error("AI returned error " + apiResp.status); throw pe; }
     }
 
     var data = await apiResp.json();
-    if (data.error) throw new Error(data.error.message || 'API error');
+    if (data.error) {
+      var em = (typeof data.error === 'object') ? (data.error.message || data.error.type || "API error") : data.error;
+      throw new Error(em);
+    }
 
     var text = data.content.map(function(b) { return b.text || ''; }).join('');
     var clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
