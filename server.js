@@ -97,10 +97,26 @@ serveApp("/logistics", "dist/logistics");
 
 // ─── Admin panel at /admin ───
 app.use("/admin", authLimiter);
+// Serve billing.html only under /admin (not publicly accessible)
+app.get("/admin/billing.html", (req, res) => {
+  res.sendFile(join(__dirname, "apps/admin/billing.html"));
+});
 serveApp("/admin", "dist/admin");
 
+// ─── Block direct access to billing.html (admin-only tool) ───
+app.get("/billing.html", (req, res) => {
+  res.redirect(302, "/admin/billing.html");
+});
+
 // ─── Landing page at / (must be last) ───
-app.use(express.static(join(__dirname, "dist/landing"), { maxAge: "1h" }));
+app.use(express.static(join(__dirname, "dist/landing"), {
+  maxAge: "1h",
+  setHeaders: (res, path) => {
+    if (path.endsWith("billing.html")) {
+      res.status(403);
+    }
+  },
+}));
 app.get("*", (req, res) => {
   res.setHeader("Cache-Control", "no-cache");
   res.sendFile(join(__dirname, "dist/landing/index.html"));
