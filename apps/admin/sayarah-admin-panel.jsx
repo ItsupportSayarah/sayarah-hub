@@ -831,7 +831,7 @@ function InvoicingView() {
         </div>
       </div>
       <div style={{ background: B.white, borderRadius: 12, overflow: "hidden", border: `1px solid ${B.grayLight}`, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
-        <iframe src="/billing.html" style={{ width: "100%", height: "calc(100vh - 180px)", border: "none", display: "block" }} title="Bill of Sale Generator" />
+        <iframe src="/admin/billing.html" style={{ width: "100%", height: "calc(100vh - 180px)", border: "none", display: "block" }} title="Bill of Sale Generator" />
       </div>
     </div>
   );
