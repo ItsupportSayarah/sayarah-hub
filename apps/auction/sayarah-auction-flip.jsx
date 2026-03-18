@@ -3711,7 +3711,6 @@ function AppInner() {
   const [loaded, setLoaded] = useState(true);
   const [saving, setSaving] = useState(false);
   const [darkMode, setDarkMode] = useState(() => loadTheme() === "dark");
-  const [showChangePw, setShowChangePw] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
 
@@ -3860,13 +3859,41 @@ function AppInner() {
   }, []);
 
   // ─── Save data: Shared Firestore OR localStorage (only after cloud data loaded) ───
+  // Uses read-merge-write to prevent concurrent users from overwriting each other
   useEffect(() => {
     if (!loaded || !dataReady) return;
     if (FIREBASE_ENABLED && firebaseUid) {
-      const t = setTimeout(() => {
+      const t = setTimeout(async () => {
         setSaving(true);
-        saveSharedData(data).then(() => setTimeout(() => setSaving(false), 400)).catch(() => setSaving(false));
-      }, 600);
+        try {
+          // Read latest shared data and merge arrays by ID to avoid overwrites
+          const latest = await loadSharedData();
+          if (latest) {
+            const mergeArrays = (local, remote, key = "id") => {
+              const map = new Map();
+              (remote || []).forEach(item => map.set(item[key], item));
+              (local || []).forEach(item => map.set(item[key], item)); // local wins for same ID
+              return [...map.values()];
+            };
+            const merged = {
+              ...data,
+              vehicles: mergeArrays(data.vehicles, latest.vehicles),
+              expenses: mergeArrays(data.expenses, latest.expenses),
+              sales: mergeArrays(data.sales, latest.sales),
+              mileage: mergeArrays(data.mileage, latest.mileage),
+              documents: mergeArrays(data.documents, latest.documents),
+              auctionEvents: mergeArrays(data.auctionEvents, latest.auctionEvents),
+              nextStockNum: Math.max(data.nextStockNum || 1, latest.nextStockNum || 1),
+            };
+            await saveSharedData(merged);
+            // Update local state if remote had items we didn't have
+            if (merged.vehicles.length !== data.vehicles.length) setData(merged);
+          } else {
+            await saveSharedData(data);
+          }
+        } catch { /* save failed silently */ }
+        setTimeout(() => setSaving(false), 400);
+      }, 800);
       return () => clearTimeout(t);
     } else {
       const t = setTimeout(() => { try { setSaving(true); localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); setTimeout(() => setSaving(false), 400); } catch { setSaving(false); } }, 400);
