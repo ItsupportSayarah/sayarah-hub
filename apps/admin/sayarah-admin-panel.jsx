@@ -825,10 +825,10 @@ function InvoicingView() {
           <div style={{ fontSize: 22, fontWeight: 900, color: B.navy }}>Billing & Invoicing</div>
           <div style={{ fontSize: 12, color: B.gray }}>Generate Bill of Sale and invoices for vehicle transactions</div>
         </div>
-        <a href="/billing.html" target="_blank" rel="noopener noreferrer" style={{ padding: "8px 16px", background: B.navy, color: "#fff", borderRadius: 8, fontSize: 12, fontWeight: 700, textDecoration: "none", display: "flex", alignItems: "center", gap: 6, fontFamily: font }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-          Open in New Tab
-        </a>
+        <div style={{ padding: "6px 12px", background: "#F0FDF4", borderRadius: 6, fontSize: 10, fontWeight: 700, color: "#16A34A", display: "flex", alignItems: "center", gap: 4 }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          INTERNAL ONLY
+        </div>
       </div>
       <div style={{ background: B.white, borderRadius: 12, overflow: "hidden", border: `1px solid ${B.grayLight}`, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
         <iframe src="/billing.html" style={{ width: "100%", height: "calc(100vh - 180px)", border: "none", display: "block" }} title="Bill of Sale Generator" />
