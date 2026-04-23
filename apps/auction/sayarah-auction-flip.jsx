@@ -71,6 +71,8 @@ const DEFAULT_AUCTION_FEE_TIERS = {
   private_party: { name: "Private Party", tiers: [{ max: Infinity, pct: 0 }], gateFee: 0, envFee: 0, titleFee: 0, virtualBidFee: 0 },
   autotrader: { name: "AutoTrader", tiers: [{ max: Infinity, pct: 0 }], gateFee: 0, envFee: 0, titleFee: 0, virtualBidFee: 0 },
   facebook: { name: "Facebook Marketplace", tiers: [{ max: Infinity, pct: 0 }], gateFee: 0, envFee: 0, titleFee: 0, virtualBidFee: 0 },
+  trade_in: { name: "Trade-In", tiers: [{ max: Infinity, pct: 0 }], gateFee: 0, envFee: 0, titleFee: 0, virtualBidFee: 0 },
+  other: { name: "Other", tiers: [{ max: Infinity, pct: 0 }], gateFee: 0, envFee: 0, titleFee: 0, virtualBidFee: 0 },
   custom: { name: "Custom %", tiers: [{ max: Infinity, pct: 0 }], gateFee: 0, envFee: 0, titleFee: 0, virtualBidFee: 0 },
 };
 
@@ -370,12 +372,13 @@ const EXPENSE_CATEGORIES = [
   "Transport/Towing",
   "Storage/Parking",
   "Repair/Recon",
-  "Registration/Title/DMV",
+  "DMV/Title/Registration",
   "Inspection",
   "Detailing",
   "Marketing/Listing",
-  "Selling Costs (post-sale)",
   "Office/Admin",
+  "Selling Costs (post-sale)",
+  "Other",
 ];
 const SALE_TYPES = ["Private Party","Dealer","Auction","Consignment","Trade-In","Facebook Marketplace","Craigslist","OfferUp"];
 const PAYMENT_METHODS = ["Cash","Check","Credit Card","Debit Card","Wire Transfer","Financing","Zelle","Venmo","PayPal"];
@@ -385,7 +388,7 @@ const MA_CORP_TAX_RATE = 0.08;
 const FEDERAL_CORP_TAX_RATE = 0.21;
 const STORAGE_KEY = "sayarah-flip-v4";
 const USERS_STORAGE_KEY = "sayarah-users-v2";
-const AUCTION_SOURCES = ["copart", "iaai", "manheim", "private_party", "autotrader", "facebook", "custom"];
+const AUCTION_SOURCES = ["copart", "iaai", "manheim", "autotrader", "private_party", "facebook", "trade_in", "other", "custom"];
 
 // ─── User Management ────────────────────────────────────────
 function loadUsers() {
@@ -1971,157 +1974,191 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
 // ═══════════════════════════════════════════════════════════════
 // VEHICLE DETAIL MODAL — shows expenses + sale inline
 // ═══════════════════════════════════════════════════════════════
+// Internal Deal Report — redesigned per spec:
+// Single-page letter layout. Vehicle band is the sole status source-of-truth.
+// Key Metrics row at top. Unified Cost Breakdown (no separate Acquisition
+// vs Tracked sections). Sale Details + Profit & Loss appear only when sold.
+// No bottom "Not Yet Sold" banner. INTERNAL USE ONLY footer.
 function generateInvoicePDF(vehicle, expenses, sale, metrics, currentUserInfo) {
   const v = vehicle;
   const m = metrics;
   const u = currentUserInfo;
   const titleInfo = TITLE_STATUS[v.titleStatus] || TITLE_STATUS.clean;
-  const saleNet = sale ? p(sale.grossPrice) - p(sale.auctionFee) - p(sale.titleFee) - p(sale.otherDeductions) : 0;
-  const totalExp = expenses.reduce((s, e) => s + p(e.amount), 0);
+  const sold = !!sale && v.status === "Sold";
+  const acqSrcName = (AUCTION_FEE_TIERS[v.auctionSource] || AUCTION_FEE_TIERS.custom).name;
   const today = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
   const invoiceNum = `INV-${v.stockNum}-${Date.now().toString(36).toUpperCase()}`;
+  const saleNet = m.netSale;
 
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Invoice ${invoiceNum}</title>
+  // ─── Safe formatters. Display "—" when a metric is undefined rather than
+  // showing "NaN%" or "$0" for what is really "not computable yet". ───
+  const dollarOrDash = (n) => (n == null || !Number.isFinite(n)) ? "—" : fmt$2(n);
+  const pctOrDash = (n) => (n == null || !Number.isFinite(n)) ? "—" : (n * 100).toFixed(1) + "%";
+
+  // ─── Color rules from spec #13 ───
+  const profitColor = (m.grossProfit == null) ? "#111" : (m.grossProfit >= 0 ? "#166534" : "#DC2626");
+  const marginColor = (m.margin == null) ? "#111" : (m.margin >= 0.15 ? "#166534" : m.margin >= 0.05 ? "#D97706" : "#DC2626");
+  const daysColor = (m.days == null || m.days === 0) ? "#111" : (m.days < 45 ? "#111" : m.days <= 60 ? "#D97706" : "#DC2626");
+
+  // ─── Status chip. Single source of truth — rendered only in the vehicle
+  // band. Label per spec: "SOLD · {date}", "LISTED", or fallback. ───
+  const statusChip = sold
+    ? `<span class="chip" style="background:#D1FAE5;color:#166534">SOLD · ${esc(sale.date)}</span>`
+    : v.status === "Listed"
+      ? `<span class="chip" style="background:#DBEAFE;color:#1E40AF">LISTED</span>`
+      : v.status === "In Recon"
+        ? `<span class="chip" style="background:#FEF3C7;color:#92400E">IN RECON</span>`
+        : v.status === "Ready"
+          ? `<span class="chip" style="background:#E0E7FF;color:#3730A3">READY</span>`
+          : `<span class="chip" style="background:#F3F4F6;color:#4B5563">${esc((v.status || "IN INVENTORY").toUpperCase())}</span>`;
+
+  // ─── Build the unified Cost Breakdown rows. Every dollar spent on the
+  // vehicle appears here, regardless of which form/section entered it. ───
+  const pp = p(v.purchasePrice);
+  const auctFee = calcAuctionFees(pp, v.auctionSource || "custom").total;
+  const costRows = [];
+  if (pp > 0) costRows.push({ date: v.purchaseDate || "—", category: "Purchase Price", description: `${esc(v.year)} ${esc(v.make)} ${esc(v.model)}${v.trim ? " " + esc(v.trim) : ""}`, vendor: acqSrcName, amount: pp });
+  if (auctFee > 0) costRows.push({ date: v.purchaseDate || "—", category: "Auction Fees", description: `Buyer premium + gate fees (${acqSrcName})`, vendor: acqSrcName, amount: auctFee });
+  if (p(v.transportCost) > 0) costRows.push({ date: v.purchaseDate || "—", category: "Transport/Towing", description: "Acquisition transport (legacy field — prefer Tracked Expenses)", vendor: "—", amount: p(v.transportCost) });
+  if (p(v.repairCost) > 0) costRows.push({ date: v.purchaseDate || "—", category: "Repair/Recon", description: "Reconditioning (legacy field — prefer Tracked Expenses)", vendor: "—", amount: p(v.repairCost) });
+  if (p(v.otherExpenses) > 0) costRows.push({ date: v.purchaseDate || "—", category: "Other", description: "Misc acquisition (legacy field — prefer Tracked Expenses)", vendor: "—", amount: p(v.otherExpenses) });
+  // Tracked expenses, sorted by date for readability
+  [...expenses].sort((a, b) => (a.date || "").localeCompare(b.date || "")).forEach(e => {
+    costRows.push({ date: e.date || "—", category: e.category || "Uncategorized", description: e.description || "—", vendor: e.vendor || "—", amount: p(e.amount) });
+  });
+  const totalInvested = costRows.reduce((s, r) => s + r.amount, 0);
+
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Internal Deal Report · ${esc(v.stockNum)}</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Segoe UI',Arial,sans-serif;color:#111;background:#fff;padding:40px;max-width:800px;margin:0 auto}
-.header{display:flex;justify-content:space-between;align-items:start;border-bottom:3px solid #8B1A1A;padding-bottom:20px;margin-bottom:24px}
-.logo-img{height:64px;object-fit:contain;display:block;margin-bottom:6px}
-.logo-sub{font-size:10px;color:#999;letter-spacing:0.15em}
-.inv-meta{text-align:right;font-size:12px;color:#555}
+body{font-family:'Segoe UI',Arial,sans-serif;color:#111;background:#fff;padding:24px;max-width:820px;margin:0 auto;font-size:11.5px;line-height:1.35}
+.header{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #8B1A1A;padding-bottom:8px;margin-bottom:8px}
+.logo-img{height:44px;object-fit:contain;display:block}
+.logo-sub{font-size:9px;color:#999;letter-spacing:0.14em;margin-top:3px}
+.inv-meta{text-align:right;font-size:10.5px;color:#555}
 .inv-meta b{color:#111}
-.inv-num{font-size:16px;font-weight:800;color:#8B1A1A;margin-bottom:4px}
-.parties{display:flex;gap:40px;margin-bottom:24px}
-.party{flex:1}
-.party-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#8B1A1A;margin-bottom:6px}
-.party-name{font-size:15px;font-weight:700;margin-bottom:4px}
-.party-detail{font-size:12px;color:#555;line-height:1.6}
-.section{margin-bottom:20px}
-.section-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;color:#8B1A1A;padding:6px 0;border-bottom:1px solid #e5e7eb;margin-bottom:10px}
-.vehicle-hero{background:#fdf2f2;border-radius:8px;padding:16px;margin-bottom:20px;border-left:4px solid #8B1A1A}
-.vehicle-name{font-size:20px;font-weight:900;margin-bottom:4px}
-.vehicle-meta{font-size:12px;color:#555}
-table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:6px}
-th{background:#f9fafb;text-align:left;padding:8px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:#6b7280;border-bottom:2px solid #e5e7eb}
-td{padding:8px 10px;border-bottom:1px solid #f3f4f6}
+.inv-num{font-size:13px;font-weight:800;color:#8B1A1A;margin-bottom:2px}
+.client-row{display:flex;justify-content:space-between;align-items:center;background:#F9FAFB;padding:5px 10px;border-radius:4px;font-size:10.5px;margin-bottom:8px}
+.vehicle-band{background:#FEF2F2;border-left:3px solid #8B1A1A;padding:8px 12px;border-radius:4px;margin-bottom:10px}
+.vehicle-title{font-size:15px;font-weight:900;color:#111;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.vehicle-meta{font-size:10px;color:#555;margin-top:3px;display:flex;gap:10px;flex-wrap:wrap}
+.chip{display:inline-block;padding:2px 9px;border-radius:10px;font-size:9.5px;font-weight:800;letter-spacing:0.04em}
+.metrics-row{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:10px}
+.metric{border:1px solid #E5E7EB;border-radius:4px;padding:7px 9px}
+.metric-label{font-size:8.5px;color:#6B7280;text-transform:uppercase;letter-spacing:0.05em;font-weight:700}
+.metric-value{font-size:15px;font-weight:800;margin-top:2px;font-family:'Courier New',monospace}
+section{margin-bottom:10px}
+.section-title{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.07em;color:#8B1A1A;padding:4px 0;border-bottom:1px solid #E5E7EB;margin-bottom:5px}
+table{width:100%;border-collapse:collapse;font-size:10.5px}
+th{background:#F9FAFB;text-align:left;padding:4px 7px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:#6B7280;border-bottom:1px solid #E5E7EB}
+td{padding:4px 7px;border-bottom:1px solid #F3F4F6}
 .amt{text-align:right;font-family:'Courier New',monospace;font-weight:600}
-.total-row td{border-top:2px solid #111;font-weight:800;font-size:13px;padding-top:10px}
-.summary-box{background:#f0fdf4;border:1px solid #d1fae5;border-radius:8px;padding:16px;margin-top:20px}
-.summary-box.loss{background:#fef2f2;border-color:#fecaca}
-.summary-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;font-size:12px}
-.summary-label{color:#6b7280;font-size:10px;text-transform:uppercase;font-weight:700}
-.summary-value{font-size:18px;font-weight:800;font-family:'Courier New',monospace}
-.footer{margin-top:30px;padding-top:16px;border-top:1px solid #e5e7eb;font-size:10px;color:#999;text-align:center}
-@media print{body{padding:20px}@page{margin:0.5in}}
+.total-row td{border-top:2px solid #8B1A1A;font-weight:900;font-size:11.5px;padding-top:6px;background:#FEF2F2;color:#8B1A1A}
+.pl-table{width:100%;font-size:11px}
+.pl-table td{padding:3px 0;border-bottom:1px dashed #E5E7EB}
+.pl-total{border-top:2px solid #111;padding-top:5px!important;font-weight:900;font-size:13px}
+.footer{margin-top:12px;padding-top:6px;border-top:1px solid #E5E7EB;text-align:center}
+.internal-label{font-size:10px;font-weight:800;color:#8B1A1A;letter-spacing:0.08em;margin-bottom:2px}
+.footer-meta{font-size:8.5px;color:#999}
+@media print{body{padding:12px}@page{margin:0.4in}}
 </style></head><body>
+
+<!-- Header -->
 <div class="header">
   <div><img src="/logo.png" class="logo-img" alt="Auto Trade Hub" /><div class="logo-sub">ATLANTIC CAR CONNECT — A SAYARAH INC COMPANY</div></div>
   <div class="inv-meta">
-    <div class="inv-num">${invoiceNum}</div>
-    <div>Date: <b>${today}</b></div>
+    <div class="inv-num">Internal Deal Report</div>
+    <div>${invoiceNum} · <b>${today}</b></div>
     <div>Stock #: <b>${esc(v.stockNum)}</b></div>
   </div>
 </div>
 
-<div class="parties">
-  <div class="party">
-    <div class="party-label">Client (Exported By)</div>
-    <div class="party-name">${esc(u.username || "—")}</div>
-    <div class="party-detail">
-      ${u.email ? esc(u.email) + "<br>" : ""}${u.phone ? esc(u.phone) + "<br>" : ""}${u.address ? esc(u.address) : ""}
-    </div>
-  </div>
-  ${sale && sale.buyerName ? `<div class="party">
-    <div class="party-label">Buyer</div>
-    <div class="party-name">${esc(sale.buyerName)}</div>
-    <div class="party-detail">
-      ${sale.buyerPhone ? esc(sale.buyerPhone) + "<br>" : ""}${sale.buyerEmail ? esc(sale.buyerEmail) : ""}
-    </div>
-  </div>` : ""}
+<!-- Client line -->
+<div class="client-row">
+  <span><b>Exported By:</b> ${esc(u.username || "—")}${u.email ? " · " + esc(u.email) : ""}</span>
+  <span style="color:#6B7280">Acquisition Source: <b style="color:#111">${esc(acqSrcName)}</b></span>
 </div>
 
-<div class="vehicle-hero">
-  <div class="vehicle-name">${esc(v.year)} ${esc(v.make)} ${esc(v.model)} ${esc(v.trim || "")}</div>
+<!-- Vehicle band (sole status source-of-truth) -->
+<div class="vehicle-band">
+  <div class="vehicle-title">
+    <span>${esc(v.year)} ${esc(v.make)} ${esc(v.model)}${v.trim ? " " + esc(v.trim) : ""}</span>
+    ${statusChip}
+  </div>
   <div class="vehicle-meta">
-    ${v.vin ? "VIN: " + esc(v.vin) + " · " : ""}${v.color ? esc(v.color) + " · " : ""}${v.odometer ? parseInt(v.odometer).toLocaleString() + " mi · " : ""}Title: ${esc(titleInfo.label)} · Status: ${esc(v.status)}
+    ${v.vin ? `<span>VIN: <b>${esc(v.vin)}</b></span>` : ""}
+    ${v.color ? `<span>Color: <b>${esc(v.color)}</b></span>` : ""}
+    ${v.odometer ? `<span>Mileage: <b>${parseInt(v.odometer).toLocaleString()} mi</b></span>` : ""}
+    <span>Title: <b>${esc(titleInfo.label)}</b></span>
+    ${v.location || v.zipCode ? `<span>Location: <b>${esc(v.location || "")}${v.zipCode ? (v.location ? " · " : "") + esc(v.zipCode) : ""}</b></span>` : ""}
   </div>
 </div>
 
-<div class="section">
+<!-- Key Metrics (5 tiles, top of page) -->
+<div class="metrics-row">
+  <div class="metric"><div class="metric-label">Total Invested</div><div class="metric-value">${fmt$2(totalInvested)}</div></div>
+  <div class="metric"><div class="metric-label">Sale Price</div><div class="metric-value">${sold ? fmt$2(p(sale.grossPrice)) : "—"}</div></div>
+  <div class="metric"><div class="metric-label">Net Profit / (Loss)</div><div class="metric-value" style="color:${profitColor}">${dollarOrDash(m.grossProfit)}</div></div>
+  <div class="metric"><div class="metric-label">Margin %</div><div class="metric-value" style="color:${marginColor}">${pctOrDash(m.margin)}</div></div>
+  <div class="metric"><div class="metric-label">Days Held</div><div class="metric-value" style="color:${daysColor}">${m.days || "—"}</div></div>
+</div>
+
+<!-- Unified Cost Breakdown (REPLACES Acquisition Costs + Tracked Expenses) -->
+<section>
   <div class="section-title">Cost Breakdown</div>
   <table>
-    <tr><td>Purchase Price</td><td class="amt">${fmt$2(p(v.purchasePrice))}</td></tr>
-    <tr><td>Auction Fees (${(AUCTION_FEE_TIERS[v.auctionSource] || AUCTION_FEE_TIERS.custom).name})</td><td class="amt">${fmt$2(calcAuctionFees(p(v.purchasePrice), v.auctionSource || "custom").total)}</td></tr>
-    ${p(v.transportCost) > 0 ? `<tr><td>Transport (legacy field)</td><td class="amt">${fmt$2(p(v.transportCost))}</td></tr>` : ""}
-    ${p(v.repairCost) > 0 ? `<tr><td>Repair/Recon (legacy field)</td><td class="amt">${fmt$2(p(v.repairCost))}</td></tr>` : ""}
-    ${p(v.otherExpenses) > 0 ? `<tr><td>Other (legacy field)</td><td class="amt">${fmt$2(p(v.otherExpenses))}</td></tr>` : ""}
-    ${(() => {
-      const byCat = {};
-      expenses.forEach(e => { const c = e.category || "Uncategorized"; byCat[c] = (byCat[c] || 0) + p(e.amount); });
-      return Object.entries(byCat).sort((a, b) => b[1] - a[1])
-        .map(([c, a]) => `<tr><td>${esc(c)} <span style="font-size:10px;color:#999">tracked</span></td><td class="amt">${fmt$2(a)}</td></tr>`).join("");
-    })()}
-    <tr class="total-row"><td>Total Invested</td><td class="amt">${fmt$2(m.invested)}</td></tr>
-  </table>
-</div>
-
-${expenses.length > 0 ? `<div class="section">
-  <div class="section-title">Tracked Expenses (${expenses.length})</div>
-  <table>
-    <thead><tr><th>Date</th><th>Category</th><th>Description</th><th>Vendor</th><th style="text-align:right">Amount</th></tr></thead>
+    <thead>
+      <tr><th>Date</th><th>Category</th><th>Description</th><th>Vendor</th><th class="amt">Amount</th></tr>
+    </thead>
     <tbody>
-      ${expenses.map(e => `<tr><td>${esc(e.date||"—")}</td><td>${esc(e.category||"—")}</td><td>${esc(e.description||"—")}</td><td>${esc(e.vendor||"—")}</td><td class="amt">${fmt$2(p(e.amount))}</td></tr>`).join("")}
-      <tr class="total-row"><td colspan="4">Total Expenses</td><td class="amt">${fmt$2(totalExp)}</td></tr>
+      ${costRows.length === 0
+        ? `<tr><td colspan="5" style="padding:12px;text-align:center;color:#999;font-style:italic">No costs recorded yet — add Purchase Price or Tracked Expenses to this vehicle.</td></tr>`
+        : costRows.map(r => `<tr><td>${esc(r.date)}</td><td>${esc(r.category)}</td><td>${r.description}</td><td>${esc(r.vendor)}</td><td class="amt">${fmt$2(r.amount)}</td></tr>`).join("")}
+      <tr class="total-row"><td colspan="4">TOTAL INVESTED</td><td class="amt">${fmt$2(totalInvested)}</td></tr>
     </tbody>
   </table>
-</div>` : ""}
+</section>
 
-${sale ? `<div class="section">
+${sold ? `
+<!-- Sale Details (sold only) -->
+<section>
   <div class="section-title">Sale Details</div>
-  <table>
+  <table class="pl-table">
     <tr><td>Sale Date</td><td class="amt">${esc(sale.date)}</td></tr>
+    <tr><td>Buyer Name</td><td class="amt">${esc(sale.buyerName || "—")}</td></tr>
     <tr><td>Sale Type</td><td class="amt">${esc(sale.saleType || "—")}</td></tr>
-    <tr><td>Gross Sale Price</td><td class="amt">${fmt$2(p(sale.grossPrice))}</td></tr>
-    <tr><td>Auction/Seller Fee</td><td class="amt">-${fmt$2(p(sale.auctionFee))}</td></tr>
-    <tr><td>Title/Transfer Fee</td><td class="amt">-${fmt$2(p(sale.titleFee))}</td></tr>
-    <tr><td>Other Deductions</td><td class="amt">-${fmt$2(p(sale.otherDeductions))}</td></tr>
-    <tr class="total-row"><td>Net Sale</td><td class="amt">${fmt$2(saleNet)}</td></tr>
+    <tr><td>Payment Method</td><td class="amt">${esc(sale.paymentMethod || "—")}</td></tr>
+    <tr><td style="padding-top:6px">Gross Sale Price</td><td class="amt" style="padding-top:6px;font-weight:700">${fmt$2(p(sale.grossPrice))}</td></tr>
+    <tr><td>− Auction/Seller Fee</td><td class="amt" style="color:#DC2626">${fmt$2(p(sale.auctionFee))}</td></tr>
+    <tr><td>− Title/Transfer Fee</td><td class="amt" style="color:#DC2626">${fmt$2(p(sale.titleFee))}</td></tr>
+    <tr><td>− Other Deductions</td><td class="amt" style="color:#DC2626">${fmt$2(p(sale.otherDeductions))}</td></tr>
+    <tr style="border-top:1px solid #111"><td style="padding-top:5px"><b>Net Sale</b></td><td class="amt" style="padding-top:5px;font-weight:800">${fmt$2(saleNet)}</td></tr>
   </table>
-</div>
+</section>
 
-<div class="summary-box ${m.grossProfit < 0 ? "loss" : ""}">
-  <div class="section-title" style="color:${m.grossProfit >= 0 ? "#166534" : "#DC2626"};border-color:${m.grossProfit >= 0 ? "#D1FAE5" : "#FECACA"}">Profit & Loss Summary</div>
-  <table style="width:100%;font-size:12px;margin-bottom:12px">
-    <tr><td style="padding:3px 0;color:#666">Gross Sale Price</td><td style="padding:3px 0;text-align:right;font-weight:700">${fmt$2(p(sale.grossPrice))}</td></tr>
-    <tr><td style="padding:3px 0;color:#666">− Sale-time deductions <span style="font-size:10px;color:#999">auction seller-fee · title · other</span></td><td style="padding:3px 0;text-align:right;color:#DC2626">${fmt$2(m.saleDeductions)}</td></tr>
-    <tr style="border-top:1px dashed #ddd"><td style="padding:3px 0">Net Sale</td><td style="padding:3px 0;text-align:right;font-weight:700">${fmt$2(saleNet)}</td></tr>
-    <tr><td style="padding:3px 0;color:#666">− Total Invested <span style="font-size:10px;color:#999">complete cost basis: purchase · auction fees · every tracked expense, every category</span></td><td style="padding:3px 0;text-align:right;color:#DC2626">${fmt$2(m.invested)}</td></tr>
-    ${m.sellingCosts > 0 ? `<tr><td style="padding:2px 0 4px 14px;font-size:10px;color:#888;font-style:italic">↳ of which Selling Costs (post-sale): commission, post-sale repairs, marketing</td><td style="padding:2px 0 4px;text-align:right;font-size:10px;font-style:italic;color:#888">${fmt$2(m.sellingCosts)}</td></tr>` : ""}
-    <tr style="border-top:2px solid ${m.grossProfit >= 0 ? "#166534" : "#DC2626"}"><td style="padding:6px 0;font-weight:800;color:${m.grossProfit >= 0 ? "#166534" : "#DC2626"}">Net Profit / (Loss)</td><td style="padding:6px 0;text-align:right;font-weight:900;font-size:14px;color:${m.grossProfit >= 0 ? "#166534" : "#DC2626"}">${fmt$2(m.grossProfit)}</td></tr>
+<!-- Profit & Loss (sold only) -->
+<section>
+  <div class="section-title">Profit & Loss</div>
+  <table class="pl-table">
+    <tr><td>Net Sale</td><td class="amt">${fmt$2(saleNet)}</td></tr>
+    <tr><td>− Total Invested <span style="font-size:9px;color:#999">complete cost basis (all rows above)</span></td><td class="amt" style="color:#DC2626">${fmt$2(totalInvested)}</td></tr>
+    ${m.sellingCosts > 0 ? `<tr><td style="padding-left:14px;color:#888;font-style:italic;font-size:10px">↳ of which Post-sale Selling Costs <span style="font-size:9px">commission, post-sale repairs, marketing — already in Total Invested above</span></td><td class="amt" style="font-style:italic;color:#888;font-size:10px">${fmt$2(m.sellingCosts)}</td></tr>` : ""}
+    <tr class="pl-total"><td>= Net Profit / (Loss)</td><td class="amt" style="color:${profitColor}">${dollarOrDash(m.grossProfit)}</td></tr>
+    <tr><td>Gross Margin %</td><td class="amt" style="color:${marginColor}">${pctOrDash(m.margin)}</td></tr>
+    <tr><td>Annualized ROI</td><td class="amt">${pctOrDash(m.annROI)}</td></tr>
+    <tr><td>Days Held</td><td class="amt" style="color:${daysColor}">${m.days || "—"}</td></tr>
+    <tr><td>Deal Grade</td><td class="amt">${m.grade ? `<b style="font-size:14px;color:${m.grade.color}">${esc(m.grade.grade.replace(/\+$/, ""))}</b> <span style="font-size:9.5px;color:${m.grade.color}">${esc(m.grade.label)}</span>` : `<span style="color:#999">— Pending</span>`}</td></tr>
   </table>
-  <div class="summary-grid">
-    <div><div class="summary-label">Gross Margin %</div><div class="summary-value">${m.margin != null ? (m.margin * 100).toFixed(1) + "%" : "—"}</div></div>
-    <div><div class="summary-label">Ann. ROI</div><div class="summary-value">${m.annROI != null ? (m.annROI * 100).toFixed(1) + "%" : "—"}</div></div>
-    <div><div class="summary-label">Days Held</div><div class="summary-value">${m.days || "—"}</div></div>
-    <div><div class="summary-label">Grade</div><div class="summary-value" style="color:${m.grade ? m.grade.color : "#111"}">${m.grade ? m.grade.grade : "—"}</div></div>
-  </div>
-  <div style="margin-top:12px;font-size:11px;color:#6b7280">
-    MA State Tax (8%): ${fmt$2(m.grossProfit > 0 ? m.grossProfit * MA_CORP_TAX_RATE : 0)} ·
-    Federal Tax (21%): ${fmt$2(m.grossProfit > 0 ? m.grossProfit * FEDERAL_CORP_TAX_RATE : 0)} ·
-    Total Est. Tax: ${fmt$2(m.grossProfit > 0 ? m.grossProfit * (MA_CORP_TAX_RATE + FEDERAL_CORP_TAX_RATE) : 0)}
-  </div>
-</div>` : `<div class="summary-box">
-  <div class="section-title">Status: Not Yet Sold</div>
-  <div class="summary-grid">
-    <div><div class="summary-label">Total Invested</div><div class="summary-value">${fmt$2(m.invested)}</div></div>
-    <div><div class="summary-label">Break-Even Price</div><div class="summary-value" style="color:#D97706">${fmt$2(m.breakEven.minSalePrice)}</div></div>
-    <div><div class="summary-label">Days Held</div><div class="summary-value">${m.days || "—"}</div></div>
-  </div>
-</div>`}
+  ${m.grossProfit > 0 ? `<div style="margin-top:6px;font-size:9.5px;color:#6B7280">Est. Tax: MA State (8%) ${fmt$2(m.grossProfit * MA_CORP_TAX_RATE)} · Federal (21%) ${fmt$2(m.grossProfit * FEDERAL_CORP_TAX_RATE)} · Total ${fmt$2(m.grossProfit * (MA_CORP_TAX_RATE + FEDERAL_CORP_TAX_RATE))}</div>` : ""}
+</section>
+` : ""}
 
+<!-- Footer -->
 <div class="footer">
-  Generated by Auto Trade Hub · © 2025 Sayarah Inc · Atlantic Car Connect — A Sayarah Inc Company · ${today} · Invoice ${invoiceNum}
+  <div class="internal-label">INTERNAL USE ONLY — NOT FOR CUSTOMER DISTRIBUTION</div>
+  <div class="footer-meta">Auto Trade Hub · © 2025 Sayarah Inc · Atlantic Car Connect · Generated ${today}</div>
 </div>
+
 </body></html>`;
 
   const printWindow = window.open("", "_blank");
