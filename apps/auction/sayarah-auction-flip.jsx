@@ -798,6 +798,147 @@ function MiniBar({ value, max, color }) {
 
 function SectionTitle({ children }) { return <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.red, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>{children}</div>; }
 
+// ═══════════════════════════════════════════════════════════════
+// VEHICLE PHOTOS — thumbnail + editor (drag-drop upload, reorder, remove)
+// ═══════════════════════════════════════════════════════════════
+// Placeholder icon shown when a vehicle has no photo. Kept inline so the
+// inventory row never breaks layout if uploads are missing or still pending.
+function VehicleThumb({ photos, width = 160, height = 110 }) {
+  const first = Array.isArray(photos) && photos.length > 0 ? photos[0] : null;
+  if (first && first.url) {
+    return (
+      <img
+        src={first.url}
+        alt=""
+        loading="lazy"
+        style={{ width, height, objectFit: "cover", borderRadius: 8, border: `1px solid ${BRAND.grayLight}`, background: "#F5F5F5", display: "block", flexShrink: 0 }}
+      />
+    );
+  }
+  return (
+    <div style={{ width, height, borderRadius: 8, background: "#F3F4F6", border: `1px solid ${BRAND.grayLight}`, display: "flex", alignItems: "center", justifyContent: "center", color: "#9CA3AF", flexShrink: 0 }}>
+      <svg width={Math.round(width / 4)} height={Math.round(width / 4)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9L18 10l-2.7-3.6A1.5 1.5 0 0 0 14.1 6H9.9a1.5 1.5 0 0 0-1.2.6L6 10l-2.5 1.1C2.7 11.3 2 12.1 2 13v3c0 .6.4 1 1 1h2"/>
+        <circle cx="7" cy="17" r="2"/>
+        <circle cx="17" cy="17" r="2"/>
+      </svg>
+    </div>
+  );
+}
+
+// Inline editor for a vehicle's photo set. Uploads go to Firebase Storage
+// under vehicles/{vehicleId}/photos/{photoId}.{ext}; the vehicle record
+// stores the URL + storage path so deletes can reclaim storage.
+// First photo in the array is treated as primary everywhere in the app.
+function PhotoEditor({ vehicleId, photos, onChange, readOnly = false, compact = false }) {
+  const safePhotos = Array.isArray(photos) ? photos : [];
+  const [uploading, setUploading] = useState(0);
+  const [error, setError] = useState("");
+  const [dragOver, setDragOver] = useState(false);
+  const inputId = `photo-upload-${vehicleId || "new"}`;
+
+  const handleFiles = async (fileList) => {
+    const files = [...(fileList || [])];
+    if (files.length === 0) return;
+    const images = files.filter(f => f.type && f.type.startsWith("image/"));
+    if (images.length === 0) { setError("Images only (JPG, PNG, WebP)."); return; }
+    setError("");
+    const appended = [];
+    for (const f of images) {
+      if (f.size > 10 * 1024 * 1024) {
+        setError(`${f.name} is larger than 10 MB — skipped.`);
+        continue;
+      }
+      const photoId = genId();
+      const ext = (f.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const path = `vehicles/${vehicleId || "pending"}/photos/${photoId}.${ext || "jpg"}`;
+      setUploading(u => u + 1);
+      try {
+        const url = await uploadFile(path, f);
+        appended.push({ id: photoId, url, path, name: f.name, size: f.size, uploadedAt: new Date().toISOString() });
+      } catch (e) {
+        setError(`Upload failed: ${e.message || e}`);
+      } finally {
+        setUploading(u => u - 1);
+      }
+    }
+    if (appended.length > 0) onChange([...safePhotos, ...appended]);
+  };
+
+  const remove = async (photo) => {
+    if (photo.path) { try { await deleteFile(photo.path); } catch {} }
+    onChange(safePhotos.filter(p => p.id !== photo.id));
+  };
+  const move = (idx, dir) => {
+    const tgt = idx + dir;
+    if (tgt < 0 || tgt >= safePhotos.length) return;
+    const next = [...safePhotos];
+    [next[idx], next[tgt]] = [next[tgt], next[idx]];
+    onChange(next);
+  };
+
+  const thumbSize = compact ? 80 : 110;
+
+  return (
+    <div>
+      {!readOnly && (
+        <label
+          htmlFor={inputId}
+          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={e => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files); }}
+          style={{
+            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+            padding: compact ? 14 : 22, borderRadius: 10,
+            border: `2px dashed ${dragOver ? BRAND.red : BRAND.grayLight}`,
+            background: dragOver ? "#FEF2F2" : "#FAFAFA",
+            cursor: uploading > 0 ? "wait" : "pointer", transition: "all 0.15s", minHeight: compact ? 80 : 110,
+          }}>
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke={dragOver ? BRAND.red : BRAND.gray} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 6 }}>
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <div style={{ fontSize: 12, fontWeight: 700, color: dragOver ? BRAND.red : BRAND.grayDark }}>
+            {uploading > 0 ? `Uploading ${uploading}…` : "Drop photos here or click to upload"}
+          </div>
+          <div style={{ fontSize: 10, color: BRAND.gray, marginTop: 3 }}>JPG, PNG, WebP · max 10 MB each · drop multiple</div>
+          <input
+            id={inputId}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={e => { handleFiles(e.target.files); e.target.value = ""; }}
+            style={{ display: "none" }}
+          />
+        </label>
+      )}
+      {error && <div style={{ background: "#FEF2F2", color: "#DC2626", padding: "6px 10px", borderRadius: 6, fontSize: 11, marginTop: 8, fontWeight: 600 }}>{error}</div>}
+      {safePhotos.length > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${thumbSize + 20}px, 1fr))`, gap: 8, marginTop: 10 }}>
+          {safePhotos.map((photo, i) => (
+            <div key={photo.id} style={{ position: "relative", borderRadius: 8, overflow: "hidden", aspectRatio: "4/3", border: i === 0 ? `2px solid ${BRAND.red}` : `1px solid ${BRAND.grayLight}`, background: "#F5F5F5" }}>
+              <img src={photo.url} alt="" loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+              {i === 0 && (
+                <div style={{ position: "absolute", top: 4, left: 4, background: BRAND.red, color: "#fff", fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 4, letterSpacing: "0.05em" }}>PRIMARY</div>
+              )}
+              {!readOnly && (
+                <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, display: "flex", justifyContent: "space-between", background: "rgba(0,0,0,0.55)", padding: 4, gap: 4 }}>
+                  <div style={{ display: "flex", gap: 2 }}>
+                    <button title="Move left" onClick={(e) => { e.stopPropagation(); move(i, -1); }} disabled={i === 0} style={{ background: "rgba(255,255,255,0.18)", border: "none", color: i === 0 ? "#666" : "#fff", cursor: i === 0 ? "not-allowed" : "pointer", borderRadius: 4, padding: "2px 6px", fontSize: 11, lineHeight: 1 }}>←</button>
+                    <button title="Move right" onClick={(e) => { e.stopPropagation(); move(i, 1); }} disabled={i === safePhotos.length - 1} style={{ background: "rgba(255,255,255,0.18)", border: "none", color: i === safePhotos.length - 1 ? "#666" : "#fff", cursor: i === safePhotos.length - 1 ? "not-allowed" : "pointer", borderRadius: 4, padding: "2px 6px", fontSize: 11, lineHeight: 1 }}>→</button>
+                  </div>
+                  <button title="Remove" onClick={(e) => { e.stopPropagation(); remove(photo); }} style={{ background: "rgba(220,38,38,0.85)", border: "none", color: "#fff", cursor: "pointer", borderRadius: 4, padding: "2px 7px", fontSize: 11, fontWeight: 800, lineHeight: 1 }}>×</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Inline editor for a sale's payment schedule. Each row is a partial payment
 // (deposit, balance, refund, etc.). Summary shows paid vs outstanding vs the
 // contracted gross price. If no rows are added, the sale is treated as fully
@@ -1450,7 +1591,7 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
   const canEdit = canEditVehicles(role);
   const canDelete = canDeleteVehicles(role);
 
-  const empty = () => ({ id: genId(), stockNum: String(data.nextStockNum).padStart(3, "0"), year: "", make: "", model: "", trim: "", vin: "", color: "", odometer: "", purchaseDate: "", auctionSource: "copart", useCustomPremium: false, buyerPremiumPct: "", transportCost: "", repairCost: "", otherExpenses: "", titleStatus: "clean", status: "In Recon", purchasePrice: "", reconBudget: "", notes: "" });
+  const empty = () => ({ id: genId(), stockNum: String(data.nextStockNum).padStart(3, "0"), year: "", make: "", model: "", trim: "", vin: "", color: "", odometer: "", purchaseDate: "", auctionSource: "copart", useCustomPremium: false, buyerPremiumPct: "", transportCost: "", repairCost: "", otherExpenses: "", titleStatus: "clean", status: "In Recon", purchasePrice: "", reconBudget: "", notes: "", photos: [], estRetailValue: "" });
   const [form, setForm] = useState(empty());
   const [formError, setFormError] = useState("");
   const upd = (k, v) => { setFormError(""); setForm(f => ({ ...f, [k]: v })); };
@@ -1473,6 +1614,7 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
       [form.otherExpenses, "Other expenses"],
       [form.buyerPremiumPct, "Buyer premium %", { max: 100 }],
       [form.reconBudget, "Recon budget"],
+      [form.estRetailValue, "Est. retail value"],
     ]);
     if (moneyErr) { setFormError(moneyErr); return; }
     setFormError("");
@@ -1551,80 +1693,125 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
       </div>
 
       {filtered.length === 0 ? <Empty icon={<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9L18 10l-2.7-3.6A1.5 1.5 0 0 0 14.1 6H9.9a1.5 1.5 0 0 0-1.2.6L6 10l-2.5 1.1C2.7 11.3 2 12.1 2 13v3c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/></svg>} title="No vehicles" sub="Add your first car" /> : (
-        <div className="inventory-grid" style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}>
-          {filtered.map(v => {
+        // Copart/IAA-style row layout: one vehicle per row, left thumbnail
+        // + columns. Mobile collapses to photo + summary card via the
+        // .inv-row CSS rules in the global style block at the top of App.
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, background: BRAND.white, border: `1px solid ${BRAND.grayLight}`, borderRadius: 10, overflow: "hidden" }}>
+          {filtered.map((v, idx) => {
             const m = calcVehicleFullMetrics(v, data.sales.find(s => s.stockNum === v.stockNum), data.holdCosts, data.expenses);
             const titleInfo = TITLE_STATUS[v.titleStatus] || TITLE_STATUS.clean;
-            const vExpenses = data.expenses.filter(e => e.stockNum === v.stockNum);
             const vSale = data.sales.find(s => s.stockNum === v.stockNum);
+            const striped = idx % 2 === 0 ? BRAND.white : "#FAFAFA";
+            const edgeColor = v.status === "Sold" ? BRAND.green : m.aging ? m.aging.color : BRAND.red;
             return (
-              <Card key={v.id} style={{ cursor: "pointer", borderLeft: `4px solid ${v.status === "Sold" ? BRAND.green : m.aging ? m.aging.color : BRAND.red}`, padding: 14, transition: "box-shadow 0.2s" }} onClick={() => openDetail(v)}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
-                  <div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ color: BRAND.red, fontSize: 10, fontWeight: 800, ...S.mono }}>#{v.stockNum}</span>
-                      <Badge color={titleInfo.color} bg={titleInfo.bg}>{titleInfo.label}</Badge>
-                    </div>
-                    <div style={{ fontSize: 16, fontWeight: 800, color: BRAND.black, marginTop: 3 }}>
-                      {v.year} {v.make} {v.model} {v.trim && <span style={{ color: BRAND.gray, fontWeight: 400, fontSize: 13 }}>{v.trim}</span>}
-                    </div>
-                    {v.color && <div style={{ fontSize: 11, color: BRAND.gray, marginTop: 1 }}>{v.color}{v.odometer ? ` · ${parseInt(v.odometer).toLocaleString()} mi` : ""}</div>}
+              <div
+                key={v.id}
+                className="inv-row"
+                onClick={() => openDetail(v)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetail(v); } }}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "172px 1fr 100px 120px 120px 120px 90px 130px 90px",
+                  gap: 12,
+                  alignItems: "center",
+                  padding: "10px 14px",
+                  background: striped,
+                  borderLeft: `4px solid ${edgeColor}`,
+                  cursor: "pointer",
+                  transition: "background 0.12s",
+                  minHeight: 124,
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "#F3F4F6"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = striped; }}
+              >
+                {/* 1. Photo */}
+                <div className="inv-photo"><VehicleThumb photos={v.photos} width={160} height={110} /></div>
+
+                {/* 2+3. Stock + Vehicle (stacked, takes flexible width) */}
+                <div className="inv-vehicle" style={{ minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4, flexWrap: "wrap" }}>
+                    <span style={{ color: BRAND.red, fontSize: 11, fontWeight: 800, ...S.mono }}>#{v.stockNum}</span>
+                    <Badge color={titleInfo.color} bg={titleInfo.bg}>{titleInfo.label}</Badge>
                   </div>
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
-                    <StatusBadge status={v.status} />
-                    {m.aging && <Badge color={m.aging.color} bg={m.aging.bg}>{m.aging.icon} {m.days}d</Badge>}
+                  <div style={{ fontSize: 15, fontWeight: 800, color: BRAND.black, lineHeight: 1.25, overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {v.year} {v.make} {v.model} {v.trim && <span style={{ color: BRAND.gray, fontWeight: 500, fontSize: 13 }}>{v.trim}</span>}
+                  </div>
+                  <div style={{ fontSize: 11, color: BRAND.gray, marginTop: 3, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {v.color && <span>{v.color}</span>}
+                    {v.vin && <span style={S.mono}>VIN: {v.vin}</span>}
                   </div>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 4, marginTop: 10, fontSize: 11 }}>
-                  <div><span style={{ color: BRAND.gray }}>Invested</span><div style={{ fontWeight: 700, color: BRAND.black, ...S.mono }}>{fmt$(m.invested)}</div></div>
+                {/* 4. Odometer */}
+                <div className="inv-col">
+                  <div style={{ fontSize: 10, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>Odometer</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: BRAND.black, ...S.mono }}>{v.odometer ? `${parseInt(v.odometer).toLocaleString()} mi` : "—"}</div>
+                </div>
+
+                {/* 5. Invested */}
+                <div className="inv-col">
+                  <div style={{ fontSize: 10, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>Invested</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: BRAND.black, ...S.mono }}>{fmt$(m.invested)}</div>
+                </div>
+
+                {/* 6. Break-Even OR Profit */}
+                <div className="inv-col">
                   {m.grossProfit != null ? (
-                    <div><span style={{ color: BRAND.gray }}>Profit</span><div style={{ fontWeight: 800, color: m.grossProfit >= 0 ? BRAND.green : "#DC2626", ...S.mono }}>{fmt$(m.grossProfit)}</div></div>
+                    <>
+                      <div style={{ fontSize: 10, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>Profit</div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: m.grossProfit >= 0 ? BRAND.green : "#DC2626", ...S.mono }}>{fmt$(m.grossProfit)}</div>
+                    </>
                   ) : (
-                    <div><span style={{ color: BRAND.gray }}>Break-Even</span><div style={{ fontWeight: 700, color: "#D97706", ...S.mono }}>{fmt$(m.breakEven.minSalePrice)}</div></div>
+                    <>
+                      <div style={{ fontSize: 10, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>Break-Even</div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: "#D97706", ...S.mono }}>{fmt$(m.breakEven.minSalePrice)}</div>
+                    </>
                   )}
-                  <div><span style={{ color: BRAND.gray }}>Risk</span><div style={{ fontWeight: 700, color: m.risk.color }}>{m.risk.level}</div></div>
                 </div>
 
-                {m.grossProfit != null && (
-                  <div style={{ display: "flex", gap: 10, marginTop: 8, alignItems: "center" }}>
-                    <GradeBadge grade={m.grade} />
-                    <span style={{ fontSize: 10, color: BRAND.gray }}>{fmt$2(m.velocity)}/d · {fmtPct(m.margin)} margin · {fmtPct(m.annROI)} ann. ROI</span>
-                  </div>
-                )}
-
-                {m.grossProfit == null && v.reconBudget && (
-                  <div style={{ marginTop: 8 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: BRAND.gray, marginBottom: 2 }}>
-                      <span>Recon: {fmt$(p(v.repairCost))} / {fmt$(p(v.reconBudget))}</span>
-                      <span style={{ color: p(v.repairCost) > p(v.reconBudget) ? "#DC2626" : BRAND.green, fontWeight: 700 }}>
-                        {p(v.repairCost) > p(v.reconBudget) ? `Over by ${fmt$(p(v.repairCost) - p(v.reconBudget))}` : `${fmt$(p(v.reconBudget) - p(v.repairCost))} left`}
-                      </span>
-                    </div>
-                    <MiniBar value={p(v.repairCost)} max={p(v.reconBudget)} color={p(v.repairCost) > p(v.reconBudget) ? "#DC2626" : BRAND.green} />
-                  </div>
-                )}
-
-                {/* Aging price suggestion for unsold vehicles 30+ days */}
-                {v.status !== "Sold" && m.days >= 30 && (() => {
-                  const sp = calcSuggestedPrice(v, data.holdCosts);
-                  return (
-                    <div style={{ marginTop: 8, background: "#FFFBEB", borderRadius: 6, padding: "6px 8px", border: "1px solid #FDE68A", fontSize: 10 }}>
-                      <div style={{ fontWeight: 700, color: "#92400E", marginBottom: 2 }}>Price Suggestion (burn: {fmt$2(sp.dailyBurn)}/day)</div>
-                      <div style={{ display: "flex", gap: 10, color: "#78350F" }}>
-                        <span>Break-even: <b>{fmt$(sp.breakEven)}</b></span>
-                        <span>10% margin: <b style={{ color: BRAND.green }}>{fmt$(sp.withMargin10)}</b></span>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* Quick summary of expenses/sale on card */}
-                <div style={{ display: "flex", gap: 10, marginTop: 8, fontSize: 10, color: BRAND.gray }}>
-                  {vExpenses.length > 0 && <span>{vExpenses.length} expense{vExpenses.length > 1 ? "s" : ""} · {fmt$(vExpenses.reduce((s, e) => s + p(e.amount), 0))}</span>}
-                  {vSale && <span style={{ color: BRAND.green, fontWeight: 700 }}>Sold {fmt$(p(vSale.grossPrice))}</span>}
+                {/* 7. Est. Retail */}
+                <div className="inv-col">
+                  <div style={{ fontSize: 10, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>Est. Retail</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: p(v.estRetailValue) ? BRAND.blue : BRAND.gray, ...S.mono }}>{p(v.estRetailValue) ? fmt$(p(v.estRetailValue)) : "—"}</div>
                 </div>
-              </Card>
+
+                {/* 8. Risk */}
+                <div className="inv-col">
+                  <div style={{ fontSize: 10, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>Risk</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: m.risk.color }}>{m.risk.level}</div>
+                </div>
+
+                {/* 9. Status + days */}
+                <div className="inv-col status-col" style={{ alignItems: "flex-start" }}>
+                  <StatusBadge status={v.status} />
+                  <div style={{ fontSize: 10, color: BRAND.gray, marginTop: 5, ...S.mono }}>
+                    {m.days > 0 ? `${m.days}D` : "0D"}
+                    {m.aging && v.status !== "Sold" && <span style={{ color: m.aging.color, marginLeft: 4, fontWeight: 700 }}>· {m.aging.label}</span>}
+                  </div>
+                </div>
+
+                {/* 10. Actions */}
+                <div className="inv-actions" style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                  <button
+                    title="View"
+                    onClick={(e) => { e.stopPropagation(); openDetail(v); }}
+                    style={{ background: "transparent", border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, padding: "6px 8px", cursor: "pointer", color: BRAND.grayDark, display: "flex", alignItems: "center" }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </button>
+                  {canEdit && (
+                    <button
+                      title="Edit"
+                      onClick={(e) => { e.stopPropagation(); openEditFromDetail(v); }}
+                      style={{ background: "transparent", border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, padding: "6px 8px", cursor: "pointer", color: BRAND.grayDark, display: "flex", alignItems: "center" }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                    </button>
+                  )}
+                </div>
+              </div>
             );
           })}
         </div>
@@ -1678,7 +1865,14 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
               </div>
               {form.useCustomPremium && <Input label="Custom Premium %" value={form.buyerPremiumPct} onChange={v => upd("buyerPremiumPct", v)} type="number" step="0.1" />}
               <Input label="Recon Budget" value={form.reconBudget} onChange={v => upd("reconBudget", v)} type="number" step="0.01" placeholder="Target max" />
+              <Input label="Est. Retail Value" value={form.estRetailValue} onChange={v => upd("estRetailValue", v)} type="number" step="0.01" placeholder="Target sale price" />
               <Select label="Status" value={form.status} onChange={v => upd("status", v)} options={STATUS_OPTIONS} />
+            </div>
+            {/* Photos — uploaded to Firebase Storage under vehicles/{id}/photos/.
+                First photo becomes the inventory row thumbnail. */}
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6 }}>Photos</div>
+              <PhotoEditor vehicleId={form.id} photos={form.photos || []} onChange={next => upd("photos", next)} compact />
             </div>
             <div style={{ marginTop: 10, padding: "10px 12px", background: "#EFF6FF", borderRadius: 8, fontSize: 11, color: "#1E40AF", border: "1px solid #BFDBFE" }}>
               <b>Heads up:</b> All costs other than Purchase Price now live in <b>Tracked Expenses</b> on the vehicle detail screen. Choose the appropriate category (Transport/Towing, Repair/Recon, Storage, etc.) when you add each line item. This replaces the old "Transport Cost / Repair Cost / Other Expenses" fields so every dollar is in one place.
@@ -2117,6 +2311,26 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
               </div>
             );
           })()}
+
+          {/* Photos — editable when admin, read-only preview otherwise */}
+          <Card style={{ marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.red, textTransform: "uppercase", letterSpacing: "0.08em" }}>Photos</div>
+              <div style={{ fontSize: 10, color: BRAND.gray }}>{(v.photos || []).length} photo{(v.photos || []).length === 1 ? "" : "s"}{(v.photos || []).length > 0 && " · first is primary"}</div>
+            </div>
+            <PhotoEditor
+              vehicleId={v.id}
+              photos={v.photos || []}
+              onChange={(next) => {
+                setData(d => ({
+                  ...d,
+                  vehicles: d.vehicles.map(vh => vh.id === v.id ? { ...vh, photos: next } : vh),
+                }));
+                logActivity(currentUser, "edited_vehicle_photos", `Updated photos on #${v.stockNum} ${v.year} ${v.make} ${v.model} (${next.length} photo${next.length === 1 ? "" : "s"})`, { stockNum: v.stockNum });
+              }}
+              readOnly={!admin && !canEditProp}
+            />
+          </Card>
 
           {/* Cost Breakdown */}
           <Card style={{ marginBottom: 16 }}>
@@ -4803,6 +5017,16 @@ function AppInner() {
     <div style={{ fontFamily: "'DM Sans', sans-serif", background: theme.cream, minHeight: "100vh", color: theme.black }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
       <style>{`
+@media(max-width:1100px){
+  .inv-row{
+    grid-template-columns:140px 1fr 110px 110px 90px 120px!important;
+    grid-template-areas:"photo vehicle invested breakeven risk status" "photo vehicle odo est est actions"!important;
+    min-height:110px!important;
+  }
+  .inv-row .inv-photo{grid-area:photo}
+  .inv-row .inv-vehicle{grid-area:vehicle}
+  .inv-row .inv-actions{grid-area:actions;justify-content:flex-end}
+}
 @media(max-width:768px){
   .app-header-bar{padding:0 12px!important}
   .app-header-inner{height:auto!important;flex-wrap:wrap!important;padding:8px 0!important}
@@ -4818,6 +5042,18 @@ function AppInner() {
   .report-period-bar{flex-direction:column!important;align-items:flex-start!important}
   .login-hero{display:none!important}
   .login-form-side{flex:1 1 100%!important}
+  .inv-row{
+    grid-template-columns:96px 1fr auto!important;
+    grid-template-areas:"photo vehicle status"!important;
+    gap:10px!important;
+    min-height:auto!important;
+    padding:10px!important;
+  }
+  .inv-row .inv-photo img, .inv-row .inv-photo > div{width:96px!important;height:72px!important}
+  .inv-row .inv-col{display:none!important}
+  .inv-row .inv-actions{display:none!important}
+  .inv-row .inv-vehicle{grid-area:vehicle;min-width:0}
+  .inv-row .inv-col.status-col{display:flex!important;flex-direction:column;align-items:flex-end;grid-area:status}
 }
 @media(max-width:480px){
   .app-header-actions .action-label{display:none!important}
