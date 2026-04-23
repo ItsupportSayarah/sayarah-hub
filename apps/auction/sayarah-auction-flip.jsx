@@ -1591,7 +1591,7 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
   const canEdit = canEditVehicles(role);
   const canDelete = canDeleteVehicles(role);
 
-  const empty = () => ({ id: genId(), stockNum: String(data.nextStockNum).padStart(3, "0"), year: "", make: "", model: "", trim: "", vin: "", color: "", odometer: "", purchaseDate: "", auctionSource: "copart", useCustomPremium: false, buyerPremiumPct: "", transportCost: "", repairCost: "", otherExpenses: "", titleStatus: "clean", status: "In Recon", purchasePrice: "", reconBudget: "", notes: "", photos: [], estRetailValue: "" });
+  const empty = () => ({ id: genId(), stockNum: String(data.nextStockNum).padStart(3, "0"), year: "", make: "", model: "", trim: "", vin: "", color: "", odometer: "", purchaseDate: "", auctionSource: "copart", useCustomPremium: false, buyerPremiumPct: "", transportCost: "", repairCost: "", otherExpenses: "", titleStatus: "clean", status: "In Recon", purchasePrice: "", reconBudget: "", notes: "", photos: [], estRetailValue: "", location: "", zipCode: "" });
   const [form, setForm] = useState(empty());
   const [formError, setFormError] = useState("");
   const upd = (k, v) => { setFormError(""); setForm(f => ({ ...f, [k]: v })); };
@@ -1621,7 +1621,7 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
     if (editing) {
       if (!canEdit) return;
       const before = data.vehicles.find(v => v.id === editing);
-      const diff = auditDiff(before, form, ["status", "purchasePrice", "auctionSource", "titleStatus", "reconBudget", "vin", "odometer", "color", "trim", "notes"]);
+      const diff = auditDiff(before, form, ["status", "purchasePrice", "auctionSource", "titleStatus", "reconBudget", "estRetailValue", "location", "zipCode", "vin", "odometer", "color", "trim", "notes"]);
       setData(d => ({ ...d, vehicles: d.vehicles.map(v => v.id === editing ? form : v) }));
       const desc = `Edited vehicle #${form.stockNum} ${form.year} ${form.make} ${form.model}` + (diff.summary ? ` — ${diff.summary}` : "");
       logActivity(currentUser, "edited_vehicle", desc, { stockNum: form.stockNum, changes: diff.changes });
@@ -1684,8 +1684,8 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
             <option value="aging">Most Aged</option>
           </select>
           <Btn variant="secondary" onClick={() => {
-            const headers = ["Stock#","Year","Make","Model","Trim","VIN","Color","Status","Purchase Price","Transport","Repair","Total Invested","Purchase Date"];
-            const rows = filtered.map(v => [v.stockNum, v.year, v.make, v.model, v.trim||"", v.vin||"", v.color||"", v.status, v.purchasePrice||"", v.transportCost||"", v.repairCost||"", calcTotalInvested(v, data.expenses).toFixed(2), v.purchaseDate||""]);
+            const headers = ["Stock#","Year","Make","Model","Trim","VIN","Color","Status","Location","ZIP","Purchase Price","Transport","Repair","Total Invested","Purchase Date"];
+            const rows = filtered.map(v => [v.stockNum, v.year, v.make, v.model, v.trim||"", v.vin||"", v.color||"", v.status, v.location||"", v.zipCode||"", v.purchasePrice||"", v.transportCost||"", v.repairCost||"", calcTotalInvested(v, data.expenses).toFixed(2), v.purchaseDate||""]);
             exportCSV(`vehicles_${new Date().toISOString().slice(0,10)}.csv`, headers, rows);
           }}>Export CSV</Btn>
           <Btn onClick={openNew}>+ Add Vehicle</Btn>
@@ -1742,6 +1742,17 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
                     {v.color && <span>{v.color}</span>}
                     {v.vin && <span style={S.mono}>VIN: {v.vin}</span>}
                   </div>
+                  {(v.location || v.zipCode) && (
+                    <div style={{ fontSize: 11, color: BRAND.gray, marginTop: 3, display: "flex", alignItems: "center", gap: 4 }}>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                        <circle cx="12" cy="10" r="3"/>
+                      </svg>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {v.location}{v.location && v.zipCode ? " · " : ""}{v.zipCode && <span style={S.mono}>{v.zipCode}</span>}
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {/* 4. Odometer */}
@@ -1866,6 +1877,8 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
               {form.useCustomPremium && <Input label="Custom Premium %" value={form.buyerPremiumPct} onChange={v => upd("buyerPremiumPct", v)} type="number" step="0.1" />}
               <Input label="Recon Budget" value={form.reconBudget} onChange={v => upd("reconBudget", v)} type="number" step="0.01" placeholder="Target max" />
               <Input label="Est. Retail Value" value={form.estRetailValue} onChange={v => upd("estRetailValue", v)} type="number" step="0.01" placeholder="Target sale price" />
+              <Input label="Location" value={form.location} onChange={v => upd("location", v)} placeholder="e.g. Copart North Boston, MA" />
+              <Input label="ZIP / Postal Code" value={form.zipCode} onChange={v => upd("zipCode", v)} placeholder="02101" />
               <Select label="Status" value={form.status} onChange={v => upd("status", v)} options={STATUS_OPTIONS} />
             </div>
             {/* Photos — uploaded to Firebase Storage under vehicles/{id}/photos/.
