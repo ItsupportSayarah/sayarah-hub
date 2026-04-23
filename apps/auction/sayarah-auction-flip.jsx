@@ -2484,12 +2484,15 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
             />
           </Card>
 
-          {/* Cost Breakdown — explicit roll-up. Every line is additive so
-              the Total Cost figure at the bottom equals the sum of
-              what's shown above it. Legacy acquisition-cost fields are
-              hidden when zero so they don't clutter new records. Tracked
-              expenses are broken down by category so users can see where
-              every dollar went and spot miscategorizations. */}
+          {/* Cost Breakdown — the bottom "Total Cost" row renders
+              m.totalCost (the one number every other calculation uses) so
+              the stat card at top, this row, and the P&L Total Cost line
+              always agree. If the sum of the visible line items differs
+              from m.totalCost by more than a penny a red diagnostic row
+              surfaces the drift — previously this could hide silently
+              (individual expenses rendered fine but the total stayed at
+              zero because the stockNum filter in calcTotalCost rejected
+              them). */}
           <Card style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.red, textTransform: "uppercase", marginBottom: 10, letterSpacing: "0.08em" }}>Cost Breakdown</div>
             {(() => {
@@ -2503,9 +2506,8 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
                 const c = e.category || "Uncategorized";
                 byCat[c] = (byCat[c] || 0) + p(e.amount);
               });
-              const legacyTotal = tCost + rCost + oCost;
-              const trackedTotal = Object.values(byCat).reduce((s, x) => s + x, 0);
-              const grandTotal = pp + auctFees + legacyTotal + trackedTotal;
+              const visibleSum = pp + auctFees + tCost + rCost + oCost + Object.values(byCat).reduce((s, x) => s + x, 0);
+              const drift = Math.abs(visibleSum - (m.totalCost || 0));
               const line = (label, amount, sub, subtle) => (
                 <tr style={{ borderBottom: `1px dashed ${BRAND.grayLight}` }}>
                   <td style={{ padding: "6px 0", color: subtle ? BRAND.gray : BRAND.grayDark, fontSize: 12 }}>
@@ -2534,8 +2536,16 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
                     ))}
                     <tr style={{ borderTop: `2px solid ${BRAND.red}` }}>
                       <td style={{ padding: "10px 0 4px", fontWeight: 900, textTransform: "uppercase", fontSize: 12, color: BRAND.red, letterSpacing: "0.05em" }}>Total Cost</td>
-                      <td style={{ padding: "10px 0 4px", textAlign: "right", fontWeight: 900, fontSize: 16, color: BRAND.black, ...S.mono }}>{fmt$2(grandTotal)}</td>
+                      <td style={{ padding: "10px 0 4px", textAlign: "right", fontWeight: 900, fontSize: 16, color: BRAND.black, ...S.mono }}>{fmt$2(m.totalCost)}</td>
                     </tr>
+                    {drift > 0.01 && (
+                      <tr>
+                        <td colSpan={2} style={{ padding: "8px 10px", background: "#FEE2E2", color: "#991B1B", fontSize: 11, fontWeight: 700, borderRadius: 6 }}>
+                          ⚠ The visible lines sum to {fmt$2(visibleSum)} but Total Cost is {fmt$2(m.totalCost || 0)} — off by {fmt$2(drift)}.
+                          Likely cause: one or more expenses have a stock # that doesn't match this vehicle (#{v.stockNum}). Open the Expenses tab, find the mismatched rows, and fix the stock #.
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               );
@@ -2827,12 +2837,8 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
                           <td style={{ padding: "6px 0", fontWeight: 800, textTransform: "uppercase", fontSize: 11, color: m.grossProfit >= 0 ? BRAND.green : "#DC2626" }}>Net Profit / (Loss)</td>
                           <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 900, fontSize: 14, color: m.grossProfit >= 0 ? BRAND.green : "#DC2626", ...S.mono }}>{fmt$2(m.grossProfit)}</td>
                         </tr>
-                        {m.margin != null && (
-                          <tr><td style={{ padding: "2px 0", fontSize: 11, color: BRAND.gray }}>Gross Margin %</td><td style={{ padding: "2px 0", textAlign: "right", fontSize: 11, fontWeight: 700, color: m.margin >= 0 ? BRAND.green : "#DC2626", ...S.mono }}>{(m.margin * 100).toFixed(1)}%</td></tr>
-                        )}
-                        {m.annROI != null && (
-                          <tr><td style={{ padding: "2px 0", fontSize: 11, color: BRAND.gray }}>Annualized ROI</td><td style={{ padding: "2px 0", textAlign: "right", fontSize: 11, fontWeight: 700, color: m.annROI >= 0 ? BRAND.green : "#DC2626", ...S.mono }}>{(m.annROI * 100).toFixed(1)}%</td></tr>
-                        )}
+                        <tr><td style={{ padding: "2px 0", fontSize: 11, color: BRAND.gray }}>Gross Margin %</td><td style={{ padding: "2px 0", textAlign: "right", fontSize: 11, fontWeight: 700, color: Number.isFinite(m.margin) ? (m.margin >= 0 ? BRAND.green : "#DC2626") : BRAND.gray, ...S.mono }}>{Number.isFinite(m.margin) ? (m.margin * 100).toFixed(1) + "%" : "—"}</td></tr>
+                        <tr><td style={{ padding: "2px 0", fontSize: 11, color: BRAND.gray }}>Annualized ROI</td><td style={{ padding: "2px 0", textAlign: "right", fontSize: 11, fontWeight: 700, color: Number.isFinite(m.annROI) ? (m.annROI >= 0 ? BRAND.green : "#DC2626") : BRAND.gray, ...S.mono }}>{Number.isFinite(m.annROI) ? (m.annROI * 100).toFixed(1) + "%" : "—"}</td></tr>
                       </tbody>
                     </table>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 11, alignItems: "center", marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${m.grossProfit >= 0 ? "#86EFAC" : "#FCA5A5"}` }}>
