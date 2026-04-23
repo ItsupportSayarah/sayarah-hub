@@ -882,6 +882,22 @@ function PhotoEditor({ vehicleId, photos, onChange, readOnly = false, compact = 
   const [dragOver, setDragOver] = useState(false);
   const inputId = `photo-upload-${vehicleId || "new"}`;
 
+  // Translate Firebase Storage error codes into something a non-developer
+  // can act on. "storage/unauthorized" is the most common one and nearly
+  // always means the Storage rules need to be deployed (see storage.rules
+  // in the repo root).
+  const humanizeUploadError = (e) => {
+    const code = (e && e.code) || "";
+    if (code === "storage/unauthorized" || /unauthorized/i.test(e?.message || "")) {
+      return "Upload blocked by Firebase Storage rules. An admin needs to deploy the storage.rules file (firebase deploy --only storage).";
+    }
+    if (code === "storage/unauthenticated") return "You're not signed in. Refresh the page and sign in again.";
+    if (code === "storage/quota-exceeded") return "Storage quota exceeded — contact your admin.";
+    if (code === "storage/retry-limit-exceeded") return "Upload timed out. Check your internet connection and try again.";
+    if (code === "storage/canceled") return "Upload cancelled.";
+    return `Upload failed: ${e?.message || e}`;
+  };
+
   const handleFiles = async (fileList) => {
     const files = [...(fileList || [])];
     if (files.length === 0) return;
@@ -902,7 +918,8 @@ function PhotoEditor({ vehicleId, photos, onChange, readOnly = false, compact = 
         const url = await uploadFile(path, f);
         appended.push({ id: photoId, url, path, name: f.name, size: f.size, uploadedAt: new Date().toISOString() });
       } catch (e) {
-        setError(`Upload failed: ${e.message || e}`);
+        console.warn("photo upload failed:", e);
+        setError(humanizeUploadError(e));
       } finally {
         setUploading(u => u - 1);
       }
@@ -926,6 +943,15 @@ function PhotoEditor({ vehicleId, photos, onChange, readOnly = false, compact = 
 
   return (
     <div>
+      {/* Read-only hint so users who lack edit permission know why no
+          upload control appears. Without this they'd see just the
+          existing photos (or nothing) and conclude the feature is
+          broken. */}
+      {readOnly && safePhotos.length === 0 && (
+        <div style={{ padding: "10px 12px", background: "#F9FAFB", borderRadius: 8, fontSize: 11, color: BRAND.gray, border: `1px solid ${BRAND.grayLight}`, fontStyle: "italic" }}>
+          No photos yet. You don't have permission to upload — ask an admin or manager to add photos to this vehicle.
+        </div>
+      )}
       {!readOnly && (
         <label
           htmlFor={inputId}
@@ -5167,6 +5193,17 @@ function AppInner() {
           }
         } catch (err) {
           console.warn("shared save txn failed:", err);
+          // Surface the failure to the user. Without this it's silent and
+          // non-admin users uploading photos see the image appear then
+          // vanish on refresh (rule denied the write). Message is
+          // role-specific so the user knows whether it's a permissions
+          // issue (ask admin) vs a transient error (retry).
+          const code = (err && err.code) || "";
+          const isPerm = code === "permission-denied" || /permission/i.test(err?.message || "");
+          const msg = isPerm
+            ? `Can't save changes — your account doesn't have permission. Contact an admin.`
+            : `Save failed: ${err?.message || "unknown error"}. Changes are not persisted.`;
+          try { toast && toast(msg, "error"); } catch {}
         }
         setTimeout(() => setSaving(false), 400);
       }, 800);
