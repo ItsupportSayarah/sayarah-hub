@@ -143,19 +143,19 @@ const DEFAULT_HOLD_COSTS = {
   agingThresholdDays: 45,   // warn when a vehicle has been in inventory this long
 };
 
-function calcHoldCosts(totalInvested, daysHeld, holdCosts = DEFAULT_HOLD_COSTS) {
+function calcHoldCosts(totalCost, daysHeld, holdCosts = DEFAULT_HOLD_COSTS) {
   const insurance = holdCosts.insurancePerDay * daysHeld;
   const storage = holdCosts.storagePerDay * daysHeld;
   const depreciation = holdCosts.depreciationPerDay * daysHeld;
-  const opportunityCost = totalInvested * (holdCosts.opportunityCostRate / 365) * daysHeld;
+  const opportunityCost = totalCost * (holdCosts.opportunityCostRate / 365) * daysHeld;
   return { insurance, storage, depreciation, opportunityCost, total: insurance + storage + depreciation + opportunityCost, perDay: daysHeld > 0 ? (insurance + storage + depreciation + opportunityCost) / daysHeld : 0 };
 }
 
 // ─── Break-Even Calculator ────────────────────────────────────
-function calcBreakEven(totalInvested, holdCosts, sellerFeeRate = 0) {
-  const minSale = totalInvested + holdCosts;
+function calcBreakEven(totalCost, holdCosts, sellerFeeRate = 0) {
+  const minSale = totalCost + holdCosts;
   const withFees = sellerFeeRate > 0 ? minSale / (1 - sellerFeeRate) : minSale;
-  return { minSalePrice: withFees, totalCostBasis: totalInvested + holdCosts };
+  return { minSalePrice: withFees, totalCostBasis: totalCost + holdCosts };
 }
 
 // ─── Deal Grading Engine ──────────────────────────────────────
@@ -212,12 +212,12 @@ function calcProfitVelocity(profit, daysHeld) {
 }
 
 // ─── Annualized ROI ───────────────────────────────────────────
-function calcAnnualizedROI(profit, totalInvested, daysHeld) {
+function calcAnnualizedROI(profit, totalCost, daysHeld) {
   // Returns null (not 0) when the computation is undefined — divide-by-zero
   // or missing data. The caller must null-check before displaying.
-  if (!Number.isFinite(profit) || !Number.isFinite(totalInvested) || !Number.isFinite(daysHeld)) return null;
-  if (totalInvested <= 0 || daysHeld <= 0) return null;
-  const roi = profit / totalInvested;
+  if (!Number.isFinite(profit) || !Number.isFinite(totalCost) || !Number.isFinite(daysHeld)) return null;
+  if (totalCost <= 0 || daysHeld <= 0) return null;
+  const roi = profit / totalCost;
   return roi * (365 / daysHeld);
 }
 
@@ -312,9 +312,9 @@ function calcQuarterlyTax(sales, expenses, vehicles) {
     const revenue = qSales.reduce((s, x) => s + p(x.grossPrice) - p(x.auctionFee) - p(x.titleFee) - p(x.otherDeductions), 0);
     const costs = qSales.reduce((s, x) => {
       const v = vehicles.find(vh => vh.stockNum === x.stockNum);
-      return s + (v ? calcTotalInvested(v, expenses) : 0);
+      return s + (v ? calcTotalCost(v, expenses) : 0);
     }, 0);
-    // qExpenses covers the whole period; calcTotalInvested above already
+    // qExpenses covers the whole period; calcTotalCost above already
     // pulled in per-vehicle expenses for each sold vehicle, so subtract those
     // out of the stand-alone expense line to avoid double-counting.
     const stockNumsInPeriod = new Set(qSales.map(x => x.stockNum));
@@ -502,10 +502,10 @@ async function generateNotifications(data) {
 
 // ─── Aging Price Suggestions ────────────────────────────────
 function calcSuggestedPrice(vehicle, holdCosts, expenses = []) {
-  const invested = calcTotalInvested(vehicle, expenses);
+  const totalCost = calcTotalCost(vehicle, expenses);
   const days = vehicle.purchaseDate ? Math.round((new Date() - new Date(vehicle.purchaseDate)) / 86400000) : 0;
-  const hc = calcHoldCosts(invested, days, holdCosts);
-  const breakEven = invested + hc.total;
+  const hc = calcHoldCosts(totalCost, days, holdCosts);
+  const breakEven = totalCost + hc.total;
   const withMargin10 = breakEven / (1 - 0.10); // 10% margin
   const withMargin15 = breakEven / (1 - 0.15); // 15% margin
   const dailyBurn = hc.perDay;
@@ -616,7 +616,7 @@ const fmt$ = n => (n == null || isNaN(n)) ? "$0" : new Intl.NumberFormat("en-US"
 const fmt$2 = n => (n == null || isNaN(n)) ? "$0.00" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 // Percent formatter. Missing/NaN/Infinity render as "—" rather than "0%" so
 // users never see a misleading zero when the underlying computation was
-// undefined (e.g. ROI when invested=0, margin when netSale=0).
+// undefined (e.g. ROI when totalCost=0, margin when netSale=0).
 const fmtPct = n => (n == null || !Number.isFinite(n)) ? "—" : (n * 100).toFixed(1) + "%";
 const daysBetween = (d1, d2) => (!d1 || !d2) ? null : Math.round((new Date(d2) - new Date(d1)) / 86400000);
 const daysFromNow = d => d ? Math.round((new Date() - new Date(d)) / 86400000) : 0;
@@ -632,12 +632,12 @@ function exportCSV(filename, headers, rows) {
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = filename; a.click(); URL.revokeObjectURL(a.href);
 }
 
-// Total Invested = Purchase Price + computed Auction Fees + every cost
+// Total Cost = Purchase Price + computed Auction Fees + every cost
 // attached to this vehicle. `expenses` is the full list from state; we filter
 // to this vehicle by stockNum. Legacy fields (transportCost, repairCost,
 // otherExpenses) on the vehicle record are still summed in so records that
 // predate the unified-expenses model don't silently drop costs.
-function calcTotalInvested(v, expenses = []) {
+function calcTotalCost(v, expenses = []) {
   const pp = p(v.purchasePrice);
   let auctCost;
   if (v.useCustomPremium) {
@@ -659,46 +659,46 @@ function calcVehicleExpenses(v, expenses) {
 }
 
 function calcVehicleFullMetrics(v, sale, holdCosts, expenses = []) {
-  // Total Invested is the complete, all-in cost basis of the vehicle —
+  // Total Cost is the complete, all-in cost basis of the vehicle —
   // purchase price + derived auction fees + legacy acquisition fields
   // + every tracked expense (every category, including Selling Costs
   // post-sale). This is the single number every downstream calculation
   // depends on. Do not subtract any tracked-expense category separately
   // below — that would double-count.
-  const invested = calcTotalInvested(v, expenses);
+  const totalCost = calcTotalCost(v, expenses);
   const vehicleExpenses = Array.isArray(expenses) ? expenses.filter(e => e.stockNum === v.stockNum) : [];
   // sellingCosts is an *informational* breakdown of "how much of Total
-  // Invested happens to be post-sale selling costs" — it is NOT subtracted
+  // Cost happens to be post-sale selling costs" — it is NOT subtracted
   // again from profit. Displays use this only as an "of which…" sublabel.
   const sellingCosts = vehicleExpenses
     .filter(e => (e.category || "").toLowerCase().startsWith("selling"))
     .reduce((s, e) => s + p(e.amount), 0);
   const saleDeductions = sale ? p(sale.auctionFee) + p(sale.titleFee) + p(sale.otherDeductions) : 0;
   const netSale = sale ? p(sale.grossPrice) - saleDeductions : 0;
-  // Single clean definition: Net Profit = Net Sale − Total Invested.
+  // Single clean definition: Net Profit = Net Sale − Total Cost.
   // Sale-time deductions are already folded into netSale; every other
-  // dollar spent on the vehicle is in invested.
-  const grossProfit = sale ? netSale - invested : null;
+  // dollar spent on the vehicle is in totalCost.
+  const grossProfit = sale ? netSale - totalCost : null;
   const days = sale && v.purchaseDate && sale.date ? daysBetween(v.purchaseDate, sale.date) : (v.purchaseDate ? daysFromNow(v.purchaseDate) : 0);
-  const hc = calcHoldCosts(invested, days || 0, holdCosts);
+  const hc = calcHoldCosts(totalCost, days || 0, holdCosts);
   const trueProfit = grossProfit != null ? grossProfit - hc.total : null;
   const margin = sale && netSale > 0 ? grossProfit / netSale : null;
   const velocity = grossProfit != null && days > 0 ? calcProfitVelocity(grossProfit, days) : null;
-  const annROI = grossProfit != null && days > 0 ? calcAnnualizedROI(grossProfit, invested, days) : null;
+  const annROI = grossProfit != null && days > 0 ? calcAnnualizedROI(grossProfit, totalCost, days) : null;
   // Only grade when every input is actually defined. Previously we graded
   // on zero-defaulted inputs, producing misleading "F" grades for records
-  // that were simply missing data (e.g. no invested = no ROI = F).
+  // that were simply missing data (e.g. no cost basis = no ROI = F).
   const canGrade = grossProfit != null
     && margin != null && Number.isFinite(margin)
     && annROI != null && Number.isFinite(annROI)
     && velocity != null && Number.isFinite(velocity)
     && days > 0;
   const grade = canGrade ? gradeDeal(margin, days, annROI, velocity) : null;
-  const breakEven = calcBreakEven(invested, hc.total, 0);
+  const breakEven = calcBreakEven(totalCost, hc.total, 0);
   const risk = calcRiskScore(v);
   const aging = v.status !== "Sold" ? getAgingStatus(days || 0) : null;
-  const costPerDay = days > 0 ? invested / days : 0;
-  return { invested, netSale, grossProfit, trueProfit, days, holdCost: hc, margin, velocity, annROI, grade, breakEven, risk, aging, sellingCosts, saleDeductions, costPerDay };
+  const costPerDay = days > 0 ? totalCost / days : 0;
+  return { totalCost, netSale, grossProfit, trueProfit, days, holdCost: hc, margin, velocity, annROI, grade, breakEven, risk, aging, sellingCosts, saleDeductions, costPerDay };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1376,18 +1376,18 @@ function DashboardTab({ data, username, darkMode }) {
   };
 
   const metrics = useMemo(() => {
-    const totalInvested = vehicles.reduce((s, v) => s + calcTotalInvested(v, expenses), 0);
+    const totalCost = vehicles.reduce((s, v) => s + calcTotalCost(v, expenses), 0);
     const totalRevenue = sales.reduce((s, x) => s + p(x.grossPrice), 0);
     const totalNet = sales.reduce((s, x) => s + p(x.grossPrice) - p(x.auctionFee) - p(x.titleFee) - p(x.otherDeductions), 0);
-    const soldInvested = sold.reduce((s, v) => s + calcTotalInvested(v, expenses), 0);
-    const grossProfit = totalNet - soldInvested;
+    const soldCost = sold.reduce((s, v) => s + calcTotalCost(v, expenses), 0);
+    const grossProfit = totalNet - soldCost;
     const margin = totalRevenue > 0 ? grossProfit / totalRevenue : 0;
     const avgProfit = sold.length > 0 ? grossProfit / sold.length : 0;
 
     const velocities = sold.map(v => {
       const sl = sales.find(s => s.stockNum === v.stockNum);
       const d = sl && v.purchaseDate && sl.date ? daysBetween(v.purchaseDate, sl.date) : null;
-      const inv = calcTotalInvested(v, expenses);
+      const inv = calcTotalCost(v, expenses);
       const net = sl ? p(sl.grossPrice) - p(sl.auctionFee) - p(sl.titleFee) - p(sl.otherDeductions) : 0;
       return d && d > 0 ? (net - inv) / d : null;
     }).filter(Boolean);
@@ -1398,22 +1398,22 @@ function DashboardTab({ data, username, darkMode }) {
 
     // All tracked expenses (total displayed in UI).
     const totalExp = expenses.reduce((s, e) => s + p(e.amount), 0);
-    // Per-vehicle expenses are already folded into soldInvested via the
-    // updated calcTotalInvested; the netIncome roll-up only deducts overhead
+    // Per-vehicle expenses are already folded into soldCost via the
+    // updated calcTotalCost; the netIncome roll-up only deducts overhead
     // (expenses with no stockNum) to avoid double-counting.
     const overheadExp = expenses.filter(e => !e.stockNum).reduce((s, e) => s + p(e.amount), 0);
     const netIncome = grossProfit - overheadExp;
-    const capitalInInventory = unsold.reduce((s, v) => s + calcTotalInvested(v, expenses), 0);
+    const inventoryCost = unsold.reduce((s, v) => s + calcTotalCost(v, expenses), 0);
 
     // Unsold hold costs
     const unsoldHoldCosts = unsold.reduce((s, v) => {
       const days = v.purchaseDate ? daysFromNow(v.purchaseDate) : 0;
-      return s + calcHoldCosts(calcTotalInvested(v, expenses), days, holdCosts).total;
+      return s + calcHoldCosts(calcTotalCost(v, expenses), days, holdCosts).total;
     }, 0);
 
     const totalMiles = mileage.reduce((s, m) => s + p(m.miles), 0);
 
-    return { totalInvested, totalRevenue, totalNet, grossProfit, margin, avgProfit, avgVelocity, avgDays, totalExp, overheadExp, netIncome, capitalInInventory, unsoldHoldCosts, totalMiles };
+    return { totalCost, totalRevenue, totalNet, grossProfit, margin, avgProfit, avgVelocity, avgDays, totalExp, overheadExp, netIncome, inventoryCost, unsoldHoldCosts, totalMiles };
   }, [vehicles, sales, expenses, mileage, holdCosts, sold, unsold, data.auctionFeeTiers]);
 
   // Aging distribution
@@ -1522,8 +1522,8 @@ function DashboardTab({ data, username, darkMode }) {
 
       {/* Row 2: Money */}
       {w("money") && <div className="stat-cards-row" style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
-        <StatCard label="Total Invested" value={fmt$(metrics.totalInvested)} color={BRAND.red} />
-        <StatCard label="Capital in Inventory" value={fmt$(metrics.capitalInInventory)} color="#7C3AED" sub={`Hold costs: ${fmt$(metrics.unsoldHoldCosts)}`} />
+        <StatCard label="Total Cost" value={fmt$(metrics.totalCost)} color={BRAND.red} />
+        <StatCard label="Inventory Cost" value={fmt$(metrics.inventoryCost)} color="#7C3AED" sub={`Hold costs: ${fmt$(metrics.unsoldHoldCosts)}`} />
         <StatCard label="Gross Profit" value={fmt$(metrics.grossProfit)} color={metrics.grossProfit >= 0 ? BRAND.green : "#DC2626"} />
         <StatCard label="Avg Profit/Car" value={fmt$(metrics.avgProfit)} color={metrics.avgProfit >= 0 ? BRAND.green : "#DC2626"} sub={`Target: ${fmt$(INDUSTRY_BENCHMARKS.avgProfitPerCar.intermediate)}`} />
         <StatCard label="Mileage Deduction" value={fmt$(metrics.totalMiles * IRS_RATE)} sub={`${metrics.totalMiles.toLocaleString()} mi`} color={BRAND.blue} />
@@ -1602,7 +1602,7 @@ function DashboardTab({ data, username, darkMode }) {
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 12, fontSize: 11, color: BRAND.gray }}>
-                    <span>In: <b style={{ color: BRAND.black }}>{fmt$(m.invested)}</b></span>
+                    <span>In: <b style={{ color: BRAND.black }}>{fmt$(m.totalCost)}</b></span>
                     {m.grossProfit != null && <span>Profit: <b style={{ color: m.grossProfit >= 0 ? BRAND.green : "#DC2626" }}>{fmt$(m.grossProfit)}</b></span>}
                     {m.velocity != null && <span>Vel: <b style={{ color: BRAND.blue }}>{fmt$2(m.velocity)}/d</b></span>}
                   </div>
@@ -1692,8 +1692,8 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
   if (sortBy === "recent") filtered = [...filtered].sort((a, b) => (b.purchaseDate || "").localeCompare(a.purchaseDate || ""));
   else if (sortBy === "profit") filtered = [...filtered].sort((a, b) => {
     const sa = data.sales.find(s => s.stockNum === a.stockNum); const sb = data.sales.find(s => s.stockNum === b.stockNum);
-    const pa = sa ? (p(sa.grossPrice) - p(sa.auctionFee) - p(sa.titleFee) - p(sa.otherDeductions)) - calcTotalInvested(a, data.expenses) : -999999;
-    const pb = sb ? (p(sb.grossPrice) - p(sb.auctionFee) - p(sb.titleFee) - p(sb.otherDeductions)) - calcTotalInvested(b, data.expenses) : -999999;
+    const pa = sa ? (p(sa.grossPrice) - p(sa.auctionFee) - p(sa.titleFee) - p(sa.otherDeductions)) - calcTotalCost(a, data.expenses) : -999999;
+    const pb = sb ? (p(sb.grossPrice) - p(sb.auctionFee) - p(sb.titleFee) - p(sb.otherDeductions)) - calcTotalCost(b, data.expenses) : -999999;
     return pb - pa;
   });
   else if (sortBy === "aging") filtered = [...filtered].sort((a, b) => {
@@ -1729,8 +1729,8 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
             <option value="aging">Most Aged</option>
           </select>
           <Btn variant="secondary" onClick={() => {
-            const headers = ["Stock#","Year","Make","Model","Trim","VIN","Color","Status","Location","ZIP","Purchase Price","Transport","Repair","Total Invested","Purchase Date"];
-            const rows = filtered.map(v => [v.stockNum, v.year, v.make, v.model, v.trim||"", v.vin||"", v.color||"", v.status, v.location||"", v.zipCode||"", v.purchasePrice||"", v.transportCost||"", v.repairCost||"", calcTotalInvested(v, data.expenses).toFixed(2), v.purchaseDate||""]);
+            const headers = ["Stock#","Year","Make","Model","Trim","VIN","Color","Status","Location","ZIP","Purchase Price","Transport","Repair","Total Cost","Purchase Date"];
+            const rows = filtered.map(v => [v.stockNum, v.year, v.make, v.model, v.trim||"", v.vin||"", v.color||"", v.status, v.location||"", v.zipCode||"", v.purchasePrice||"", v.transportCost||"", v.repairCost||"", calcTotalCost(v, data.expenses).toFixed(2), v.purchaseDate||""]);
             exportCSV(`vehicles_${new Date().toISOString().slice(0,10)}.csv`, headers, rows);
           }}>Export CSV</Btn>
           <Btn onClick={openNew}>+ Add Vehicle</Btn>
@@ -1806,10 +1806,10 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
                   <div style={{ fontSize: 13, fontWeight: 700, color: BRAND.black, ...S.mono }}>{v.odometer ? `${parseInt(v.odometer).toLocaleString()} mi` : "—"}</div>
                 </div>
 
-                {/* 5. Invested */}
+                {/* 5. Total Cost */}
                 <div className="inv-col">
-                  <div style={{ fontSize: 10, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>Invested</div>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: BRAND.black, ...S.mono }}>{fmt$(m.invested)}</div>
+                  <div style={{ fontSize: 10, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>Total Cost</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: BRAND.black, ...S.mono }}>{fmt$(m.totalCost)}</div>
                 </div>
 
                 {/* 6. Break-Even OR Profit */}
@@ -1954,7 +1954,7 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
               <div><span style={{ color: BRAND.gray }}>Recon:</span> <span style={{ fontWeight: 600, ...S.mono }}>{fmt$(p(form.repairCost))}</span></div>
               <div style={{ gridColumn: "1 / -1", borderTop: `1px solid ${BRAND.redBg2}`, paddingTop: 6, marginTop: 4 }}>
                 <span style={{ color: BRAND.gray }}>Total Acquisition:</span> <span style={{ fontWeight: 700, color: BRAND.red, ...S.mono }}>{fmt$(formTotalAcq)}</span>
-                <span style={{ marginLeft: 16, color: BRAND.gray }}>Total Invested:</span> <span style={{ fontWeight: 800, color: BRAND.red, ...S.mono }}>{fmt$(formTotalInv)}</span>
+                <span style={{ marginLeft: 16, color: BRAND.gray }}>Total Cost:</span> <span style={{ fontWeight: 800, color: BRAND.red, ...S.mono }}>{fmt$(formTotalInv)}</span>
               </div>
             </div>
           </div>
@@ -2026,7 +2026,7 @@ function generateInvoicePDF(vehicle, expenses, sale, metrics, currentUserInfo) {
   [...expenses].sort((a, b) => (a.date || "").localeCompare(b.date || "")).forEach(e => {
     costRows.push({ date: e.date || "—", category: e.category || "Uncategorized", description: e.description || "—", vendor: e.vendor || "—", amount: p(e.amount) });
   });
-  const totalInvested = costRows.reduce((s, r) => s + r.amount, 0);
+  const totalCost = costRows.reduce((s, r) => s + r.amount, 0);
 
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Internal Deal Report · ${esc(v.stockNum)}</title>
 <style>
@@ -2096,7 +2096,7 @@ td{padding:4px 7px;border-bottom:1px solid #F3F4F6}
 
 <!-- Key Metrics (5 tiles, top of page) -->
 <div class="metrics-row">
-  <div class="metric"><div class="metric-label">Total Invested</div><div class="metric-value">${fmt$2(totalInvested)}</div></div>
+  <div class="metric"><div class="metric-label">Total Cost</div><div class="metric-value">${fmt$2(totalCost)}</div></div>
   <div class="metric"><div class="metric-label">Sale Price</div><div class="metric-value">${sold ? fmt$2(p(sale.grossPrice)) : "—"}</div></div>
   <div class="metric"><div class="metric-label">Net Profit / (Loss)</div><div class="metric-value" style="color:${profitColor}">${dollarOrDash(m.grossProfit)}</div></div>
   <div class="metric"><div class="metric-label">Margin %</div><div class="metric-value" style="color:${marginColor}">${pctOrDash(m.margin)}</div></div>
@@ -2114,7 +2114,7 @@ td{padding:4px 7px;border-bottom:1px solid #F3F4F6}
       ${costRows.length === 0
         ? `<tr><td colspan="5" style="padding:12px;text-align:center;color:#999;font-style:italic">No costs recorded yet — add Purchase Price or Tracked Expenses to this vehicle.</td></tr>`
         : costRows.map(r => `<tr><td>${esc(r.date)}</td><td>${esc(r.category)}</td><td>${r.description}</td><td>${esc(r.vendor)}</td><td class="amt">${fmt$2(r.amount)}</td></tr>`).join("")}
-      <tr class="total-row"><td colspan="4">TOTAL INVESTED</td><td class="amt">${fmt$2(totalInvested)}</td></tr>
+      <tr class="total-row"><td colspan="4">TOTAL COST</td><td class="amt">${fmt$2(totalCost)}</td></tr>
     </tbody>
   </table>
 </section>
@@ -2141,8 +2141,8 @@ ${sold ? `
   <div class="section-title">Profit & Loss</div>
   <table class="pl-table">
     <tr><td>Net Sale</td><td class="amt">${fmt$2(saleNet)}</td></tr>
-    <tr><td>− Total Invested <span style="font-size:9px;color:#999">complete cost basis (all rows above)</span></td><td class="amt" style="color:#DC2626">${fmt$2(totalInvested)}</td></tr>
-    ${m.sellingCosts > 0 ? `<tr><td style="padding-left:14px;color:#888;font-style:italic;font-size:10px">↳ of which Post-sale Selling Costs <span style="font-size:9px">commission, post-sale repairs, marketing — already in Total Invested above</span></td><td class="amt" style="font-style:italic;color:#888;font-size:10px">${fmt$2(m.sellingCosts)}</td></tr>` : ""}
+    <tr><td>− Total Cost <span style="font-size:9px;color:#999">complete cost basis (all rows above)</span></td><td class="amt" style="color:#DC2626">${fmt$2(totalCost)}</td></tr>
+    ${m.sellingCosts > 0 ? `<tr><td style="padding-left:14px;color:#888;font-style:italic;font-size:10px">↳ of which Post-sale Selling Costs <span style="font-size:9px">commission, post-sale repairs, marketing — already in Total Cost above</span></td><td class="amt" style="font-style:italic;color:#888;font-size:10px">${fmt$2(m.sellingCosts)}</td></tr>` : ""}
     <tr class="pl-total"><td>= Net Profit / (Loss)</td><td class="amt" style="color:${profitColor}">${dollarOrDash(m.grossProfit)}</td></tr>
     <tr><td>Gross Margin %</td><td class="amt" style="color:${marginColor}">${pctOrDash(m.margin)}</td></tr>
     <tr><td>Annualized ROI</td><td class="amt">${pctOrDash(m.annROI)}</td></tr>
@@ -2371,7 +2371,7 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
           )}
 
           {/* ═══ SECTION 1: OVERVIEW ═══ */}
-          {/* Data-integrity diagnostic: orphan expenses. Total Invested only
+          {/* Data-integrity diagnostic: orphan expenses. Total Cost only
               counts expenses whose stockNum matches this vehicle, so if the
               user accidentally saved an expense with a different stockNum
               (or none), the money doesn't count and nothing tells them.
@@ -2386,28 +2386,27 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
             const orphanTotal = orphans.reduce((s, e) => s + p(e.amount), 0);
             return (
               <div style={{ marginBottom: 12, padding: "10px 12px", background: "#FEF3C7", borderRadius: 8, fontSize: 11, color: "#92400E", border: "1px solid #FCD34D" }}>
-                <b>Possible orphan expenses:</b> {orphans.length} expense{orphans.length === 1 ? "" : "s"} totaling {fmt$2(orphanTotal)} reference this vehicle by name but have a different stock #. These dollars are NOT in Total Invested. Check the Expenses tab and fix the stock # to include them here.
+                <b>Possible orphan expenses:</b> {orphans.length} expense{orphans.length === 1 ? "" : "s"} totaling {fmt$2(orphanTotal)} reference this vehicle by name but have a different stock #. These dollars are NOT in Total Cost. Check the Expenses tab and fix the stock # to include them here.
               </div>
             );
           })()}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
-            <StatCard label="Total Invested" value={fmt$(m.invested)} color={BRAND.red} sub={m.invested > 0 ? "complete cost basis" : "no costs yet"} />
+            <StatCard label="Total Cost" value={fmt$(m.totalCost)} color={BRAND.red} sub={m.totalCost > 0 ? "complete cost basis" : "no costs yet"} />
             {m.grossProfit != null ? (
-              <StatCard label="Net Profit" value={fmt$(m.grossProfit)} color={m.grossProfit >= 0 ? BRAND.green : "#DC2626"} sub="Net Sale − Total Invested" />
+              <StatCard label="Net Profit" value={fmt$(m.grossProfit)} color={m.grossProfit >= 0 ? BRAND.green : "#DC2626"} sub="Net Sale − Total Cost" />
             ) : (
               <StatCard label="Break-Even" value={fmt$(m.breakEven.minSalePrice)} color="#D97706" sub="min sale to cover costs" />
             )}
-            <StatCard label="Tracked Expenses" value={fmt$(totalExpenses)} color={BRAND.gray} sub={`${expenses.length} item${expenses.length !== 1 ? "s" : ""} · included in Invested`} />
             <StatCard label="Risk" value={m.risk.level} color={m.risk.color} />
           </div>
-          {/* Soft warning when Total Invested = $0 but we can see the vehicle
+          {/* Soft warning when Total Cost = $0 but we can see the vehicle
               has a purchase price OR at least one tracked expense. This
               state is *not reachable* with current formula logic, but is a
               canary if a future change regresses the roll-up or if expense
               records have malformed amounts. */}
-          {m.invested === 0 && (p(v.purchasePrice) > 0 || expenses.length > 0) && (
+          {m.totalCost === 0 && (p(v.purchasePrice) > 0 || expenses.length > 0) && (
             <div style={{ marginBottom: 14, padding: "10px 12px", background: "#FEE2E2", borderRadius: 8, fontSize: 12, color: "#991B1B", border: "1px solid #FCA5A5", fontWeight: 600 }}>
-              Total Invested is $0 but this vehicle has a Purchase Price or Tracked Expenses. Please report this to engineering with the stock # — the roll-up formula is broken.
+              Total Cost is $0 but this vehicle has a Purchase Price or Tracked Expenses. Please report this to engineering with the stock # — the roll-up formula is broken.
             </div>
           )}
 
@@ -2460,7 +2459,7 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
           </Card>
 
           {/* Cost Breakdown — explicit roll-up. Every line is additive so
-              the Total Invested figure at the bottom equals the sum of
+              the Total Cost figure at the bottom equals the sum of
               what's shown above it. Legacy acquisition-cost fields are
               hidden when zero so they don't clutter new records. Tracked
               expenses are broken down by category so users can see where
@@ -2508,7 +2507,7 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
                       </tr>
                     ))}
                     <tr style={{ borderTop: `2px solid ${BRAND.red}` }}>
-                      <td style={{ padding: "10px 0 4px", fontWeight: 900, textTransform: "uppercase", fontSize: 12, color: BRAND.red, letterSpacing: "0.05em" }}>Total Invested</td>
+                      <td style={{ padding: "10px 0 4px", fontWeight: 900, textTransform: "uppercase", fontSize: 12, color: BRAND.red, letterSpacing: "0.05em" }}>Total Cost</td>
                       <td style={{ padding: "10px 0 4px", textAlign: "right", fontWeight: 900, fontSize: 16, color: BRAND.black, ...S.mono }}>{fmt$2(grandTotal)}</td>
                     </tr>
                   </tbody>
@@ -2778,12 +2777,12 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
                 </Card>
 
                 {/* Full Profit & Loss — the source-of-truth P&L.
-                    Formula: Net Sale − Total Invested = Net Profit.
-                    Total Invested already includes every tracked expense
+                    Formula: Net Sale − Total Cost = Net Profit.
+                    Total Cost already includes every tracked expense
                     (every category, including Selling Costs post-sale), so
                     we do not subtract Selling Costs again — that was the
                     double-count bug. Selling Costs are surfaced as an
-                    "of which…" informational sublabel under Total Invested
+                    "of which…" informational sublabel under Total Cost
                     so the user can see how much post-sale spend is in the
                     number without it getting deducted twice. */}
                 {m.grossProfit != null && (
@@ -2794,7 +2793,7 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
                         <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>Sale Price (gross)</td><td style={{ padding: "4px 0", textAlign: "right", fontWeight: 700, ...S.mono }}>{fmt$2(p(sale.grossPrice))}</td></tr>
                         <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>− Sale-time deductions <span style={{ fontSize: 10 }}>fees on the sale record itself — auction seller-fee, title, other</span></td><td style={{ padding: "4px 0", textAlign: "right", color: "#DC2626", ...S.mono }}>{fmt$2(m.saleDeductions)}</td></tr>
                         <tr style={{ borderTop: `1px dashed ${m.grossProfit >= 0 ? "#86EFAC" : "#FCA5A5"}` }}><td style={{ padding: "4px 0", color: BRAND.grayDark }}>Net Sale</td><td style={{ padding: "4px 0", textAlign: "right", fontWeight: 700, ...S.mono }}>{fmt$2(m.netSale)}</td></tr>
-                        <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>− Total Invested <span style={{ fontSize: 10 }}>complete cost basis: purchase + auction fees + every tracked expense, every category</span></td><td style={{ padding: "4px 0", textAlign: "right", color: "#DC2626", ...S.mono }}>{fmt$2(m.invested)}</td></tr>
+                        <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>− Total Cost <span style={{ fontSize: 10 }}>complete cost basis: purchase + auction fees + every tracked expense, every category</span></td><td style={{ padding: "4px 0", textAlign: "right", color: "#DC2626", ...S.mono }}>{fmt$2(m.totalCost)}</td></tr>
                         {m.sellingCosts > 0 && (
                           <tr><td style={{ padding: "2px 0 6px 14px", fontSize: 10, color: BRAND.gray, fontStyle: "italic" }}>↳ of which Selling Costs (post-sale): commission, post-sale repairs, marketing</td><td style={{ padding: "2px 0 6px", textAlign: "right", fontSize: 10, fontStyle: "italic", color: BRAND.gray, ...S.mono }}>{fmt$2(m.sellingCosts)}</td></tr>
                         )}
@@ -2852,13 +2851,13 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
                 />
                 {/* Live P&L */}
                 {saleForm.grossPrice && (() => {
-                  const inv = calcTotalInvested(v, data.expenses);
+                  const inv = calcTotalCost(v, data.expenses);
                   const netP = saleNet(saleForm);
                   const profit = netP - inv;
                   return (
                     <div style={{ background: profit >= 0 ? "#F0FDF4" : "#FEF2F2", borderRadius: 8, padding: 10, marginTop: 10, fontSize: 12 }}>
                       <span style={{ color: BRAND.gray }}>Net: </span><b style={S.mono}>{fmt$(netP)}</b>
-                      <span style={{ marginLeft: 14, color: BRAND.gray }}>Invested: </span><b style={S.mono}>{fmt$(inv)}</b>
+                      <span style={{ marginLeft: 14, color: BRAND.gray }}>Total Cost: </span><b style={S.mono}>{fmt$(inv)}</b>
                       <span style={{ marginLeft: 14, color: BRAND.gray }}>Profit: </span><b style={{ color: profit >= 0 ? BRAND.green : "#DC2626", ...S.mono }}>{fmt$(profit)}</b>
                     </div>
                   );
@@ -3047,7 +3046,7 @@ function SalesTab({ data, setData }) {
           {form.stockNum && (() => {
             const v = data.vehicles.find(x => x.stockNum === form.stockNum);
             if (!v) return null;
-            const inv = calcTotalInvested(v, data.expenses);
+            const inv = calcTotalCost(v, data.expenses);
             const netP = net(form);
             const profit = netP - inv;
             const days = v.purchaseDate && form.date ? daysBetween(v.purchaseDate, form.date) : null;
@@ -3062,7 +3061,7 @@ function SalesTab({ data, setData }) {
                 <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: profit >= 0 ? BRAND.green : "#DC2626", marginBottom: 6 }}>Deal Analysis</div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 12, alignItems: "center" }}>
                   <div>Net: <b style={{ ...S.mono }}>{fmt$(netP)}</b></div>
-                  <div>Invested: <b style={{ ...S.mono }}>{fmt$(inv)}</b></div>
+                  <div>Total Cost: <b style={{ ...S.mono }}>{fmt$(inv)}</b></div>
                   <div>Profit: <b style={{ color: profit >= 0 ? BRAND.green : "#DC2626", ...S.mono }}>{fmt$(profit)}</b></div>
                   {vel != null && <div>Velocity: <b style={{ color: BRAND.blue, ...S.mono }}>{fmt$2(vel)}/d</b></div>}
                   {days != null && <div>Days: <b>{days}</b></div>}
@@ -3195,7 +3194,7 @@ function PipelineTab({ data, setData }) {
     PIPELINE_STAGES.forEach(s => { byStage[s] = 0; });
     vehicles.forEach(v => {
       const stage = getPipelineStage(v, sales);
-      if (byStage[stage] !== undefined) byStage[stage] += calcTotalInvested(v, expenses);
+      if (byStage[stage] !== undefined) byStage[stage] += calcTotalCost(v, expenses);
     });
     return byStage;
   }, [vehicles, sales, expenses]);
@@ -3250,7 +3249,7 @@ function PipelineTab({ data, setData }) {
                         {m.aging && <Badge color={m.aging.color} bg={m.aging.bg}>{m.aging.icon}</Badge>}
                       </div>
                       <div style={{ fontSize: 10, color: BRAND.gray, marginBottom: 6 }}>
-                        Invested: <b style={{ color: BRAND.black, ...S.mono }}>{fmt$(m.invested)}</b>
+                        Total Cost: <b style={{ color: BRAND.black, ...S.mono }}>{fmt$(m.totalCost)}</b>
                         {m.grossProfit != null && <span> · P: <b style={{ color: m.grossProfit >= 0 ? BRAND.green : "#DC2626", ...S.mono }}>{fmt$(m.grossProfit)}</b></span>}
                       </div>
                       {stage !== "Sold" && (
@@ -3440,12 +3439,12 @@ function AnalyticsTab({ data }) {
     const m = {};
     sold.forEach(v => {
       const src = v.auctionSource || "custom";
-      if (!m[src]) m[src] = { count: 0, totalProfit: 0, totalInvested: 0, days: [] };
+      if (!m[src]) m[src] = { count: 0, totalProfit: 0, totalCost: 0, days: [] };
       const sale = sales.find(s => s.stockNum === v.stockNum);
       const met = calcVehicleFullMetrics(v, sale, holdCosts, expenses);
       m[src].count++;
       m[src].totalProfit += met.grossProfit || 0;
-      m[src].totalInvested += met.invested;
+      m[src].totalCost += met.totalCost;
       if (met.days) m[src].days.push(met.days);
     });
     return Object.entries(m).map(([src, d]) => ({
@@ -3453,7 +3452,7 @@ function AnalyticsTab({ data }) {
       ...d,
       avgProfit: d.count > 0 ? d.totalProfit / d.count : 0,
       avgDays: d.days.length > 0 ? Math.round(d.days.reduce((a, b) => a + b, 0) / d.days.length) : 0,
-      roi: d.totalInvested > 0 ? d.totalProfit / d.totalInvested : 0,
+      roi: d.totalCost > 0 ? d.totalProfit / d.totalCost : 0,
     })).sort((a, b) => b.avgProfit - a.avgProfit);
   }, [sold, sales, holdCosts, expenses]);
 
@@ -3462,19 +3461,19 @@ function AnalyticsTab({ data }) {
     const m = {};
     sold.forEach(v => {
       const ts = v.titleStatus || "clean";
-      if (!m[ts]) m[ts] = { count: 0, totalProfit: 0, totalInvested: 0 };
+      if (!m[ts]) m[ts] = { count: 0, totalProfit: 0, totalCost: 0 };
       const sale = sales.find(s => s.stockNum === v.stockNum);
       const met = calcVehicleFullMetrics(v, sale, holdCosts, expenses);
       m[ts].count++;
       m[ts].totalProfit += met.grossProfit || 0;
-      m[ts].totalInvested += met.invested;
+      m[ts].totalCost += met.totalCost;
     });
     return Object.entries(m).map(([ts, d]) => ({
       title: TITLE_STATUS[ts]?.label || ts,
       titleInfo: TITLE_STATUS[ts] || TITLE_STATUS.clean,
       ...d,
       avgProfit: d.count > 0 ? d.totalProfit / d.count : 0,
-      roi: d.totalInvested > 0 ? d.totalProfit / d.totalInvested : 0,
+      roi: d.totalCost > 0 ? d.totalProfit / d.totalCost : 0,
     })).sort((a, b) => b.avgProfit - a.avgProfit);
   }, [sold, sales, holdCosts, expenses]);
 
@@ -3519,13 +3518,13 @@ function AnalyticsTab({ data }) {
         {dealCards.length === 0 ? <div style={{ color: BRAND.gray, fontSize: 12 }}>No completed deals yet</div> : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead><tr style={{ background: BRAND.redBg }}>{["Rank","Vehicle","Invested","Net Sale","Profit","Gross Margin %","Days","Velocity","Ann. ROI","Grade"].map(h => <TH key={h}>{h}</TH>)}</tr></thead>
+              <thead><tr style={{ background: BRAND.redBg }}>{["Rank","Vehicle","Total Cost","Net Sale","Profit","Gross Margin %","Days","Velocity","Ann. ROI","Grade"].map(h => <TH key={h}>{h}</TH>)}</tr></thead>
               <tbody>
                 {dealCards.map((d, i) => (
                   <tr key={d.vehicle.id} style={{ borderBottom: `1px solid ${BRAND.grayLight}`, background: i === 0 ? "#FEFCE8" : i < 3 ? "#FFFBEB" : "transparent" }}>
                     <TD style={{ fontWeight: 800, color: i < 3 ? "#D97706" : BRAND.grayDark }}>{`#${i + 1}`}</TD>
                     <TD><span style={{ color: BRAND.red, ...S.mono, fontWeight: 700, fontSize: 10 }}>#{d.vehicle.stockNum}</span> {d.vehicle.year} {d.vehicle.make} {d.vehicle.model}</TD>
-                    <TD style={{ ...S.mono }}>{fmt$(d.metrics.invested)}</TD>
+                    <TD style={{ ...S.mono }}>{fmt$(d.metrics.totalCost)}</TD>
                     <TD style={{ ...S.mono }}>{fmt$(d.metrics.netSale)}</TD>
                     <TD style={{ ...S.mono, fontWeight: 800, color: (d.metrics.grossProfit || 0) >= 0 ? BRAND.green : "#DC2626" }}>{fmt$(d.metrics.grossProfit)}</TD>
                     <TD style={{ ...S.mono }}>{fmtPct(d.metrics.margin)}</TD>
@@ -3585,12 +3584,12 @@ function AnalyticsTab({ data }) {
           const byMakeModel = {};
           sold.forEach(v => {
             const key = `${(v.make || "Unknown").trim()} ${(v.model || "").trim()}`.trim();
-            if (!byMakeModel[key]) byMakeModel[key] = { count: 0, totalProfit: 0, totalInvested: 0, days: [], profits: [] };
+            if (!byMakeModel[key]) byMakeModel[key] = { count: 0, totalProfit: 0, totalCost: 0, days: [], profits: [] };
             const sale = sales.find(s => s.stockNum === v.stockNum);
             const met = calcVehicleFullMetrics(v, sale, holdCosts, expenses);
             byMakeModel[key].count++;
             byMakeModel[key].totalProfit += met.grossProfit || 0;
-            byMakeModel[key].totalInvested += met.invested;
+            byMakeModel[key].totalCost += met.totalCost;
             byMakeModel[key].profits.push(met.grossProfit || 0);
             if (met.days) byMakeModel[key].days.push(met.days);
           });
@@ -3599,7 +3598,7 @@ function AnalyticsTab({ data }) {
             ...d,
             avgProfit: d.count > 0 ? d.totalProfit / d.count : 0,
             avgDays: d.days.length > 0 ? Math.round(d.days.reduce((a, b) => a + b, 0) / d.days.length) : 0,
-            roi: d.totalInvested > 0 ? d.totalProfit / d.totalInvested : 0,
+            roi: d.totalCost > 0 ? d.totalProfit / d.totalCost : 0,
             winRate: d.profits.length > 0 ? d.profits.filter(p => p > 0).length / d.profits.length : 0,
           })).sort((a, b) => b.avgProfit - a.avgProfit);
           if (rows.length === 0) return <div style={{ color: BRAND.gray, fontSize: 12 }}>No completed deals yet</div>;
@@ -3759,10 +3758,10 @@ function ReportsTab({ data }) {
 
     const totalRevenue = periodSales.reduce((s, x) => s + p(x.grossPrice), 0);
     const totalNet = periodSales.reduce((s, x) => s + p(x.grossPrice) - p(x.auctionFee) - p(x.titleFee) - p(x.otherDeductions), 0);
-    const soldInvested = periodSold.reduce((s, v) => s + calcTotalInvested(v, expenses), 0);
-    const grossProfit = totalNet - soldInvested;
+    const soldCost = periodSold.reduce((s, v) => s + calcTotalCost(v, expenses), 0);
+    const grossProfit = totalNet - soldCost;
     const totalExp = periodExpenses.reduce((s, e) => s + p(e.amount), 0);
-    // Per-vehicle expenses on sold vehicles are already in soldInvested;
+    // Per-vehicle expenses on sold vehicles are already in soldCost;
     // deduct only overhead (non-vehicle-linked) here to avoid double-counting.
     const periodSoldStocks = new Set(periodSold.map(v => v.stockNum));
     const overheadExp = periodExpenses.filter(e => !e.stockNum || !periodSoldStocks.has(e.stockNum)).reduce((s, e) => s + p(e.amount), 0);
@@ -3796,9 +3795,9 @@ function ReportsTab({ data }) {
       return Math.max(0, Math.round((endDateObj - start) / 86400000));
     });
     const avgInventoryDays = inventoryDays.length > 0 ? Math.round(inventoryDays.reduce((a, b) => a + b, 0) / inventoryDays.length) : 0;
-    const inventoryValue = periodInInventory.reduce((s, v) => s + calcTotalInvested(v, expenses), 0);
+    const inventoryValue = periodInInventory.reduce((s, v) => s + calcTotalCost(v, expenses), 0);
 
-    return { label, startDate, endDate, periodPurchased, periodSold, periodSales, periodExpenses, periodInInventory, inventoryValue, avgInventoryDays, totalRevenue, totalNet, soldInvested, grossProfit, totalExp, overheadExp, netIncome, avgProfit, avgDays, topDeals, expByCat };
+    return { label, startDate, endDate, periodPurchased, periodSold, periodSales, periodExpenses, periodInInventory, inventoryValue, avgInventoryDays, totalRevenue, totalNet, soldCost, grossProfit, totalExp, overheadExp, netIncome, avgProfit, avgDays, topDeals, expByCat };
   }, [vehicles, sales, expenses, holdCosts, period, selectedMonth, data.auctionFeeTiers]);
 
   const handlePrintReport = () => {
@@ -3831,7 +3830,7 @@ td{padding:8px;border-bottom:1px solid #eee}
 <div class="stat"><div class="stat-label">Avg Days to Sell</div><div class="stat-value">${r.avgDays}d</div></div>
 <div class="stat"><div class="stat-label">Avg Days in Inv.</div><div class="stat-value">${r.avgInventoryDays}d</div></div>
 </div>
-${r.topDeals.length > 0 ? `<div class="section"><h3>Top Deals</h3><table><thead><tr><th>Vehicle</th><th>Invested</th><th>Sold For</th><th>Profit</th><th>Days</th><th>Grade</th></tr></thead><tbody>${r.topDeals.map(d => `<tr><td>#${esc(d.vehicle.stockNum)} ${esc(d.vehicle.year)} ${esc(d.vehicle.make)} ${esc(d.vehicle.model)}</td><td>${fmt$(d.metrics.invested)}</td><td>${fmt$(d.metrics.netSale)}</td><td style="color:${(d.metrics.grossProfit||0)>=0?"#166534":"#DC2626"};font-weight:700">${fmt$(d.metrics.grossProfit)}</td><td>${d.metrics.days||"—"}d</td><td>${d.metrics.grade?esc(d.metrics.grade.grade):"—"}</td></tr>`).join("")}</tbody></table></div>` : ""}
+${r.topDeals.length > 0 ? `<div class="section"><h3>Top Deals</h3><table><thead><tr><th>Vehicle</th><th>Total Cost</th><th>Sold For</th><th>Profit</th><th>Days</th><th>Grade</th></tr></thead><tbody>${r.topDeals.map(d => `<tr><td>#${esc(d.vehicle.stockNum)} ${esc(d.vehicle.year)} ${esc(d.vehicle.make)} ${esc(d.vehicle.model)}</td><td>${fmt$(d.metrics.totalCost)}</td><td>${fmt$(d.metrics.netSale)}</td><td style="color:${(d.metrics.grossProfit||0)>=0?"#166534":"#DC2626"};font-weight:700">${fmt$(d.metrics.grossProfit)}</td><td>${d.metrics.days||"—"}d</td><td>${d.metrics.grade?esc(d.metrics.grade.grade):"—"}</td></tr>`).join("")}</tbody></table></div>` : ""}
 ${Object.keys(r.expByCat).length > 0 ? `<div class="section"><h3>Expense Breakdown</h3><table><thead><tr><th>Category</th><th>Amount</th></tr></thead><tbody>${Object.entries(r.expByCat).sort((a,b)=>b[1]-a[1]).map(([c,a])=>`<tr><td>${esc(c)}</td><td style="font-weight:700">${fmt$(a)}</td></tr>`).join("")}</tbody></table></div>` : ""}
 <div class="footer">Generated by Auto Trade Hub · © 2025 Sayarah Inc · Atlantic Car Connect — A Sayarah Inc Company · ${new Date().toLocaleDateString()}</div>
 </body></html>`;
@@ -3903,7 +3902,7 @@ ${Object.keys(r.expByCat).length > 0 ? `<div class="section"><h3>Expense Breakdo
                   <tr key={d.vehicle.id} style={{ borderBottom: `1px solid ${BRAND.grayLight}` }}>
                     <TD style={{ fontWeight: 800 }}>{`#${i + 1}`}</TD>
                     <TD><span style={{ color: BRAND.red, ...S.mono, fontWeight: 700, fontSize: 10 }}>#{d.vehicle.stockNum}</span> {d.vehicle.year} {d.vehicle.make} {d.vehicle.model}</TD>
-                    <TD style={{ ...S.mono }}>{fmt$(d.metrics.invested)}</TD>
+                    <TD style={{ ...S.mono }}>{fmt$(d.metrics.totalCost)}</TD>
                     <TD style={{ ...S.mono }}>{fmt$(d.metrics.netSale)}</TD>
                     <TD style={{ ...S.mono, fontWeight: 800, color: (d.metrics.grossProfit || 0) >= 0 ? BRAND.green : "#DC2626" }}>{fmt$(d.metrics.grossProfit)}</TD>
                     <TD>{d.metrics.days || "—"}d</TD>
