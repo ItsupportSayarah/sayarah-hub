@@ -45,6 +45,12 @@ const limiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests, please try again later." },
+  // Static assets (hashed JS/CSS, logos, fonts, source maps) are cheap and
+  // a single page load fetches several of them — counting each against the
+  // 150-req budget means ~20 hard refreshes burns through the quota and
+  // trips real API calls. Exempt them so the limit only bites meaningful
+  // traffic: HTML navigations, API POSTs, auth flows.
+  skip: (req) => req.method === "GET" && /\.(js|mjs|css|png|jpg|jpeg|gif|svg|ico|webp|woff2?|ttf|eot|map)$/i.test(req.path),
 });
 app.use(limiter);
 
