@@ -434,7 +434,10 @@ function isAdmin(role) { return role === "admin"; }
 function isManager(role) { return role === "manager"; }
 function canApprove(role) { return role === "admin" || role === "manager"; }
 function canEditVehicles(role) { return role === "admin" || role === "manager"; }
-function canDeleteVehicles(role) { return role === "admin"; }
+// Managers can delete vehicles (parallel to canEditVehicles). Admin +
+// manager are the "operator" roles. Lower roles (user, customer) can
+// still initiate a delete via the approval flow — see del() in InventoryTab.
+function canDeleteVehicles(role) { return role === "admin" || role === "manager"; }
 
 // ─── Approval Queue ─────────────────────────────────────────
 const APPROVALS_STORAGE_KEY = "sayarah-approvals-v1";
@@ -1703,15 +1706,37 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
     setShowForm(false);
   };
   const del = id => {
-    if (!canDelete) return;
     const v = data.vehicles.find(x => x.id === id);
+    if (!v) { setConfirm(null); return; }
+    // Non-admin/non-manager users submit a deletion request instead of
+    // deleting directly. This mirrors the existing expense_delete and
+    // sale_delete approval flow so there's a consistent path for lower
+    // roles to initiate changes their rules don't let them commit.
+    if (!canDelete) {
+      addApproval({
+        id: genId(),
+        type: "vehicle_delete",
+        requestedBy: currentUser,
+        requestedAt: new Date().toISOString(),
+        status: "pending",
+        stockNum: v.stockNum,
+        vehicle: `${v.year} ${v.make} ${v.model}`,
+        description: `Delete vehicle #${v.stockNum} ${v.year} ${v.make} ${v.model} (status: ${v.status})`,
+        targetId: v.id,
+        originalData: v,
+        newData: null,
+      });
+      logActivity(currentUser, "requested_delete", `Requested vehicle deletion #${v.stockNum} ${v.year} ${v.make} ${v.model}`, { stockNum: v.stockNum, type: "vehicle_delete" });
+      setConfirm(null); setShowForm(false); setShowDetail(null);
+      return;
+    }
     setData(d => ({
       ...d,
       vehicles: d.vehicles.filter(x => x.id !== id),
-      trash: v ? [...(d.trash || []), toTrash(v, "vehicle", currentUser)] : (d.trash || []),
+      trash: [...(d.trash || []), toTrash(v, "vehicle", currentUser)],
     }));
     setConfirm(null); setShowForm(false); setShowDetail(null);
-    if (v) logActivity(currentUser, "deleted_vehicle", `Deleted vehicle #${v.stockNum} ${v.year} ${v.make} ${v.model} (status: ${v.status}, purchase: ${fmt$2(p(v.purchasePrice))})`, { stockNum: v.stockNum, snapshot: v });
+    logActivity(currentUser, "deleted_vehicle", `Deleted vehicle #${v.stockNum} ${v.year} ${v.make} ${v.model} (status: ${v.status}, purchase: ${fmt$2(p(v.purchasePrice))})`, { stockNum: v.stockNum, snapshot: v });
   };
 
   let filtered = filter === "All" ? data.vehicles : data.vehicles.filter(v => v.status === filter);
@@ -1992,7 +2017,7 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
           </div>
         </Modal>
       )}
-      {confirm && <Confirm msg="Delete this vehicle permanently?" onOk={() => del(confirm)} onCancel={() => setConfirm(null)} />}
+      {confirm && <Confirm msg={canDelete ? "Delete this vehicle? It will be moved to Trash and can be restored." : "Submit a delete request for this vehicle? An admin or manager will need to approve it."} onOk={() => del(confirm)} onCancel={() => setConfirm(null)} />}
     </div>
   );
 }
@@ -2382,7 +2407,12 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <Btn variant="secondary" size="sm" onClick={handleExportPDF} style={{ background: BRAND.blueBg, color: BRAND.blue, border: `1px solid #BFDBFE` }}>Export PDF</Btn>
             {canEditProp && <Btn variant="secondary" size="sm" onClick={onEdit}>Edit</Btn>}
-            {canDeleteProp && <Btn variant="danger" size="sm" style={{ fontSize: 11, padding: "5px 10px" }} onClick={onDelete}>Delete</Btn>}
+            {/* Admins/managers delete directly; other authenticated users
+                submit an approval request. Button label reflects which
+                path will run so the user knows what to expect. */}
+            <Btn variant="danger" size="sm" style={{ fontSize: 11, padding: "5px 10px" }} onClick={onDelete}>
+              {canDeleteProp ? "Delete" : "Request Delete"}
+            </Btn>
             <Btn variant="ghost" onClick={onClose}>✕</Btn>
           </div>
         </div>
@@ -3990,6 +4020,14 @@ function ApprovalsTab({ data, setData }) {
       setData(d => ({ ...d, sales: d.sales.map(s => s.id === approval.targetId ? approval.newData : s) }));
     } else if (approval.type === "sale_delete") {
       setData(d => ({ ...d, sales: d.sales.filter(s => s.id !== approval.targetId) }));
+    } else if (approval.type === "vehicle_delete") {
+      setData(d => ({
+        ...d,
+        vehicles: d.vehicles.filter(x => x.id !== approval.targetId),
+        trash: approval.originalData
+          ? [...(d.trash || []), toTrash(approval.originalData, "vehicle", approval.requestedBy)]
+          : (d.trash || []),
+      }));
     }
     // Update approval status
     const all = (await loadApprovals()).map(a => a.id === approval.id ? { ...a, status: "approved", resolvedAt: new Date().toISOString() } : a);
