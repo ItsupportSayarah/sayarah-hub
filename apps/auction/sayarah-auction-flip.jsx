@@ -1,5 +1,19 @@
 import { useState, useEffect, useMemo, useRef, useCallback, createContext, useContext, Component } from "react";
 import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserProfile, updateUserRole, getAllUsers, updateUserPermissions, getUserData, saveAppData, loadAppData, saveSharedData, saveSharedDataTxn, loadSharedData, onSharedDataChange, saveApprovalsFB, loadApprovalsFB, addActivityLogEntryFB, loadActivityLogFB, changePassword, resetPassword, uploadFile, deleteFile } from "./src/firebase.js";
+// Pure calculation functions live in src/calc.js so they can be
+// unit-tested (see tests/calc.test.mjs). Every display of Total Cost,
+// Net Profit, Gross Margin, etc. funnels through these — no parallel
+// implementations, no "two aggregation paths" that can drift.
+import {
+  DEFAULT_AUCTION_FEE_TIERS,
+  AUCTION_FEE_TIERS,
+  cloneTierConfig,
+  applyCustomAuctionFeeTiers,
+  serializeTierOverrides,
+  calcAuctionFees,
+  calcTotalCost,
+  calcVehicleExpenses,
+} from "./src/calc.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
 class ErrorBoundary extends Component {
@@ -32,96 +46,9 @@ const FIREBASE_ENABLED = (() => {
 // INDUSTRY ENGINE — Advanced Car Flipping Business Logic
 // ═══════════════════════════════════════════════════════════════
 
-// ─── Auction Fee Structures (Real Copart/IAAI tiers) ──────────
-// DEFAULT_AUCTION_FEE_TIERS is the immutable baseline. AUCTION_FEE_TIERS is the
-// active, possibly-overridden copy — admins can edit rates without a redeploy
-// via the Settings tab. Overrides live in `data.auctionFeeTiers` (Firestore)
-// and are applied at render time via applyCustomAuctionFeeTiers().
-const DEFAULT_AUCTION_FEE_TIERS = {
-  copart: {
-    name: "Copart",
-    tiers: [
-      { max: 99.99, fee: 25 }, { max: 199.99, fee: 50 }, { max: 299.99, fee: 75 },
-      { max: 399.99, fee: 100 }, { max: 499.99, fee: 130 }, { max: 599.99, fee: 155 },
-      { max: 699.99, fee: 180 }, { max: 799.99, fee: 200 }, { max: 899.99, fee: 215 },
-      { max: 999.99, fee: 235 }, { max: 1199.99, fee: 260 }, { max: 1299.99, fee: 280 },
-      { max: 1499.99, fee: 310 }, { max: 1599.99, fee: 325 }, { max: 1799.99, fee: 355 },
-      { max: 1999.99, fee: 380 }, { max: 2399.99, fee: 400 }, { max: 2499.99, fee: 415 },
-      { max: 2999.99, fee: 435 }, { max: 3499.99, fee: 475 }, { max: 3999.99, fee: 500 },
-      { max: 4499.99, fee: 600 }, { max: 4999.99, fee: 625 }, { max: 5999.99, fee: 650 },
-      { max: 7499.99, fee: 700 }, { max: 9999.99, fee: 750 }, { max: 14999.99, fee: 800 },
-      { max: 19999.99, fee: 850 }, { max: Infinity, pct: 5 },
-    ],
-    gateFee: 79, envFee: 10, titleFee: 0, virtualBidFee: 0,
-  },
-  iaai: {
-    name: "IAAI",
-    tiers: [
-      { max: 99.99, fee: 25 }, { max: 199.99, fee: 50 }, { max: 299.99, fee: 65 },
-      { max: 399.99, fee: 95 }, { max: 499.99, fee: 110 }, { max: 599.99, fee: 130 },
-      { max: 699.99, fee: 155 }, { max: 799.99, fee: 175 }, { max: 899.99, fee: 190 },
-      { max: 999.99, fee: 210 }, { max: 1199.99, fee: 235 }, { max: 1499.99, fee: 275 },
-      { max: 1999.99, fee: 340 }, { max: 2499.99, fee: 375 }, { max: 2999.99, fee: 400 },
-      { max: 3999.99, fee: 475 }, { max: 4999.99, fee: 575 }, { max: 7499.99, fee: 650 },
-      { max: 9999.99, fee: 725 }, { max: 14999.99, fee: 775 }, { max: Infinity, pct: 5 },
-    ],
-    gateFee: 79, envFee: 0, titleFee: 0, virtualBidFee: 100,
-  },
-  manheim: { name: "Manheim", tiers: [{ max: Infinity, pct: 5 }], gateFee: 59, envFee: 0, titleFee: 0, virtualBidFee: 0 },
-  private_party: { name: "Private Party", tiers: [{ max: Infinity, pct: 0 }], gateFee: 0, envFee: 0, titleFee: 0, virtualBidFee: 0 },
-  autotrader: { name: "AutoTrader", tiers: [{ max: Infinity, pct: 0 }], gateFee: 0, envFee: 0, titleFee: 0, virtualBidFee: 0 },
-  facebook: { name: "Facebook Marketplace", tiers: [{ max: Infinity, pct: 0 }], gateFee: 0, envFee: 0, titleFee: 0, virtualBidFee: 0 },
-  trade_in: { name: "Trade-In", tiers: [{ max: Infinity, pct: 0 }], gateFee: 0, envFee: 0, titleFee: 0, virtualBidFee: 0 },
-  other: { name: "Other", tiers: [{ max: Infinity, pct: 0 }], gateFee: 0, envFee: 0, titleFee: 0, virtualBidFee: 0 },
-  custom: { name: "Custom %", tiers: [{ max: Infinity, pct: 0 }], gateFee: 0, envFee: 0, titleFee: 0, virtualBidFee: 0 },
-};
-
-// Deep-clone the defaults so in-place mutation by applyCustomAuctionFeeTiers
-// doesn't leak back into DEFAULT_AUCTION_FEE_TIERS.
-const cloneTierConfig = (src) => Object.fromEntries(
-  Object.entries(src).map(([k, v]) => [k, { ...v, tiers: v.tiers.map(t => ({ ...t })) }])
-);
-const AUCTION_FEE_TIERS = cloneTierConfig(DEFAULT_AUCTION_FEE_TIERS);
-
-// Merges admin overrides onto the defaults and mutates AUCTION_FEE_TIERS in
-// place. `custom` is the sparse config from data.auctionFeeTiers (one entry
-// per overridden source). Infinite-max tiers are stored as `max: null` in
-// Firestore and deserialized back to Infinity here.
-function applyCustomAuctionFeeTiers(custom) {
-  const fresh = cloneTierConfig(DEFAULT_AUCTION_FEE_TIERS);
-  for (const k of Object.keys(AUCTION_FEE_TIERS)) delete AUCTION_FEE_TIERS[k];
-  for (const [k, v] of Object.entries(fresh)) AUCTION_FEE_TIERS[k] = v;
-  if (!custom || typeof custom !== "object") return;
-  for (const src of Object.keys(custom)) {
-    if (!AUCTION_FEE_TIERS[src]) continue;
-    const ov = custom[src] || {};
-    const next = { ...AUCTION_FEE_TIERS[src] };
-    if (typeof ov.gateFee === "number") next.gateFee = ov.gateFee;
-    if (typeof ov.envFee === "number") next.envFee = ov.envFee;
-    if (typeof ov.titleFee === "number") next.titleFee = ov.titleFee;
-    if (typeof ov.virtualBidFee === "number") next.virtualBidFee = ov.virtualBidFee;
-    if (Array.isArray(ov.tiers) && ov.tiers.length > 0) {
-      next.tiers = ov.tiers.map(t => ({ ...t, max: (t.max == null || t.max === "Infinity") ? Infinity : Number(t.max) }));
-    }
-    AUCTION_FEE_TIERS[src] = next;
-  }
-}
-
-// Inverse of applyCustomAuctionFeeTiers — extracts a sparse override object
-// suitable for persisting to Firestore (Infinity → null).
-function serializeTierOverrides(source) {
-  return {
-    ...source,
-    tiers: source.tiers.map(t => ({ ...t, max: t.max === Infinity ? null : t.max })),
-  };
-}
-
-function calcAuctionFees(price, source) {
-  const s = AUCTION_FEE_TIERS[source] || AUCTION_FEE_TIERS.custom;
-  const tier = s.tiers.find(t => price <= t.max);
-  const premium = tier.pct ? price * (tier.pct / 100) : tier.fee;
-  return { premium, gate: s.gateFee, env: s.envFee, title: s.titleFee, vbid: s.virtualBidFee, total: premium + s.gateFee + s.envFee + s.titleFee + s.virtualBidFee };
-}
+// AUCTION_FEE_TIERS, DEFAULT_AUCTION_FEE_TIERS, calcAuctionFees, etc.
+// are now imported from ./src/calc.js so the calculation surface can
+// be unit-tested. See tests/calc.test.mjs for the regression suite.
 
 // ─── Title Status Impact on Value ─────────────────────────────
 const TITLE_STATUS = {
@@ -635,31 +562,8 @@ function exportCSV(filename, headers, rows) {
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = filename; a.click(); URL.revokeObjectURL(a.href);
 }
 
-// Total Cost = Purchase Price + computed Auction Fees + every cost
-// attached to this vehicle. `expenses` is the full list from state; we filter
-// to this vehicle by stockNum. Legacy fields (transportCost, repairCost,
-// otherExpenses) on the vehicle record are still summed in so records that
-// predate the unified-expenses model don't silently drop costs.
-function calcTotalCost(v, expenses = []) {
-  const pp = p(v.purchasePrice);
-  let auctCost;
-  if (v.useCustomPremium) {
-    auctCost = pp * p(v.buyerPremiumPct) / 100;
-  } else {
-    auctCost = calcAuctionFees(pp, v.auctionSource || "custom").total;
-  }
-  const legacy = p(v.transportCost) + p(v.repairCost) + p(v.otherExpenses);
-  const tracked = Array.isArray(expenses)
-    ? expenses.filter(e => e.stockNum === v.stockNum).reduce((s, e) => s + p(e.amount), 0)
-    : 0;
-  return pp + auctCost + legacy + tracked;
-}
-// Sum of tracked expenses for a vehicle — used anywhere we need a "Total
-// Expenses" breakdown separate from the acquisition line.
-function calcVehicleExpenses(v, expenses) {
-  if (!v || !Array.isArray(expenses)) return 0;
-  return expenses.filter(e => e.stockNum === v.stockNum).reduce((s, e) => s + p(e.amount), 0);
-}
+// calcTotalCost and calcVehicleExpenses are imported from ./src/calc.js
+// — the single source of truth for cost-basis math.
 
 function calcVehicleFullMetrics(v, sale, holdCosts, expenses = []) {
   // Total Cost is the complete, all-in cost basis of the vehicle —
