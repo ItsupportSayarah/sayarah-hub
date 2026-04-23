@@ -656,15 +656,26 @@ function calcVehicleExpenses(v, expenses) {
 }
 
 function calcVehicleFullMetrics(v, sale, holdCosts, expenses = []) {
+  // Total Invested is the complete, all-in cost basis of the vehicle —
+  // purchase price + derived auction fees + legacy acquisition fields
+  // + every tracked expense (every category, including Selling Costs
+  // post-sale). This is the single number every downstream calculation
+  // depends on. Do not subtract any tracked-expense category separately
+  // below — that would double-count.
   const invested = calcTotalInvested(v, expenses);
   const vehicleExpenses = Array.isArray(expenses) ? expenses.filter(e => e.stockNum === v.stockNum) : [];
+  // sellingCosts is an *informational* breakdown of "how much of Total
+  // Invested happens to be post-sale selling costs" — it is NOT subtracted
+  // again from profit. Displays use this only as an "of which…" sublabel.
   const sellingCosts = vehicleExpenses
     .filter(e => (e.category || "").toLowerCase().startsWith("selling"))
     .reduce((s, e) => s + p(e.amount), 0);
   const saleDeductions = sale ? p(sale.auctionFee) + p(sale.titleFee) + p(sale.otherDeductions) : 0;
   const netSale = sale ? p(sale.grossPrice) - saleDeductions : 0;
-  // Net P/L per item #6 = grossPrice − totalInvested − sellingCosts − sale-time deductions
-  const grossProfit = sale ? netSale - invested - sellingCosts : null;
+  // Single clean definition: Net Profit = Net Sale − Total Invested.
+  // Sale-time deductions are already folded into netSale; every other
+  // dollar spent on the vehicle is in invested.
+  const grossProfit = sale ? netSale - invested : null;
   const days = sale && v.purchaseDate && sale.date ? daysBetween(v.purchaseDate, sale.date) : (v.purchaseDate ? daysFromNow(v.purchaseDate) : 0);
   const hc = calcHoldCosts(invested, days || 0, holdCosts);
   const trueProfit = grossProfit != null ? grossProfit - hc.total : null;
@@ -2084,8 +2095,8 @@ ${sale ? `<div class="section">
     <tr><td style="padding:3px 0;color:#666">Gross Sale Price</td><td style="padding:3px 0;text-align:right;font-weight:700">${fmt$2(p(sale.grossPrice))}</td></tr>
     <tr><td style="padding:3px 0;color:#666">− Sale-time deductions <span style="font-size:10px;color:#999">auction seller-fee · title · other</span></td><td style="padding:3px 0;text-align:right;color:#DC2626">${fmt$2(m.saleDeductions)}</td></tr>
     <tr style="border-top:1px dashed #ddd"><td style="padding:3px 0">Net Sale</td><td style="padding:3px 0;text-align:right;font-weight:700">${fmt$2(saleNet)}</td></tr>
-    <tr><td style="padding:3px 0;color:#666">− Total Invested <span style="font-size:10px;color:#999">purchase · auction fees · all tracked expenses</span></td><td style="padding:3px 0;text-align:right;color:#DC2626">${fmt$2(m.invested)}</td></tr>
-    <tr><td style="padding:3px 0;color:#666">− Selling Costs (post-sale) <span style="font-size:10px;color:#999">commission, post-sale repairs, marketing</span></td><td style="padding:3px 0;text-align:right;color:#DC2626">${fmt$2(m.sellingCosts)}</td></tr>
+    <tr><td style="padding:3px 0;color:#666">− Total Invested <span style="font-size:10px;color:#999">complete cost basis: purchase · auction fees · every tracked expense, every category</span></td><td style="padding:3px 0;text-align:right;color:#DC2626">${fmt$2(m.invested)}</td></tr>
+    ${m.sellingCosts > 0 ? `<tr><td style="padding:2px 0 4px 14px;font-size:10px;color:#888;font-style:italic">↳ of which Selling Costs (post-sale): commission, post-sale repairs, marketing</td><td style="padding:2px 0 4px;text-align:right;font-size:10px;font-style:italic;color:#888">${fmt$2(m.sellingCosts)}</td></tr>` : ""}
     <tr style="border-top:2px solid ${m.grossProfit >= 0 ? "#166534" : "#DC2626"}"><td style="padding:6px 0;font-weight:800;color:${m.grossProfit >= 0 ? "#166534" : "#DC2626"}">Net Profit / (Loss)</td><td style="padding:6px 0;text-align:right;font-weight:900;font-size:14px;color:${m.grossProfit >= 0 ? "#166534" : "#DC2626"}">${fmt$2(m.grossProfit)}</td></tr>
   </table>
   <div class="summary-grid">
@@ -2323,16 +2334,45 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
           )}
 
           {/* ═══ SECTION 1: OVERVIEW ═══ */}
+          {/* Data-integrity diagnostic: orphan expenses. Total Invested only
+              counts expenses whose stockNum matches this vehicle, so if the
+              user accidentally saved an expense with a different stockNum
+              (or none), the money doesn't count and nothing tells them.
+              Surface any such drift at the top of the detail view. */}
+          {(() => {
+            const orphans = (data.expenses || []).filter(e => {
+              const label = `${v.year} ${v.make} ${v.model}`.toLowerCase();
+              const matchesVehicleText = e.vehicle && e.vehicle.toLowerCase().includes(label.trim());
+              return matchesVehicleText && e.stockNum !== v.stockNum;
+            });
+            if (orphans.length === 0) return null;
+            const orphanTotal = orphans.reduce((s, e) => s + p(e.amount), 0);
+            return (
+              <div style={{ marginBottom: 12, padding: "10px 12px", background: "#FEF3C7", borderRadius: 8, fontSize: 11, color: "#92400E", border: "1px solid #FCD34D" }}>
+                <b>Possible orphan expenses:</b> {orphans.length} expense{orphans.length === 1 ? "" : "s"} totaling {fmt$2(orphanTotal)} reference this vehicle by name but have a different stock #. These dollars are NOT in Total Invested. Check the Expenses tab and fix the stock # to include them here.
+              </div>
+            );
+          })()}
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
-            <StatCard label="Total Invested" value={fmt$(m.invested)} color={BRAND.red} />
+            <StatCard label="Total Invested" value={fmt$(m.invested)} color={BRAND.red} sub={m.invested > 0 ? "complete cost basis" : "no costs yet"} />
             {m.grossProfit != null ? (
-              <StatCard label="Gross Profit" value={fmt$(m.grossProfit)} color={m.grossProfit >= 0 ? BRAND.green : "#DC2626"} />
+              <StatCard label="Net Profit" value={fmt$(m.grossProfit)} color={m.grossProfit >= 0 ? BRAND.green : "#DC2626"} sub="Net Sale − Total Invested" />
             ) : (
-              <StatCard label="Break-Even" value={fmt$(m.breakEven.minSalePrice)} color="#D97706" />
+              <StatCard label="Break-Even" value={fmt$(m.breakEven.minSalePrice)} color="#D97706" sub="min sale to cover costs" />
             )}
-            <StatCard label="Total Expenses" value={fmt$(totalExpenses)} color={BRAND.gray} sub={`${expenses.length} item${expenses.length !== 1 ? "s" : ""}`} />
+            <StatCard label="Tracked Expenses" value={fmt$(totalExpenses)} color={BRAND.gray} sub={`${expenses.length} item${expenses.length !== 1 ? "s" : ""} · included in Invested`} />
             <StatCard label="Risk" value={m.risk.level} color={m.risk.color} />
           </div>
+          {/* Soft warning when Total Invested = $0 but we can see the vehicle
+              has a purchase price OR at least one tracked expense. This
+              state is *not reachable* with current formula logic, but is a
+              canary if a future change regresses the roll-up or if expense
+              records have malformed amounts. */}
+          {m.invested === 0 && (p(v.purchasePrice) > 0 || expenses.length > 0) && (
+            <div style={{ marginBottom: 14, padding: "10px 12px", background: "#FEE2E2", borderRadius: 8, fontSize: 12, color: "#991B1B", border: "1px solid #FCA5A5", fontWeight: 600 }}>
+              Total Invested is $0 but this vehicle has a Purchase Price or Tracked Expenses. Please report this to engineering with the stock # — the roll-up formula is broken.
+            </div>
+          )}
 
           {m.grossProfit != null && (
             <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "center" }}>
@@ -2700,15 +2740,15 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
                   {sale.notes && <div style={{ fontSize: 11, color: BRAND.grayDark, marginTop: 6, fontStyle: "italic" }}>{sale.notes}</div>}
                 </Card>
 
-                {/* Full Profit & Loss — the source-of-truth P&L per #6:
-                    Sale Price − Total Invested − Selling Costs = Net P/L.
-                    The two deduction categories are intentionally separate:
-                      · Sale-time deductions = fees baked into the sale itself
-                        (auction seller-fee, title transfer, buyer paid fees)
-                      · Selling Costs (post-sale) = tracked expenses with the
-                        "Selling Costs (post-sale)" category (commission paid
-                        out, post-sale repairs absorbed by seller, marketing)
-                    Both reduce profit but are entered in different screens. */}
+                {/* Full Profit & Loss — the source-of-truth P&L.
+                    Formula: Net Sale − Total Invested = Net Profit.
+                    Total Invested already includes every tracked expense
+                    (every category, including Selling Costs post-sale), so
+                    we do not subtract Selling Costs again — that was the
+                    double-count bug. Selling Costs are surfaced as an
+                    "of which…" informational sublabel under Total Invested
+                    so the user can see how much post-sale spend is in the
+                    number without it getting deducted twice. */}
                 {m.grossProfit != null && (
                   <div style={{ background: m.grossProfit >= 0 ? "#F0FDF4" : "#FEF2F2", borderRadius: 10, padding: 16, marginTop: 12, border: `1px solid ${m.grossProfit >= 0 ? "#D1FAE5" : "#FECACA"}` }}>
                     <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: m.grossProfit >= 0 ? BRAND.green : "#DC2626", marginBottom: 10, letterSpacing: "0.06em" }}>Profit & Loss</div>
@@ -2717,8 +2757,10 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
                         <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>Sale Price (gross)</td><td style={{ padding: "4px 0", textAlign: "right", fontWeight: 700, ...S.mono }}>{fmt$2(p(sale.grossPrice))}</td></tr>
                         <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>− Sale-time deductions <span style={{ fontSize: 10 }}>fees on the sale record itself — auction seller-fee, title, other</span></td><td style={{ padding: "4px 0", textAlign: "right", color: "#DC2626", ...S.mono }}>{fmt$2(m.saleDeductions)}</td></tr>
                         <tr style={{ borderTop: `1px dashed ${m.grossProfit >= 0 ? "#86EFAC" : "#FCA5A5"}` }}><td style={{ padding: "4px 0", color: BRAND.grayDark }}>Net Sale</td><td style={{ padding: "4px 0", textAlign: "right", fontWeight: 700, ...S.mono }}>{fmt$2(m.netSale)}</td></tr>
-                        <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>− Total Invested <span style={{ fontSize: 10 }}>(purchase + auction fees + all costs)</span></td><td style={{ padding: "4px 0", textAlign: "right", color: "#DC2626", ...S.mono }}>{fmt$2(m.invested)}</td></tr>
-                        <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>− Selling Costs <span style={{ fontSize: 10 }}>tracked expenses categorized "Selling Costs (post-sale)" — commission, post-sale repairs, marketing</span></td><td style={{ padding: "4px 0", textAlign: "right", color: "#DC2626", ...S.mono }}>{fmt$2(m.sellingCosts)}</td></tr>
+                        <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>− Total Invested <span style={{ fontSize: 10 }}>complete cost basis: purchase + auction fees + every tracked expense, every category</span></td><td style={{ padding: "4px 0", textAlign: "right", color: "#DC2626", ...S.mono }}>{fmt$2(m.invested)}</td></tr>
+                        {m.sellingCosts > 0 && (
+                          <tr><td style={{ padding: "2px 0 6px 14px", fontSize: 10, color: BRAND.gray, fontStyle: "italic" }}>↳ of which Selling Costs (post-sale): commission, post-sale repairs, marketing</td><td style={{ padding: "2px 0 6px", textAlign: "right", fontSize: 10, fontStyle: "italic", color: BRAND.gray, ...S.mono }}>{fmt$2(m.sellingCosts)}</td></tr>
+                        )}
                         <tr style={{ borderTop: `2px solid ${m.grossProfit >= 0 ? BRAND.green : "#DC2626"}` }}>
                           <td style={{ padding: "6px 0", fontWeight: 800, textTransform: "uppercase", fontSize: 11, color: m.grossProfit >= 0 ? BRAND.green : "#DC2626" }}>Net Profit / (Loss)</td>
                           <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 900, fontSize: 14, color: m.grossProfit >= 0 ? BRAND.green : "#DC2626", ...S.mono }}>{fmt$2(m.grossProfit)}</td>
