@@ -33,7 +33,7 @@ service cloud.firestore {
     // Only admin/manager can write
     match /auctionShared/{docId} {
       allow read: if isAuth();
-      allow write: if isAuth();
+      allow write: if isAdminOrManager();
     }
 
     // ─── Auction Per-User Data (legacy, migration) ───
@@ -45,13 +45,22 @@ service cloud.firestore {
     // ─── Logistics Shared Data ───
     match /logisticsShared/{docId} {
       allow read: if isAuth();
-      allow write: if isAuth();
+      allow write: if isAdminOrManager();
     }
 
     // ─── Logistics Per-User Data (legacy) ───
     match /logisticsData/{uid} {
       allow read: if isAuth() && request.auth.uid == uid;
       allow write: if isAuth() && request.auth.uid == uid;
+    }
+
+    // ─── Activity Log — append-only audit trail ───
+    // Any authenticated user can create (append) an entry. No one can
+    // update or delete — the log is immutable at the rules layer.
+    match /activityLog/{entryId} {
+      allow read: if isAuth();
+      allow create: if isAuth();
+      allow update, delete: if false;
     }
 
     // ─── Deny everything else by default ───

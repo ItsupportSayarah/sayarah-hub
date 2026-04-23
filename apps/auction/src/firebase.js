@@ -5,7 +5,7 @@
 
 import { initializeApp } from "firebase/app";
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail } from "firebase/auth";
-import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, getDocs, deleteDoc, query, where, serverTimestamp } from "firebase/firestore";
+import { getFirestore, doc, getDoc, setDoc, addDoc, onSnapshot, collection, getDocs, deleteDoc, query, where, orderBy, limit as fsLimit, serverTimestamp, runTransaction } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 
 // ──────────────────────────────────────────────────────────────
@@ -228,6 +228,25 @@ export async function saveSharedFields(fields) {
   }, { merge: true });
 }
 
+// Atomic read-merge-write using a Firestore transaction.
+// `merger` receives the current remote doc (or null if missing) and must
+// return the new value to write. Firestore retries automatically if the
+// underlying doc changes between the transaction's read and write, so the
+// merger may be invoked more than once — it must be pure.
+// The stored doc carries a `_version` counter, monotonically incremented,
+// useful for client-side conflict detection and debugging.
+export async function saveSharedDataTxn(merger) {
+  const ref = doc(db, "auctionShared", "appData");
+  return runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const current = snap.exists() ? snap.data() : null;
+    const next = merger(current);
+    const nextVersion = (current?._version || 0) + 1;
+    tx.set(ref, { ...next, _version: nextVersion, updatedAt: serverTimestamp() });
+    return { version: nextVersion, value: next };
+  });
+}
+
 // Load shared data once
 export async function loadSharedData() {
   const snap = await getDoc(doc(db, "auctionShared", "appData"));
@@ -289,15 +308,40 @@ export async function loadApprovalsFB() {
   return [];
 }
 
-// ─── Activity Log (Auction-specific) ───
-export async function saveActivityLogFB(list) {
-  await setDoc(doc(db, "auctionShared", "activityLog"), { items: list, updatedAt: serverTimestamp() });
+// ─── Activity Log (Auction-specific) — append-only ───
+// New entries go to the `activityLog` top-level collection (one doc per entry),
+// which is protected by create-only Firestore rules. The legacy single-doc
+// store at `auctionShared/activityLog` is still read during the transition
+// so existing history remains visible.
+export async function addActivityLogEntryFB(entry) {
+  await addDoc(collection(db, "activityLog"), { ...entry, createdAt: serverTimestamp() });
 }
 
-export async function loadActivityLogFB() {
-  const snap = await getDoc(doc(db, "auctionShared", "activityLog"));
-  if (snap.exists()) return snap.data().items || [];
-  return [];
+export async function loadActivityLogFB(max = 500) {
+  const out = [];
+  try {
+    const q = query(collection(db, "activityLog"), orderBy("timestamp", "desc"), fsLimit(max));
+    const snap = await getDocs(q);
+    snap.forEach(d => out.push({ _docId: d.id, ...d.data() }));
+  } catch (e) {
+    // New collection may not exist yet
+  }
+  if (out.length < max) {
+    try {
+      const legacy = await getDoc(doc(db, "auctionShared", "activityLog"));
+      if (legacy.exists()) {
+        const items = legacy.data().items || [];
+        const seen = new Set(out.map(x => x.id));
+        for (const it of items) {
+          if (out.length >= max) break;
+          if (!seen.has(it.id)) out.push(it);
+        }
+      }
+    } catch (e) {
+      // legacy missing is fine
+    }
+  }
+  return out;
 }
 
 // ─── Users list for admin management ───

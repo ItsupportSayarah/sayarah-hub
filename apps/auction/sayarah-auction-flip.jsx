@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback, createContext, useContext, Component } from "react";
-import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserProfile, updateUserRole, getAllUsers, updateUserPermissions, getUserData, saveAppData, loadAppData, saveSharedData, loadSharedData, onSharedDataChange, saveApprovalsFB, loadApprovalsFB, saveActivityLogFB, loadActivityLogFB, changePassword, resetPassword, uploadFile, deleteFile } from "./src/firebase.js";
+import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserProfile, updateUserRole, getAllUsers, updateUserPermissions, getUserData, saveAppData, loadAppData, saveSharedData, saveSharedDataTxn, loadSharedData, onSharedDataChange, saveApprovalsFB, loadApprovalsFB, addActivityLogEntryFB, loadActivityLogFB, changePassword, resetPassword, uploadFile, deleteFile } from "./src/firebase.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
 class ErrorBoundary extends Component {
@@ -33,7 +33,11 @@ const FIREBASE_ENABLED = (() => {
 // ═══════════════════════════════════════════════════════════════
 
 // ─── Auction Fee Structures (Real Copart/IAAI tiers) ──────────
-const AUCTION_FEE_TIERS = {
+// DEFAULT_AUCTION_FEE_TIERS is the immutable baseline. AUCTION_FEE_TIERS is the
+// active, possibly-overridden copy — admins can edit rates without a redeploy
+// via the Settings tab. Overrides live in `data.auctionFeeTiers` (Firestore)
+// and are applied at render time via applyCustomAuctionFeeTiers().
+const DEFAULT_AUCTION_FEE_TIERS = {
   copart: {
     name: "Copart",
     tiers: [
@@ -70,6 +74,46 @@ const AUCTION_FEE_TIERS = {
   custom: { name: "Custom %", tiers: [{ max: Infinity, pct: 0 }], gateFee: 0, envFee: 0, titleFee: 0, virtualBidFee: 0 },
 };
 
+// Deep-clone the defaults so in-place mutation by applyCustomAuctionFeeTiers
+// doesn't leak back into DEFAULT_AUCTION_FEE_TIERS.
+const cloneTierConfig = (src) => Object.fromEntries(
+  Object.entries(src).map(([k, v]) => [k, { ...v, tiers: v.tiers.map(t => ({ ...t })) }])
+);
+const AUCTION_FEE_TIERS = cloneTierConfig(DEFAULT_AUCTION_FEE_TIERS);
+
+// Merges admin overrides onto the defaults and mutates AUCTION_FEE_TIERS in
+// place. `custom` is the sparse config from data.auctionFeeTiers (one entry
+// per overridden source). Infinite-max tiers are stored as `max: null` in
+// Firestore and deserialized back to Infinity here.
+function applyCustomAuctionFeeTiers(custom) {
+  const fresh = cloneTierConfig(DEFAULT_AUCTION_FEE_TIERS);
+  for (const k of Object.keys(AUCTION_FEE_TIERS)) delete AUCTION_FEE_TIERS[k];
+  for (const [k, v] of Object.entries(fresh)) AUCTION_FEE_TIERS[k] = v;
+  if (!custom || typeof custom !== "object") return;
+  for (const src of Object.keys(custom)) {
+    if (!AUCTION_FEE_TIERS[src]) continue;
+    const ov = custom[src] || {};
+    const next = { ...AUCTION_FEE_TIERS[src] };
+    if (typeof ov.gateFee === "number") next.gateFee = ov.gateFee;
+    if (typeof ov.envFee === "number") next.envFee = ov.envFee;
+    if (typeof ov.titleFee === "number") next.titleFee = ov.titleFee;
+    if (typeof ov.virtualBidFee === "number") next.virtualBidFee = ov.virtualBidFee;
+    if (Array.isArray(ov.tiers) && ov.tiers.length > 0) {
+      next.tiers = ov.tiers.map(t => ({ ...t, max: (t.max == null || t.max === "Infinity") ? Infinity : Number(t.max) }));
+    }
+    AUCTION_FEE_TIERS[src] = next;
+  }
+}
+
+// Inverse of applyCustomAuctionFeeTiers — extracts a sparse override object
+// suitable for persisting to Firestore (Infinity → null).
+function serializeTierOverrides(source) {
+  return {
+    ...source,
+    tiers: source.tiers.map(t => ({ ...t, max: t.max === Infinity ? null : t.max })),
+  };
+}
+
 function calcAuctionFees(price, source) {
   const s = AUCTION_FEE_TIERS[source] || AUCTION_FEE_TIERS.custom;
   const tier = s.tiers.find(t => price <= t.max);
@@ -94,6 +138,7 @@ const DEFAULT_HOLD_COSTS = {
   storagePerDay: 0,         // 0 if home lot
   depreciationPerDay: 5.00, // ~$150/mo avg depreciation
   opportunityCostRate: 0.10,// 10% annual return on capital
+  agingThresholdDays: 45,   // warn when a vehicle has been in inventory this long
 };
 
 function calcHoldCosts(totalInvested, daysHeld, holdCosts = DEFAULT_HOLD_COSTS) {
@@ -257,9 +302,15 @@ function calcQuarterlyTax(sales, expenses, vehicles) {
     const revenue = qSales.reduce((s, x) => s + p(x.grossPrice) - p(x.auctionFee) - p(x.titleFee) - p(x.otherDeductions), 0);
     const costs = qSales.reduce((s, x) => {
       const v = vehicles.find(vh => vh.stockNum === x.stockNum);
-      return s + (v ? calcTotalInvested(v) : 0);
+      return s + (v ? calcTotalInvested(v, expenses) : 0);
     }, 0);
-    const exp = qExpenses.reduce((s, e) => s + p(e.amount), 0);
+    // qExpenses covers the whole period; calcTotalInvested above already
+    // pulled in per-vehicle expenses for each sold vehicle, so subtract those
+    // out of the stand-alone expense line to avoid double-counting.
+    const stockNumsInPeriod = new Set(qSales.map(x => x.stockNum));
+    const exp = qExpenses
+      .filter(e => !stockNumsInPeriod.has(e.stockNum))
+      .reduce((s, e) => s + p(e.amount), 0);
     const profit = revenue - costs - exp;
     const maStateTax = profit > 0 ? profit * MA_CORP_TAX_RATE : 0;
     const federalTax = profit > 0 ? profit * FEDERAL_CORP_TAX_RATE : 0;
@@ -302,7 +353,22 @@ applyTheme(loadTheme());
 
 const TABS = ["Dashboard", "Pipeline", "Inventory", "Mileage", "Analytics"];
 const PIPELINE_STAGES = ["Scouting", "Purchased", "Repairing", "Listed", "Sold"];
-const EXPENSE_CATEGORIES = ["Repairs/Mechanical","Body Work/Paint","Detailing/Cleaning","Parts","Tires","Registration/Title","Insurance","Transport/Towing","Auction Fees","Storage/Parking","Advertising/Listing","Tools/Equipment","Office/Admin","Fuel","Miscellaneous"];
+// Canonical expense category list. Every tracked expense must use one of
+// these; reports break down P&L by these categories. Ordered to match the
+// typical deal lifecycle.
+const EXPENSE_CATEGORIES = [
+  "Purchase Price",
+  "Auction Fees",
+  "Transport/Towing",
+  "Storage/Parking",
+  "Repair/Recon",
+  "Registration/Title/DMV",
+  "Inspection",
+  "Detailing",
+  "Marketing/Listing",
+  "Selling Costs (post-sale)",
+  "Office/Admin",
+];
 const SALE_TYPES = ["Private Party","Dealer","Auction","Consignment","Trade-In","Facebook Marketplace","Craigslist","OfferUp"];
 const PAYMENT_METHODS = ["Cash","Check","Credit Card","Debit Card","Wire Transfer","Financing","Zelle","Venmo","PayPal"];
 const IRS_RATE = 0.70;
@@ -377,14 +443,22 @@ async function loadActivityLog() {
   if (FIREBASE_ENABLED) { try { return await loadActivityLogFB(); } catch { return []; } }
   try { const raw = localStorage.getItem(ACTIVITY_STORAGE_KEY); return raw ? JSON.parse(raw) : []; } catch { return []; }
 }
-function saveActivityLog(list) {
-  if (FIREBASE_ENABLED) { saveActivityLogFB(list).catch(() => {}); return; }
-  localStorage.setItem(ACTIVITY_STORAGE_KEY, JSON.stringify(list));
-}
+// Append a new log entry. Backed by an append-only Firestore collection in prod
+// (create-only rules prevent tampering). In local/dev the fallback keeps a
+// rolling 500-entry list in localStorage.
 async function logActivity(user, action, description, details = {}) {
   const entry = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), user, action, description, timestamp: new Date().toISOString(), details };
-  const log = await loadActivityLog();
-  log.unshift(entry); if (log.length > 500) log.length = 500; saveActivityLog(log);
+  if (FIREBASE_ENABLED) {
+    try { await addActivityLogEntryFB(entry); } catch (e) { console.warn("activity log append failed:", e); }
+    return;
+  }
+  try {
+    const raw = localStorage.getItem(ACTIVITY_STORAGE_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    list.unshift(entry);
+    if (list.length > 500) list.length = 500;
+    localStorage.setItem(ACTIVITY_STORAGE_KEY, JSON.stringify(list));
+  } catch {}
 }
 
 // ─── Notifications ──────────────────────────────────────────
@@ -416,8 +490,8 @@ async function generateNotifications(data) {
 }
 
 // ─── Aging Price Suggestions ────────────────────────────────
-function calcSuggestedPrice(vehicle, holdCosts) {
-  const invested = calcTotalInvested(vehicle);
+function calcSuggestedPrice(vehicle, holdCosts, expenses = []) {
+  const invested = calcTotalInvested(vehicle, expenses);
   const days = vehicle.purchaseDate ? Math.round((new Date() - new Date(vehicle.purchaseDate)) / 86400000) : 0;
   const hc = calcHoldCosts(invested, days, holdCosts);
   const breakEven = invested + hc.total;
@@ -434,9 +508,99 @@ function saveWidgetPrefs(prefs) { localStorage.setItem(WIDGET_PREFS_KEY, JSON.st
 
 const DOC_CATEGORIES = ["Title", "Receipt", "Inspection Report", "Insurance", "Repair Invoice", "Photo", "Registration", "Other"];
 
-const defaultData = () => ({ vehicles: [], expenses: [], sales: [], mileage: [], documents: [], auctionEvents: [], nextStockNum: 1, holdCosts: { ...DEFAULT_HOLD_COSTS }, startingCapital: 0 });
+const defaultData = () => ({ vehicles: [], expenses: [], sales: [], mileage: [], documents: [], auctionEvents: [], trash: [], nextStockNum: 1, holdCosts: { ...DEFAULT_HOLD_COSTS }, auctionFeeTiers: null, startingCapital: 0 });
+// Wraps a deleted record with audit metadata for the trash bucket.
+const toTrash = (item, entity, user) => ({ ...item, _entity: entity, _deletedAt: new Date().toISOString(), _deletedBy: user || "unknown" });
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const p = v => parseFloat(v) || 0;
+// Validates a money-value input. Returns an error string or null.
+// Empty/null is OK (treated as 0 downstream); guards NaN, negatives, and absurd magnitudes.
+const validateMoney = (val, label, { allowZero = true, max = 10_000_000 } = {}) => {
+  if (val === "" || val == null) return allowZero ? null : `${label} is required`;
+  const n = Number(val);
+  if (!Number.isFinite(n)) return `${label} must be a valid number`;
+  if (n < 0) return `${label} cannot be negative`;
+  if (!allowZero && n === 0) return `${label} must be greater than 0`;
+  if (n > max) return `${label} looks unreasonable (> ${fmt$(max)}). Double-check the value.`;
+  return null;
+};
+const validateMoneyFields = (checks) => {
+  for (const [val, label, opts] of checks) {
+    const err = validateMoney(val, label, opts);
+    if (err) return err;
+  }
+  return null;
+};
+// Rounds to nearest cent to prevent floating-point drift at computation boundaries.
+// Money math stays in dollars-as-floats (safe for sums < ~$9e12); this just
+// snaps results to a whole number of cents so displays and stored totals match.
+const roundMoney = (n) => {
+  if (n == null || !Number.isFinite(n)) return 0;
+  return Math.round(n * 100) / 100;
+};
+// Payment types — informational tags on a sale payment entry.
+const PAYMENT_TYPES = ["deposit", "balance", "payment", "refund", "other"];
+// Sum of payments on a sale. For legacy records (no `payments` array) we
+// treat the contracted `grossPrice` as fully collected. Refunds are recorded
+// as negative-amount entries, so a plain sum is correct.
+const calcSalePaid = (s) => {
+  if (!s) return 0;
+  const pays = Array.isArray(s.payments) ? s.payments : [];
+  if (pays.length === 0) return p(s.grossPrice);
+  return pays.reduce((acc, pay) => acc + p(pay.amount), 0);
+};
+// Outstanding balance — only meaningful when payments have been recorded.
+// Legacy sales (no payments) report 0 outstanding.
+const calcSaleOutstanding = (s) => {
+  if (!s) return 0;
+  const pays = Array.isArray(s.payments) ? s.payments : [];
+  if (pays.length === 0) return 0;
+  return roundMoney(p(s.grossPrice) - calcSalePaid(s));
+};
+// Returns an error string if the sale is missing required-for-Sold fields,
+// otherwise null. Per the workflow rule: a vehicle cannot be marked Sold
+// unless sale price, sale date, buyer, and payment method are all set.
+const validateSoldRequirements = (sale) => {
+  if (!sale) return "No sale record";
+  if (!p(sale.grossPrice)) return "Sale price (gross) is required";
+  if (!sale.date) return "Sale date is required";
+  if (!(sale.buyerName || "").trim()) return "Buyer name is required";
+  if (!(sale.paymentMethod || "").trim()) return "Payment method is required";
+  return null;
+};
+// Field-level diff helper for the audit trail. Given two versions of a
+// record and a list of fields, returns { changes: [{field, before, after}],
+// summary: "field: x → y; ..." } for the ones that actually changed.
+// Money fields are compared via p() so "" vs 0 doesn't register as a change.
+const MONEY_FIELDS = new Set(["purchasePrice", "transportCost", "repairCost", "otherExpenses", "grossPrice", "auctionFee", "titleFee", "otherDeductions", "amount", "reconBudget"]);
+const auditDiff = (oldObj, newObj, fields) => {
+  const changes = [];
+  for (const f of fields) {
+    const before = oldObj ? oldObj[f] : undefined;
+    const after = newObj ? newObj[f] : undefined;
+    const eq = MONEY_FIELDS.has(f) ? (p(before) === p(after)) : ((before ?? "") === (after ?? ""));
+    if (!eq) changes.push({ field: f, before: before ?? null, after: after ?? null });
+  }
+  const fmtVal = (v) => v == null || v === "" ? "∅" : String(v);
+  const summary = changes.map(c => `${c.field}: ${fmtVal(c.before)} → ${fmtVal(c.after)}`).join("; ");
+  return { changes, summary };
+};
+// Canonical expense-entry validator. Every tracked expense must have these
+// fields — anything less creates gaps in the cost roll-up and ambiguity in
+// category-based reports.
+const validateExpenseEntry = (e) => {
+  if (!e) return "Expense is empty";
+  if (!e.date) return "Date is required";
+  if (!(e.category || "").trim()) return "Category is required";
+  if (!EXPENSE_CATEGORIES.includes(e.category)) return "Category must be chosen from the standard list";
+  if (!(e.vendor || "").trim()) return "Vendor is required";
+  if (!(e.description || "").trim()) return "Description is required";
+  if (e.amount === "" || e.amount == null) return "Amount is required";
+  const amtErr = validateMoney(e.amount, "Amount", { allowZero: false });
+  if (amtErr) return amtErr;
+  if (!(e.stockNum || "").toString().trim()) return "Vehicle (stock #) is required";
+  return null;
+};
 const fmt$ = n => (n == null || isNaN(n)) ? "$0" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
 const fmt$2 = n => (n == null || isNaN(n)) ? "$0.00" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 const fmtPct = n => (n == null || isNaN(n)) ? "0%" : (n * 100).toFixed(1) + "%";
@@ -454,7 +618,12 @@ function exportCSV(filename, headers, rows) {
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = filename; a.click(); URL.revokeObjectURL(a.href);
 }
 
-function calcTotalInvested(v) {
+// Total Invested = Purchase Price + computed Auction Fees + every cost
+// attached to this vehicle. `expenses` is the full list from state; we filter
+// to this vehicle by stockNum. Legacy fields (transportCost, repairCost,
+// otherExpenses) on the vehicle record are still summed in so records that
+// predate the unified-expenses model don't silently drop costs.
+function calcTotalInvested(v, expenses = []) {
   const pp = p(v.purchasePrice);
   let auctCost;
   if (v.useCustomPremium) {
@@ -462,13 +631,29 @@ function calcTotalInvested(v) {
   } else {
     auctCost = calcAuctionFees(pp, v.auctionSource || "custom").total;
   }
-  return pp + auctCost + p(v.transportCost) + p(v.repairCost) + p(v.otherExpenses);
+  const legacy = p(v.transportCost) + p(v.repairCost) + p(v.otherExpenses);
+  const tracked = Array.isArray(expenses)
+    ? expenses.filter(e => e.stockNum === v.stockNum).reduce((s, e) => s + p(e.amount), 0)
+    : 0;
+  return pp + auctCost + legacy + tracked;
+}
+// Sum of tracked expenses for a vehicle — used anywhere we need a "Total
+// Expenses" breakdown separate from the acquisition line.
+function calcVehicleExpenses(v, expenses) {
+  if (!v || !Array.isArray(expenses)) return 0;
+  return expenses.filter(e => e.stockNum === v.stockNum).reduce((s, e) => s + p(e.amount), 0);
 }
 
-function calcVehicleFullMetrics(v, sale, holdCosts) {
-  const invested = calcTotalInvested(v);
-  const netSale = sale ? p(sale.grossPrice) - p(sale.auctionFee) - p(sale.titleFee) - p(sale.otherDeductions) : 0;
-  const grossProfit = sale ? netSale - invested : null;
+function calcVehicleFullMetrics(v, sale, holdCosts, expenses = []) {
+  const invested = calcTotalInvested(v, expenses);
+  const vehicleExpenses = Array.isArray(expenses) ? expenses.filter(e => e.stockNum === v.stockNum) : [];
+  const sellingCosts = vehicleExpenses
+    .filter(e => (e.category || "").toLowerCase().startsWith("selling"))
+    .reduce((s, e) => s + p(e.amount), 0);
+  const saleDeductions = sale ? p(sale.auctionFee) + p(sale.titleFee) + p(sale.otherDeductions) : 0;
+  const netSale = sale ? p(sale.grossPrice) - saleDeductions : 0;
+  // Net P/L per item #6 = grossPrice − totalInvested − sellingCosts − sale-time deductions
+  const grossProfit = sale ? netSale - invested - sellingCosts : null;
   const days = sale && v.purchaseDate && sale.date ? daysBetween(v.purchaseDate, sale.date) : (v.purchaseDate ? daysFromNow(v.purchaseDate) : 0);
   const hc = calcHoldCosts(invested, days || 0, holdCosts);
   const trueProfit = grossProfit != null ? grossProfit - hc.total : null;
@@ -479,7 +664,8 @@ function calcVehicleFullMetrics(v, sale, holdCosts) {
   const breakEven = calcBreakEven(invested, hc.total, 0);
   const risk = calcRiskScore(v);
   const aging = v.status !== "Sold" ? getAgingStatus(days || 0) : null;
-  return { invested, netSale, grossProfit, trueProfit, days, holdCost: hc, margin, velocity, annROI, grade, breakEven, risk, aging };
+  const costPerDay = days > 0 ? invested / days : 0;
+  return { invested, netSale, grossProfit, trueProfit, days, holdCost: hc, margin, velocity, annROI, grade, breakEven, risk, aging, sellingCosts, saleDeductions, costPerDay };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -611,6 +797,57 @@ function MiniBar({ value, max, color }) {
 }
 
 function SectionTitle({ children }) { return <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.red, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 }}>{children}</div>; }
+
+// Inline editor for a sale's payment schedule. Each row is a partial payment
+// (deposit, balance, refund, etc.). Summary shows paid vs outstanding vs the
+// contracted gross price. If no rows are added, the sale is treated as fully
+// paid at grossPrice for backward-compat with legacy records.
+function PaymentsEditor({ grossPrice, payments, onChange }) {
+  const rows = Array.isArray(payments) ? payments : [];
+  const paid = rows.reduce((acc, r) => acc + p(r.amount), 0);
+  const outstanding = roundMoney((grossPrice || 0) - paid);
+
+  const add = () => {
+    const row = { id: genId(), date: new Date().toISOString().slice(0, 10), amount: "", method: "", type: "payment", notes: "" };
+    onChange([...(rows || []), row]);
+  };
+  const upd = (id, key, val) => onChange(rows.map(r => r.id === id ? { ...r, [key]: val } : r));
+  const remove = (id) => onChange(rows.filter(r => r.id !== id));
+
+  return (
+    <div style={{ marginTop: 14, borderTop: `1px dashed ${BRAND.grayLight}`, paddingTop: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.06em" }}>Payments (optional)</div>
+        <Btn size="sm" variant="secondary" onClick={add}>+ Add Payment</Btn>
+      </div>
+      {rows.length === 0 ? (
+        <div style={{ fontSize: 11, color: BRAND.gray, fontStyle: "italic" }}>No payments recorded — sale is treated as fully paid at gross price.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {rows.map(r => (
+            <div key={r.id} style={{ display: "grid", gridTemplateColumns: "120px 110px 110px 1fr 30px", gap: 6, alignItems: "center" }}>
+              <input type="date" value={r.date || ""} onChange={e => upd(r.id, "date", e.target.value)} style={{ padding: "6px 8px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, fontSize: 11, fontFamily: "inherit" }} />
+              <input type="number" step="0.01" placeholder="Amount" value={r.amount} onChange={e => upd(r.id, "amount", e.target.value === "" ? "" : parseFloat(e.target.value))} style={{ padding: "6px 8px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, fontSize: 11, fontFamily: "inherit", ...S.mono }} />
+              <select value={r.type || "payment"} onChange={e => upd(r.id, "type", e.target.value)} style={{ padding: "6px 8px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, fontSize: 11, fontFamily: "inherit", background: BRAND.white }}>
+                {PAYMENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <input type="text" placeholder="Method / notes" value={r.method || ""} onChange={e => upd(r.id, "method", e.target.value)} style={{ padding: "6px 8px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, fontSize: 11, fontFamily: "inherit" }} />
+              <button onClick={() => remove(r.id)} aria-label="Remove payment" style={{ border: "none", background: "transparent", color: "#DC2626", cursor: "pointer", fontSize: 16, fontWeight: 700, padding: 0 }}>×</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {(rows.length > 0 || (grossPrice || 0) > 0) && (
+        <div style={{ display: "flex", gap: 14, marginTop: 10, fontSize: 11, flexWrap: "wrap" }}>
+          <span style={{ color: BRAND.gray }}>Gross: <b style={{ color: BRAND.black, ...S.mono }}>{fmt$2(grossPrice || 0)}</b></span>
+          <span style={{ color: BRAND.gray }}>Paid: <b style={{ color: BRAND.green, ...S.mono }}>{fmt$2(paid)}</b></span>
+          <span style={{ color: BRAND.gray }}>Outstanding: <b style={{ color: outstanding > 0.005 ? "#DC2626" : outstanding < -0.005 ? "#D97706" : BRAND.green, ...S.mono }}>{fmt$2(outstanding)}</b></span>
+          {rows.length > 0 && Math.abs(outstanding) < 0.005 && <span style={{ color: BRAND.green, fontWeight: 700 }}>· Paid in full ✓</span>}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function TH({ children }) { return <th style={{ textAlign: "left", padding: "9px 12px", color: BRAND.red, fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.06em" }}>{children}</th>; }
 
@@ -953,10 +1190,10 @@ function DashboardTab({ data, username, darkMode }) {
   };
 
   const metrics = useMemo(() => {
-    const totalInvested = vehicles.reduce((s, v) => s + calcTotalInvested(v), 0);
+    const totalInvested = vehicles.reduce((s, v) => s + calcTotalInvested(v, expenses), 0);
     const totalRevenue = sales.reduce((s, x) => s + p(x.grossPrice), 0);
     const totalNet = sales.reduce((s, x) => s + p(x.grossPrice) - p(x.auctionFee) - p(x.titleFee) - p(x.otherDeductions), 0);
-    const soldInvested = sold.reduce((s, v) => s + calcTotalInvested(v), 0);
+    const soldInvested = sold.reduce((s, v) => s + calcTotalInvested(v, expenses), 0);
     const grossProfit = totalNet - soldInvested;
     const margin = totalRevenue > 0 ? grossProfit / totalRevenue : 0;
     const avgProfit = sold.length > 0 ? grossProfit / sold.length : 0;
@@ -964,7 +1201,7 @@ function DashboardTab({ data, username, darkMode }) {
     const velocities = sold.map(v => {
       const sl = sales.find(s => s.stockNum === v.stockNum);
       const d = sl && v.purchaseDate && sl.date ? daysBetween(v.purchaseDate, sl.date) : null;
-      const inv = calcTotalInvested(v);
+      const inv = calcTotalInvested(v, expenses);
       const net = sl ? p(sl.grossPrice) - p(sl.auctionFee) - p(sl.titleFee) - p(sl.otherDeductions) : 0;
       return d && d > 0 ? (net - inv) / d : null;
     }).filter(Boolean);
@@ -973,20 +1210,25 @@ function DashboardTab({ data, username, darkMode }) {
     const daysArr = sold.map(v => { const sl = sales.find(s => s.stockNum === v.stockNum); return sl && v.purchaseDate && sl.date ? daysBetween(v.purchaseDate, sl.date) : null; }).filter(Boolean);
     const avgDays = daysArr.length > 0 ? Math.round(daysArr.reduce((a, b) => a + b, 0) / daysArr.length) : 0;
 
+    // All tracked expenses (total displayed in UI).
     const totalExp = expenses.reduce((s, e) => s + p(e.amount), 0);
-    const netIncome = grossProfit - totalExp;
-    const capitalInInventory = unsold.reduce((s, v) => s + calcTotalInvested(v), 0);
+    // Per-vehicle expenses are already folded into soldInvested via the
+    // updated calcTotalInvested; the netIncome roll-up only deducts overhead
+    // (expenses with no stockNum) to avoid double-counting.
+    const overheadExp = expenses.filter(e => !e.stockNum).reduce((s, e) => s + p(e.amount), 0);
+    const netIncome = grossProfit - overheadExp;
+    const capitalInInventory = unsold.reduce((s, v) => s + calcTotalInvested(v, expenses), 0);
 
     // Unsold hold costs
     const unsoldHoldCosts = unsold.reduce((s, v) => {
       const days = v.purchaseDate ? daysFromNow(v.purchaseDate) : 0;
-      return s + calcHoldCosts(calcTotalInvested(v), days, holdCosts).total;
+      return s + calcHoldCosts(calcTotalInvested(v, expenses), days, holdCosts).total;
     }, 0);
 
     const totalMiles = mileage.reduce((s, m) => s + p(m.miles), 0);
 
-    return { totalInvested, totalRevenue, totalNet, grossProfit, margin, avgProfit, avgVelocity, avgDays, totalExp, netIncome, capitalInInventory, unsoldHoldCosts, totalMiles };
-  }, [vehicles, sales, expenses, mileage, holdCosts, sold, unsold]);
+    return { totalInvested, totalRevenue, totalNet, grossProfit, margin, avgProfit, avgVelocity, avgDays, totalExp, overheadExp, netIncome, capitalInInventory, unsoldHoldCosts, totalMiles };
+  }, [vehicles, sales, expenses, mileage, holdCosts, sold, unsold, data.auctionFeeTiers]);
 
   // Aging distribution
   const agingDist = useMemo(() => {
@@ -1160,7 +1402,7 @@ function DashboardTab({ data, username, darkMode }) {
         {recent.length === 0 ? <div style={{ color: BRAND.gray, fontSize: 12 }}>No vehicles</div> : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 10 }}>
             {recent.map(v => {
-              const m = calcVehicleFullMetrics(v, sales.find(s => s.stockNum === v.stockNum), holdCosts);
+              const m = calcVehicleFullMetrics(v, sales.find(s => s.stockNum === v.stockNum), holdCosts, expenses);
               return (
                 <div key={v.id} style={{ border: `1px solid ${BRAND.grayLight}`, borderRadius: 8, padding: 12, borderLeft: `3px solid ${v.status === "Sold" ? BRAND.green : BRAND.red}` }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 6 }}>
@@ -1199,7 +1441,11 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
   const [confirm, setConfirm] = useState(null);
   const [filter, setFilter] = useState("All");
   const [sortBy, setSortBy] = useState("recent");
-  const STATUS_OPTIONS = ["In Recon","Ready","Listed","Sold"];
+  // "Sold" is intentionally not user-selectable here. The status only flips
+  // to "Sold" when a sale record is finalized with all required fields
+  // (see saveSale). This prevents the "marked Sold but no sale record"
+  // inconsistency that previously caused reports to disagree.
+  const STATUS_OPTIONS = ["In Recon", "Ready", "Listed"];
   const admin = isAdmin(role);
   const canEdit = canEditVehicles(role);
   const canDelete = canDeleteVehicles(role);
@@ -1220,11 +1466,23 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
     if (!form.model.trim()) { setFormError("Model is required"); return; }
     if (!form.year) { setFormError("Year is required"); return; }
     if (form.vin && !/^[A-HJ-NPR-Z0-9]{17}$/i.test(form.vin.trim())) { setFormError("VIN must be exactly 17 characters (no I, O, Q)"); return; }
+    const moneyErr = validateMoneyFields([
+      [form.purchasePrice, "Purchase price"],
+      [form.transportCost, "Transport cost"],
+      [form.repairCost, "Repair cost"],
+      [form.otherExpenses, "Other expenses"],
+      [form.buyerPremiumPct, "Buyer premium %", { max: 100 }],
+      [form.reconBudget, "Recon budget"],
+    ]);
+    if (moneyErr) { setFormError(moneyErr); return; }
     setFormError("");
     if (editing) {
       if (!canEdit) return;
+      const before = data.vehicles.find(v => v.id === editing);
+      const diff = auditDiff(before, form, ["status", "purchasePrice", "auctionSource", "titleStatus", "reconBudget", "vin", "odometer", "color", "trim", "notes"]);
       setData(d => ({ ...d, vehicles: d.vehicles.map(v => v.id === editing ? form : v) }));
-      logActivity(currentUser, "edited_vehicle", `Edited vehicle #${form.stockNum} ${form.year} ${form.make} ${form.model}`);
+      const desc = `Edited vehicle #${form.stockNum} ${form.year} ${form.make} ${form.model}` + (diff.summary ? ` — ${diff.summary}` : "");
+      logActivity(currentUser, "edited_vehicle", desc, { stockNum: form.stockNum, changes: diff.changes });
     } else {
       setData(d => ({ ...d, vehicles: [...d.vehicles, form], nextStockNum: d.nextStockNum + 1 }));
       logActivity(currentUser, "added_vehicle", `Added vehicle #${form.stockNum} ${form.year} ${form.make} ${form.model}`);
@@ -1234,16 +1492,21 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
   const del = id => {
     if (!canDelete) return;
     const v = data.vehicles.find(x => x.id === id);
-    setData(d => ({ ...d, vehicles: d.vehicles.filter(v => v.id !== id) })); setConfirm(null); setShowForm(false); setShowDetail(null);
-    if (v) logActivity(currentUser, "deleted_vehicle", `Deleted vehicle #${v.stockNum} ${v.year} ${v.make} ${v.model}`);
+    setData(d => ({
+      ...d,
+      vehicles: d.vehicles.filter(x => x.id !== id),
+      trash: v ? [...(d.trash || []), toTrash(v, "vehicle", currentUser)] : (d.trash || []),
+    }));
+    setConfirm(null); setShowForm(false); setShowDetail(null);
+    if (v) logActivity(currentUser, "deleted_vehicle", `Deleted vehicle #${v.stockNum} ${v.year} ${v.make} ${v.model} (status: ${v.status}, purchase: ${fmt$2(p(v.purchasePrice))})`, { stockNum: v.stockNum, snapshot: v });
   };
 
   let filtered = filter === "All" ? data.vehicles : data.vehicles.filter(v => v.status === filter);
   if (sortBy === "recent") filtered = [...filtered].sort((a, b) => (b.purchaseDate || "").localeCompare(a.purchaseDate || ""));
   else if (sortBy === "profit") filtered = [...filtered].sort((a, b) => {
     const sa = data.sales.find(s => s.stockNum === a.stockNum); const sb = data.sales.find(s => s.stockNum === b.stockNum);
-    const pa = sa ? (p(sa.grossPrice) - p(sa.auctionFee) - p(sa.titleFee) - p(sa.otherDeductions)) - calcTotalInvested(a) : -999999;
-    const pb = sb ? (p(sb.grossPrice) - p(sb.auctionFee) - p(sb.titleFee) - p(sb.otherDeductions)) - calcTotalInvested(b) : -999999;
+    const pa = sa ? (p(sa.grossPrice) - p(sa.auctionFee) - p(sa.titleFee) - p(sa.otherDeductions)) - calcTotalInvested(a, data.expenses) : -999999;
+    const pb = sb ? (p(sb.grossPrice) - p(sb.auctionFee) - p(sb.titleFee) - p(sb.otherDeductions)) - calcTotalInvested(b, data.expenses) : -999999;
     return pb - pa;
   });
   else if (sortBy === "aging") filtered = [...filtered].sort((a, b) => {
@@ -1280,7 +1543,7 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
           </select>
           <Btn variant="secondary" onClick={() => {
             const headers = ["Stock#","Year","Make","Model","Trim","VIN","Color","Status","Purchase Price","Transport","Repair","Total Invested","Purchase Date"];
-            const rows = filtered.map(v => [v.stockNum, v.year, v.make, v.model, v.trim||"", v.vin||"", v.color||"", v.status, v.purchasePrice||"", v.transportCost||"", v.repairCost||"", calcTotalInvested(v).toFixed(2), v.purchaseDate||""]);
+            const rows = filtered.map(v => [v.stockNum, v.year, v.make, v.model, v.trim||"", v.vin||"", v.color||"", v.status, v.purchasePrice||"", v.transportCost||"", v.repairCost||"", calcTotalInvested(v, data.expenses).toFixed(2), v.purchaseDate||""]);
             exportCSV(`vehicles_${new Date().toISOString().slice(0,10)}.csv`, headers, rows);
           }}>Export CSV</Btn>
           <Btn onClick={openNew}>+ Add Vehicle</Btn>
@@ -1290,7 +1553,7 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
       {filtered.length === 0 ? <Empty icon={<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9L18 10l-2.7-3.6A1.5 1.5 0 0 0 14.1 6H9.9a1.5 1.5 0 0 0-1.2.6L6 10l-2.5 1.1C2.7 11.3 2 12.1 2 13v3c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/></svg>} title="No vehicles" sub="Add your first car" /> : (
         <div className="inventory-grid" style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}>
           {filtered.map(v => {
-            const m = calcVehicleFullMetrics(v, data.sales.find(s => s.stockNum === v.stockNum), data.holdCosts);
+            const m = calcVehicleFullMetrics(v, data.sales.find(s => s.stockNum === v.stockNum), data.holdCosts, data.expenses);
             const titleInfo = TITLE_STATUS[v.titleStatus] || TITLE_STATUS.clean;
             const vExpenses = data.expenses.filter(e => e.stockNum === v.stockNum);
             const vSale = data.sales.find(s => s.stockNum === v.stockNum);
@@ -1404,7 +1667,7 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 10 }}>
               <Input label="Purchase Date" value={form.purchaseDate} onChange={v => upd("purchaseDate", v)} type="date" />
               <Input label="Purchase Price" value={form.purchasePrice} onChange={v => upd("purchasePrice", v)} type="number" step="0.01" />
-              <Select label="Auction Source" value={form.auctionSource} onChange={v => upd("auctionSource", v)} options={AUCTION_SOURCES.map(s => ({ value: s, label: AUCTION_FEE_TIERS[s].name }))} />
+              <Select label="Acquisition Source" value={form.auctionSource} onChange={v => upd("auctionSource", v)} options={AUCTION_SOURCES.map(s => ({ value: s, label: AUCTION_FEE_TIERS[s].name }))} />
               <Select label="Title Status" value={form.titleStatus} onChange={v => upd("titleStatus", v)} options={Object.entries(TITLE_STATUS).map(([k, v]) => ({ value: k, label: v.label }))} />
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 <label style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: BRAND.gray }}>Fee Mode</label>
@@ -1414,11 +1677,11 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
                 </label>
               </div>
               {form.useCustomPremium && <Input label="Custom Premium %" value={form.buyerPremiumPct} onChange={v => upd("buyerPremiumPct", v)} type="number" step="0.1" />}
-              <Input label="Transport Cost" value={form.transportCost} onChange={v => upd("transportCost", v)} type="number" step="0.01" />
-              <Input label="Repair/Recon Cost" value={form.repairCost} onChange={v => upd("repairCost", v)} type="number" step="0.01" />
               <Input label="Recon Budget" value={form.reconBudget} onChange={v => upd("reconBudget", v)} type="number" step="0.01" placeholder="Target max" />
-              <Input label="Other Expenses" value={form.otherExpenses} onChange={v => upd("otherExpenses", v)} type="number" step="0.01" />
               <Select label="Status" value={form.status} onChange={v => upd("status", v)} options={STATUS_OPTIONS} />
+            </div>
+            <div style={{ marginTop: 10, padding: "10px 12px", background: "#EFF6FF", borderRadius: 8, fontSize: 11, color: "#1E40AF", border: "1px solid #BFDBFE" }}>
+              <b>Heads up:</b> All costs other than Purchase Price now live in <b>Tracked Expenses</b> on the vehicle detail screen. Choose the appropriate category (Transport/Towing, Repair/Recon, Storage, etc.) when you add each line item. This replaces the old "Transport Cost / Repair Cost / Other Expenses" fields so every dollar is in one place.
             </div>
             <Input label="Notes" value={form.notes} onChange={v => upd("notes", v)} placeholder="Engine swapped, needs alignment..." className="mt-2" />
           </div>
@@ -1573,11 +1836,17 @@ ${sale ? `<div class="section">
 
 <div class="summary-box ${m.grossProfit < 0 ? "loss" : ""}">
   <div class="section-title" style="color:${m.grossProfit >= 0 ? "#166534" : "#DC2626"};border-color:${m.grossProfit >= 0 ? "#D1FAE5" : "#FECACA"}">Profit & Loss Summary</div>
+  <table style="width:100%;font-size:12px;margin-bottom:12px">
+    <tr><td style="padding:3px 0;color:#666">Gross Sale Price</td><td style="padding:3px 0;text-align:right;font-weight:700">${fmt$2(p(sale.grossPrice))}</td></tr>
+    <tr><td style="padding:3px 0;color:#666">− Sale-time deductions</td><td style="padding:3px 0;text-align:right;color:#DC2626">${fmt$2(m.saleDeductions)}</td></tr>
+    <tr style="border-top:1px dashed #ddd"><td style="padding:3px 0">Net Sale</td><td style="padding:3px 0;text-align:right;font-weight:700">${fmt$2(saleNet)}</td></tr>
+    <tr><td style="padding:3px 0;color:#666">− Total Invested</td><td style="padding:3px 0;text-align:right;color:#DC2626">${fmt$2(m.invested)}</td></tr>
+    <tr><td style="padding:3px 0;color:#666">− Selling Costs (post-sale)</td><td style="padding:3px 0;text-align:right;color:#DC2626">${fmt$2(m.sellingCosts)}</td></tr>
+    <tr style="border-top:2px solid ${m.grossProfit >= 0 ? "#166534" : "#DC2626"}"><td style="padding:6px 0;font-weight:800;color:${m.grossProfit >= 0 ? "#166534" : "#DC2626"}">Net Profit / (Loss)</td><td style="padding:6px 0;text-align:right;font-weight:900;font-size:14px;color:${m.grossProfit >= 0 ? "#166534" : "#DC2626"}">${fmt$2(m.grossProfit)}</td></tr>
+  </table>
   <div class="summary-grid">
-    <div><div class="summary-label">Total Invested</div><div class="summary-value">${fmt$2(m.invested)}</div></div>
-    <div><div class="summary-label">Net Sale</div><div class="summary-value">${fmt$2(saleNet)}</div></div>
-    <div><div class="summary-label">Gross Profit</div><div class="summary-value" style="color:${m.grossProfit >= 0 ? "#166534" : "#DC2626"}">${fmt$2(m.grossProfit)}</div></div>
-    <div><div class="summary-label">Margin</div><div class="summary-value">${m.margin != null ? (m.margin * 100).toFixed(1) + "%" : "—"}</div></div>
+    <div><div class="summary-label">Gross Margin %</div><div class="summary-value">${m.margin != null ? (m.margin * 100).toFixed(1) + "%" : "—"}</div></div>
+    <div><div class="summary-label">Ann. ROI</div><div class="summary-value">${m.annROI != null ? (m.annROI * 100).toFixed(1) + "%" : "—"}</div></div>
     <div><div class="summary-label">Days Held</div><div class="summary-value">${m.days || "—"}</div></div>
     <div><div class="summary-label">Grade</div><div class="summary-value" style="color:${m.grade ? m.grade.color : "#111"}">${m.grade ? m.grade.grade : "—"}</div></div>
   </div>
@@ -1608,7 +1877,7 @@ ${sale ? `<div class="section">
 
 function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, currentUser, onClose, onEdit, onDelete, canEditProp, canDeleteProp }) {
   const v = vehicle;
-  const m = calcVehicleFullMetrics(v, sale, data.holdCosts);
+  const m = calcVehicleFullMetrics(v, sale, data.holdCosts, data.expenses);
   const titleInfo = TITLE_STATUS[v.titleStatus] || TITLE_STATUS.clean;
   const [vehicleLog, setVehicleLog] = useState([]);
   useEffect(() => { loadActivityLog().then(log => setVehicleLog(log.filter(l => l.details?.stockNum === v.stockNum || l.description?.includes(`#${v.stockNum}`)).slice(0, 20))).catch(() => setVehicleLog([])); }, [v.stockNum]);
@@ -1637,7 +1906,12 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
     setExpForm({ ...e }); setEditingExp(e.id); setShowExpForm(true);
   };
   const saveExp = () => {
-    if (!expForm.amount) return;
+    // Expenses opened from inside a vehicle modal inherit the stockNum, so
+    // inject it before validation — the user doesn't see that field.
+    const draft = { ...expForm, stockNum: expForm.stockNum || v.stockNum, vehicle: expForm.vehicle || `${v.year} ${v.make} ${v.model}` };
+    const err = validateExpenseEntry(draft);
+    if (err) { setApprovalMsg(err); setTimeout(() => setApprovalMsg(""), 3500); return; }
+    Object.assign(expForm, draft);
     if (editingExp && !admin) {
       // Non-admin edit → send to approval queue
       addApproval({ id: genId(), type: "expense_edit", requestedBy: currentUser, requestedAt: new Date().toISOString(), status: "pending", stockNum: v.stockNum, vehicle: `${v.year} ${v.make} ${v.model}`, description: `Edit expense: ${expForm.category || "—"} — ${expForm.description || "—"} (${fmt$2(p(expForm.amount))})`, targetId: editingExp, originalData: data.expenses.find(e => e.id === editingExp), newData: { ...expForm } });
@@ -1648,8 +1922,11 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
       return;
     }
     if (editingExp) {
+      const before = data.expenses.find(e => e.id === editingExp);
+      const diff = auditDiff(before, expForm, ["category", "amount", "vendor", "description", "date", "paymentMethod", "receipt"]);
       setData(d => ({ ...d, expenses: d.expenses.map(e => e.id === editingExp ? expForm : e) }));
-      logActivity(currentUser, "edited_expense", `Edited expense on #${v.stockNum} ${v.year} ${v.make} ${v.model}: ${expForm.category || "—"}`);
+      const desc = `Edited expense on #${v.stockNum} ${v.year} ${v.make} ${v.model}` + (diff.summary ? ` — ${diff.summary}` : `: ${expForm.category || "—"}`);
+      logActivity(currentUser, "edited_expense", desc, { stockNum: v.stockNum, expenseId: editingExp, changes: diff.changes });
     } else {
       setData(d => ({ ...d, expenses: [...d.expenses, expForm] }));
       logActivity(currentUser, "added_expense", `Added expense on #${v.stockNum} ${v.year} ${v.make} ${v.model}: ${expForm.category || "—"} (${fmt$2(p(expForm.amount))})`);
@@ -1665,8 +1942,17 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
       setConfirmExp(null); setShowExpForm(false);
       return;
     }
-    setData(d => ({ ...d, expenses: d.expenses.filter(e => e.id !== id) }));
-    logActivity(currentUser, "deleted_expense", `Deleted expense on #${v.stockNum} ${v.year} ${v.make} ${v.model}`);
+    setData(d => {
+      const exp = d.expenses.find(e => e.id === id);
+      return {
+        ...d,
+        expenses: d.expenses.filter(e => e.id !== id),
+        trash: exp ? [...(d.trash || []), toTrash(exp, "expense", currentUser)] : (d.trash || []),
+      };
+    });
+    const gone = data.expenses.find(e => e.id === id);
+    const summary = gone ? `${gone.category || "—"} · ${fmt$2(p(gone.amount))} · ${gone.vendor || "—"}` : "";
+    logActivity(currentUser, "deleted_expense", `Deleted expense on #${v.stockNum} ${v.year} ${v.make} ${v.model}${summary ? " — " + summary : ""}`, { stockNum: v.stockNum, expenseId: id, snapshot: gone });
     setConfirmExp(null); setShowExpForm(false);
   };
 
@@ -1674,14 +1960,33 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
   const [showSaleForm, setShowSaleForm] = useState(false);
   const [editingSale, setEditingSale] = useState(null);
   const [confirmSale, setConfirmSale] = useState(null);
-  const emptySale = () => ({ id: genId(), date: new Date().toISOString().slice(0, 10), stockNum: v.stockNum, vehicle: `${v.year} ${v.make} ${v.model}`, buyerName: "", saleType: "", grossPrice: "", auctionFee: "", titleFee: "", otherDeductions: "", buyerPhone: "", buyerEmail: "", notes: "" });
+  const emptySale = () => ({ id: genId(), date: new Date().toISOString().slice(0, 10), stockNum: v.stockNum, vehicle: `${v.year} ${v.make} ${v.model}`, buyerName: "", saleType: "", grossPrice: "", auctionFee: "", titleFee: "", otherDeductions: "", buyerPhone: "", buyerEmail: "", paymentMethod: "", notes: "", payments: [] });
   const [saleForm, setSaleForm] = useState(emptySale());
   const updSale = (k, val) => setSaleForm(f => ({ ...f, [k]: val }));
   const saleNet = s => p(s.grossPrice) - p(s.auctionFee) - p(s.titleFee) - p(s.otherDeductions);
   const openNewSale = () => { setSaleForm(emptySale()); setEditingSale(null); setShowSaleForm(true); };
   const openEditSale = s => { setSaleForm({ ...s }); setEditingSale(s.id); setShowSaleForm(true); };
   const saveSale = () => {
-    if (!saleForm.grossPrice) return;
+    if (!saleForm.grossPrice) { setApprovalMsg("Gross price is required"); setTimeout(() => setApprovalMsg(""), 3000); return; }
+    const moneyErr = validateMoneyFields([
+      [saleForm.grossPrice, "Gross price", { allowZero: false }],
+      [saleForm.auctionFee, "Auction fee"],
+      [saleForm.titleFee, "Title fee"],
+      [saleForm.otherDeductions, "Other deductions"],
+    ]);
+    if (moneyErr) { setApprovalMsg(moneyErr); setTimeout(() => setApprovalMsg(""), 3000); return; }
+    // Payments allow negatives (refunds), so validate for NaN/sanity only
+    for (const pay of (saleForm.payments || [])) {
+      if (pay.amount === "" || pay.amount == null) continue;
+      const n = Number(pay.amount);
+      if (!Number.isFinite(n)) { setApprovalMsg("Payment amount must be a valid number"); setTimeout(() => setApprovalMsg(""), 3000); return; }
+      if (Math.abs(n) > 10_000_000) { setApprovalMsg("Payment amount looks unreasonable"); setTimeout(() => setApprovalMsg(""), 3000); return; }
+    }
+    // Enforce the Sold workflow: every field required to flip status=Sold
+    // must be set at finalize time. This keeps vehicle.status and sale data
+    // in lock-step — no more "marked Sold but no sale record" drift.
+    const soldErr = validateSoldRequirements(saleForm);
+    if (soldErr) { setApprovalMsg(soldErr); setTimeout(() => setApprovalMsg(""), 3000); return; }
     if (editingSale && !admin) {
       addApproval({ id: genId(), type: "sale_edit", requestedBy: currentUser, requestedAt: new Date().toISOString(), status: "pending", stockNum: v.stockNum, vehicle: `${v.year} ${v.make} ${v.model}`, description: `Edit sale: ${fmt$2(p(saleForm.grossPrice))} to ${saleForm.buyerName || "—"}`, targetId: editingSale, originalData: data.sales.find(s => s.id === editingSale), newData: { ...saleForm } });
       logActivity(currentUser, "requested_edit", `Requested sale edit on #${v.stockNum} ${v.year} ${v.make} ${v.model}`);
@@ -1691,11 +1996,14 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
       return;
     }
     if (editingSale) {
+      const before = data.sales.find(s => s.id === editingSale);
+      const diff = auditDiff(before, saleForm, ["grossPrice", "auctionFee", "titleFee", "otherDeductions", "buyerName", "paymentMethod", "saleType", "date"]);
       setData(d => ({ ...d, sales: d.sales.map(s => s.id === editingSale ? saleForm : s) }));
-      logActivity(currentUser, "edited_sale", `Edited sale on #${v.stockNum} ${v.year} ${v.make} ${v.model}`);
+      const desc = `Edited sale on #${v.stockNum} ${v.year} ${v.make} ${v.model}` + (diff.summary ? ` — ${diff.summary}` : "");
+      logActivity(currentUser, "edited_sale", desc, { stockNum: v.stockNum, saleId: editingSale, changes: diff.changes });
     } else {
       setData(d => ({ ...d, sales: [...d.sales, saleForm], vehicles: d.vehicles.map(vh => vh.stockNum === saleForm.stockNum ? { ...vh, status: "Sold" } : vh) }));
-      logActivity(currentUser, "finalized_sale", `Finalized sale on #${v.stockNum} ${v.year} ${v.make} ${v.model}: ${fmt$2(p(saleForm.grossPrice))}`);
+      logActivity(currentUser, "finalized_sale", `Finalized sale on #${v.stockNum} ${v.year} ${v.make} ${v.model}: ${fmt$2(p(saleForm.grossPrice))} to ${saleForm.buyerName} via ${saleForm.paymentMethod}`, { stockNum: v.stockNum, grossPrice: p(saleForm.grossPrice), buyerName: saleForm.buyerName, paymentMethod: saleForm.paymentMethod });
     }
     setShowSaleForm(false);
   };
@@ -1708,8 +2016,21 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
       setConfirmSale(null); setShowSaleForm(false);
       return;
     }
-    setData(d => ({ ...d, sales: d.sales.filter(s => s.id !== id) }));
-    logActivity(currentUser, "deleted_sale", `Deleted sale on #${v.stockNum} ${v.year} ${v.make} ${v.model}`);
+    setData(d => {
+      const s = d.sales.find(x => x.id === id);
+      return {
+        ...d,
+        sales: d.sales.filter(x => x.id !== id),
+        // Revert the vehicle's status — no sale record means the vehicle
+        // is back on the lot. "Listed" is the safest default since the
+        // vehicle was clearly ready enough to sell once.
+        vehicles: s ? d.vehicles.map(vh => vh.stockNum === s.stockNum && vh.status === "Sold" ? { ...vh, status: "Listed" } : vh) : d.vehicles,
+        trash: s ? [...(d.trash || []), toTrash(s, "sale", currentUser)] : (d.trash || []),
+      };
+    });
+    const gone = data.sales.find(s => s.id === id);
+    const summary = gone ? `${fmt$2(p(gone.grossPrice))} to ${gone.buyerName || "—"} · ${gone.paymentMethod || "—"}` : "";
+    logActivity(currentUser, "deleted_sale", `Deleted sale on #${v.stockNum} ${v.year} ${v.make} ${v.model}; vehicle status reverted to Listed${summary ? " — " + summary : ""}`, { stockNum: v.stockNum, saleId: id, snapshot: gone });
     setConfirmSale(null); setShowSaleForm(false);
   };
 
@@ -1775,6 +2096,27 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
               <span style={{ fontSize: 12, color: BRAND.gray }}>{fmt$2(m.velocity)}/day · {fmtPct(m.margin)} margin · {fmtPct(m.annROI)} ann. ROI · {m.days} days held</span>
             </div>
           )}
+
+          {/* Days-held carrying cost indicator (per #7). Shows the average
+              cost/day of holding and flags vehicles past the configurable
+              aging threshold. Only relevant while the vehicle is unsold. */}
+          {v.status !== "Sold" && v.purchaseDate && (() => {
+            const threshold = p(data.holdCosts?.agingThresholdDays) || 45;
+            const overThreshold = m.days > threshold;
+            return (
+              <div style={{ display: "flex", gap: 10, marginBottom: 16, padding: "10px 12px", background: overThreshold ? "#FEF2F2" : "#F9FAFB", border: `1px solid ${overThreshold ? "#FECACA" : BRAND.grayLight}`, borderRadius: 8, fontSize: 12, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ color: BRAND.gray }}>Days Held: <b style={{ color: overThreshold ? "#DC2626" : BRAND.black }}>{m.days}</b></span>
+                <span style={{ color: BRAND.gray }}>Cost / day: <b style={{ color: BRAND.black, ...S.mono }}>{fmt$2(m.costPerDay)}</b></span>
+                <span style={{ color: BRAND.gray }}>Total carrying cost: <b style={{ color: BRAND.black, ...S.mono }}>{fmt$2(m.holdCost.total)}</b></span>
+                {overThreshold && (
+                  <span style={{ marginLeft: "auto", color: "#DC2626", fontWeight: 700, display: "flex", alignItems: "center", gap: 4 }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                    Held &gt; {threshold} days — review pricing
+                  </span>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Cost Breakdown */}
           <Card style={{ marginBottom: 16 }}>
@@ -1926,6 +2268,34 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
 
           {/* ═══ SECTION 2: EXPENSES ═══ */}
           <div style={{ borderTop: `2px solid ${BRAND.grayLight}`, paddingTop: 18, marginBottom: 16 }}>
+            {/* Legacy-field migration banner — offers to turn transportCost/
+                repairCost/otherExpenses into categorized tracked expenses so
+                every dollar lives in one place. */}
+            {admin && (p(v.transportCost) + p(v.repairCost) + p(v.otherExpenses) > 0) && (
+              <div style={{ marginBottom: 12, padding: "10px 12px", background: "#FEF3C7", borderRadius: 8, fontSize: 11, color: "#92400E", border: "1px solid #FCD34D", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                <div>
+                  <b>Legacy acquisition costs detected:</b>{" "}
+                  {p(v.transportCost) > 0 && <span>Transport {fmt$2(p(v.transportCost))} · </span>}
+                  {p(v.repairCost) > 0 && <span>Repair {fmt$2(p(v.repairCost))} · </span>}
+                  {p(v.otherExpenses) > 0 && <span>Other {fmt$2(p(v.otherExpenses))}</span>}
+                  <div style={{ fontSize: 10, opacity: 0.85, marginTop: 2 }}>Migrate these into Tracked Expenses so they appear in reports by category.</div>
+                </div>
+                <Btn size="sm" onClick={() => {
+                  const today = new Date().toISOString().slice(0, 10);
+                  const label = `${v.year} ${v.make} ${v.model}`;
+                  const newEntries = [];
+                  if (p(v.transportCost) > 0) newEntries.push({ id: genId(), date: v.purchaseDate || today, stockNum: v.stockNum, vehicle: label, category: "Transport/Towing", description: "Migrated from legacy acquisition cost field", vendor: "", paymentMethod: "", amount: p(v.transportCost), receipt: "" });
+                  if (p(v.repairCost) > 0) newEntries.push({ id: genId(), date: v.purchaseDate || today, stockNum: v.stockNum, vehicle: label, category: "Repair/Recon", description: "Migrated from legacy acquisition cost field", vendor: "", paymentMethod: "", amount: p(v.repairCost), receipt: "" });
+                  if (p(v.otherExpenses) > 0) newEntries.push({ id: genId(), date: v.purchaseDate || today, stockNum: v.stockNum, vehicle: label, category: "Office/Admin", description: "Migrated from legacy 'Other Expenses' field", vendor: "", paymentMethod: "", amount: p(v.otherExpenses), receipt: "" });
+                  setData(d => ({
+                    ...d,
+                    expenses: [...d.expenses, ...newEntries],
+                    vehicles: d.vehicles.map(x => x.id === v.id ? { ...x, transportCost: 0, repairCost: 0, otherExpenses: 0 } : x),
+                  }));
+                  logActivity(currentUser, "migrated_legacy_costs", `Migrated legacy acquisition costs on #${v.stockNum} ${label} to ${newEntries.length} tracked expense${newEntries.length === 1 ? "" : "s"}`);
+                }}>Migrate to Tracked Expenses</Btn>
+              </div>
+            )}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
               <div style={{ fontSize: 15, fontWeight: 800, color: BRAND.black }}>
                 Expenses
@@ -1965,14 +2335,15 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
               <Card style={{ marginTop: 8, border: `2px solid ${BRAND.red}` }}>
                 <div style={{ fontSize: 12, fontWeight: 800, color: BRAND.red, marginBottom: 10 }}>{editingExp ? "Edit Expense" : "Add Expense"}</div>
                 <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <Input label="Date" value={expForm.date} onChange={val => updExp("date", val)} type="date" />
-                  <Select label="Category" value={expForm.category} onChange={val => updExp("category", val)} options={EXPENSE_CATEGORIES} placeholder="Select..." />
-                  <Input label="Amount" value={expForm.amount} onChange={val => updExp("amount", val)} type="number" step="0.01" />
-                  <Input label="Description" value={expForm.description} onChange={val => updExp("description", val)} placeholder="What for?" />
-                  <Input label="Vendor" value={expForm.vendor} onChange={val => updExp("vendor", val)} />
+                  <Input label="Date *" value={expForm.date} onChange={val => updExp("date", val)} type="date" />
+                  <Select label="Category *" value={expForm.category} onChange={val => updExp("category", val)} options={EXPENSE_CATEGORIES} placeholder="Select..." />
+                  <Input label="Amount *" value={expForm.amount} onChange={val => updExp("amount", val)} type="number" step="0.01" />
+                  <Input label="Description *" value={expForm.description} onChange={val => updExp("description", val)} placeholder="What for?" />
+                  <Input label="Vendor *" value={expForm.vendor} onChange={val => updExp("vendor", val)} />
                   <Select label="Payment" value={expForm.paymentMethod} onChange={val => updExp("paymentMethod", val)} options={PAYMENT_METHODS} placeholder="Select..." />
                   <Input label="Receipt #" value={expForm.receipt} onChange={val => updExp("receipt", val)} />
                 </div>
+                <div style={{ fontSize: 10, color: BRAND.gray, marginTop: 6, fontStyle: "italic" }}>* Required. Attached to #{v.stockNum} automatically.</div>
                 <div style={{ display: "flex", justifyContent: "space-between", marginTop: 14 }}>
                   <div>{editingExp && <Btn variant="danger" size="sm" onClick={() => setConfirmExp(editingExp)}>Delete</Btn>}</div>
                   <div style={{ display: "flex", gap: 6 }}>
@@ -2004,21 +2375,49 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
                     <div><span style={{ color: BRAND.gray }}>Other Deductions:</span> <b style={{ ...S.mono }}>{fmt$(p(sale.otherDeductions))}</b></div>
                     <div><span style={{ color: BRAND.gray }}>Net Sale:</span> <b style={{ color: BRAND.green, ...S.mono }}>{fmt$(saleNet(sale))}</b></div>
                   </div>
+                  {Array.isArray(sale.payments) && sale.payments.length > 0 && (() => {
+                    const paid = calcSalePaid(sale);
+                    const outstanding = calcSaleOutstanding(sale);
+                    return (
+                      <div style={{ marginTop: 10, padding: "8px 10px", background: outstanding > 0.005 ? "#FEF2F2" : "#F0FDF4", borderRadius: 8, fontSize: 11, display: "flex", gap: 14, flexWrap: "wrap" }}>
+                        <span style={{ color: BRAND.gray }}>Paid: <b style={{ color: BRAND.green, ...S.mono }}>{fmt$2(paid)}</b></span>
+                        <span style={{ color: BRAND.gray }}>Outstanding: <b style={{ color: outstanding > 0.005 ? "#DC2626" : BRAND.green, ...S.mono }}>{fmt$2(outstanding)}</b></span>
+                        <span style={{ color: BRAND.gray }}>{sale.payments.length} payment{sale.payments.length === 1 ? "" : "s"}</span>
+                      </div>
+                    );
+                  })()}
                   {sale.buyerPhone && <div style={{ fontSize: 11, color: BRAND.gray, marginTop: 8 }}>Phone: {sale.buyerPhone}</div>}
                   {sale.buyerEmail && <div style={{ fontSize: 11, color: BRAND.gray, marginTop: 2 }}>Email: {sale.buyerEmail}</div>}
                   {sale.notes && <div style={{ fontSize: 11, color: BRAND.grayDark, marginTop: 6, fontStyle: "italic" }}>{sale.notes}</div>}
                 </Card>
 
-                {/* P&L Summary */}
+                {/* Full Profit & Loss — the source-of-truth P&L per #6:
+                    Sale Price − Total Invested − Selling Costs = Net P/L. */}
                 {m.grossProfit != null && (
-                  <div style={{ background: m.grossProfit >= 0 ? "#F0FDF4" : "#FEF2F2", borderRadius: 10, padding: 14, marginTop: 12, border: `1px solid ${m.grossProfit >= 0 ? "#D1FAE5" : "#FECACA"}` }}>
-                    <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: m.grossProfit >= 0 ? BRAND.green : "#DC2626", marginBottom: 6 }}>Deal Analysis</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 12, alignItems: "center" }}>
-                      <div>Net Sale: <b style={{ ...S.mono }}>{fmt$(m.netSale)}</b></div>
-                      <div>Invested: <b style={{ ...S.mono }}>{fmt$(m.invested)}</b></div>
-                      <div>Profit: <b style={{ color: m.grossProfit >= 0 ? BRAND.green : "#DC2626", ...S.mono }}>{fmt$(m.grossProfit)}</b></div>
-                      {m.velocity != null && <div>Velocity: <b style={{ color: BRAND.blue, ...S.mono }}>{fmt$2(m.velocity)}/d</b></div>}
-                      {m.days != null && <div>Days: <b>{m.days}</b></div>}
+                  <div style={{ background: m.grossProfit >= 0 ? "#F0FDF4" : "#FEF2F2", borderRadius: 10, padding: 16, marginTop: 12, border: `1px solid ${m.grossProfit >= 0 ? "#D1FAE5" : "#FECACA"}` }}>
+                    <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: m.grossProfit >= 0 ? BRAND.green : "#DC2626", marginBottom: 10, letterSpacing: "0.06em" }}>Profit & Loss</div>
+                    <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+                      <tbody>
+                        <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>Sale Price (gross)</td><td style={{ padding: "4px 0", textAlign: "right", fontWeight: 700, ...S.mono }}>{fmt$2(p(sale.grossPrice))}</td></tr>
+                        <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>− Sale-time deductions <span style={{ fontSize: 10 }}>(auction fee, title, other)</span></td><td style={{ padding: "4px 0", textAlign: "right", color: "#DC2626", ...S.mono }}>{fmt$2(m.saleDeductions)}</td></tr>
+                        <tr style={{ borderTop: `1px dashed ${m.grossProfit >= 0 ? "#86EFAC" : "#FCA5A5"}` }}><td style={{ padding: "4px 0", color: BRAND.grayDark }}>Net Sale</td><td style={{ padding: "4px 0", textAlign: "right", fontWeight: 700, ...S.mono }}>{fmt$2(m.netSale)}</td></tr>
+                        <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>− Total Invested <span style={{ fontSize: 10 }}>(purchase + auction fees + all costs)</span></td><td style={{ padding: "4px 0", textAlign: "right", color: "#DC2626", ...S.mono }}>{fmt$2(m.invested)}</td></tr>
+                        <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>− Selling Costs <span style={{ fontSize: 10 }}>(post-sale expenses)</span></td><td style={{ padding: "4px 0", textAlign: "right", color: "#DC2626", ...S.mono }}>{fmt$2(m.sellingCosts)}</td></tr>
+                        <tr style={{ borderTop: `2px solid ${m.grossProfit >= 0 ? BRAND.green : "#DC2626"}` }}>
+                          <td style={{ padding: "6px 0", fontWeight: 800, textTransform: "uppercase", fontSize: 11, color: m.grossProfit >= 0 ? BRAND.green : "#DC2626" }}>Net Profit / (Loss)</td>
+                          <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 900, fontSize: 14, color: m.grossProfit >= 0 ? BRAND.green : "#DC2626", ...S.mono }}>{fmt$2(m.grossProfit)}</td>
+                        </tr>
+                        {m.margin != null && (
+                          <tr><td style={{ padding: "2px 0", fontSize: 11, color: BRAND.gray }}>Gross Margin %</td><td style={{ padding: "2px 0", textAlign: "right", fontSize: 11, fontWeight: 700, color: m.margin >= 0 ? BRAND.green : "#DC2626", ...S.mono }}>{(m.margin * 100).toFixed(1)}%</td></tr>
+                        )}
+                        {m.annROI != null && (
+                          <tr><td style={{ padding: "2px 0", fontSize: 11, color: BRAND.gray }}>Annualized ROI</td><td style={{ padding: "2px 0", textAlign: "right", fontSize: 11, fontWeight: 700, color: m.annROI >= 0 ? BRAND.green : "#DC2626", ...S.mono }}>{(m.annROI * 100).toFixed(1)}%</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 14, fontSize: 11, alignItems: "center", marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${m.grossProfit >= 0 ? "#86EFAC" : "#FCA5A5"}` }}>
+                      {m.velocity != null && <div style={{ color: BRAND.gray }}>Velocity: <b style={{ color: BRAND.blue, ...S.mono }}>{fmt$2(m.velocity)}/d</b></div>}
+                      {m.days != null && <div style={{ color: BRAND.gray }}>Days Held: <b>{m.days}</b></div>}
                       <GradeBadge grade={m.grade} />
                     </div>
                   </div>
@@ -2046,11 +2445,19 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
                   <Input label="Other Deductions" value={saleForm.otherDeductions} onChange={val => updSale("otherDeductions", val)} type="number" step="0.01" />
                   <Input label="Buyer Phone" value={saleForm.buyerPhone} onChange={val => updSale("buyerPhone", val)} />
                   <Input label="Buyer Email" value={saleForm.buyerEmail} onChange={val => updSale("buyerEmail", val)} />
+                  <Select label="Payment Method *" value={saleForm.paymentMethod} onChange={val => updSale("paymentMethod", val)} options={PAYMENT_METHODS} placeholder="Select..." />
                   <Input label="Notes" value={saleForm.notes} onChange={val => updSale("notes", val)} />
                 </div>
+                <div style={{ fontSize: 10, color: BRAND.gray, marginTop: 6, fontStyle: "italic" }}>* Required to finalize the sale. The vehicle's status will flip to "Sold" only when price, date, buyer, and payment method are all set.</div>
+                {/* Payments — optional; track deposits, balances, refunds */}
+                <PaymentsEditor
+                  grossPrice={p(saleForm.grossPrice)}
+                  payments={saleForm.payments || []}
+                  onChange={(next) => updSale("payments", next)}
+                />
                 {/* Live P&L */}
                 {saleForm.grossPrice && (() => {
-                  const inv = calcTotalInvested(v);
+                  const inv = calcTotalInvested(v, data.expenses);
                   const netP = saleNet(saleForm);
                   const profit = netP - inv;
                   return (
@@ -2088,7 +2495,14 @@ function ExpensesTab({ data, setData }) {
   const upd = (k, v) => { setForm(prev => { const n = { ...prev, [k]: v }; if (k === "stockNum" && v) { const vh = data.vehicles.find(x => x.stockNum === v); if (vh) n.vehicle = `${vh.year} ${vh.make} ${vh.model}`; } return n; }); };
   const openNew = () => { setForm(empty()); setEditing(null); setShowForm(true); };
   const openEdit = e => { setForm({ ...e }); setEditing(e.id); setShowForm(true); };
-  const save = () => { if (!form.amount) return; if (form.stockNum && !form.vehicle) { const v = data.vehicles.find(x => x.stockNum === form.stockNum); if (v) form.vehicle = `${v.year} ${v.make} ${v.model}`; } if (editing) setData(d => ({ ...d, expenses: d.expenses.map(e => e.id === editing ? form : e) })); else setData(d => ({ ...d, expenses: [...d.expenses, form] })); setShowForm(false); };
+  const save = () => {
+    if (form.stockNum && !form.vehicle) { const v = data.vehicles.find(x => x.stockNum === form.stockNum); if (v) form.vehicle = `${v.year} ${v.make} ${v.model}`; }
+    const err = validateExpenseEntry(form);
+    if (err) { alert(err); return; }
+    if (editing) setData(d => ({ ...d, expenses: d.expenses.map(e => e.id === editing ? form : e) }));
+    else setData(d => ({ ...d, expenses: [...d.expenses, form] }));
+    setShowForm(false);
+  };
   const del = id => { setData(d => ({ ...d, expenses: d.expenses.filter(e => e.id !== id) })); setConfirm(null); setShowForm(false); };
 
   let sorted = [...data.expenses].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
@@ -2133,16 +2547,17 @@ function ExpensesTab({ data, setData }) {
       {showForm && (
         <Modal title={editing ? "Edit Expense" : "Add Expense"} onClose={() => setShowForm(false)}>
           <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <Input label="Date" value={form.date} onChange={v => upd("date", v)} type="date" />
-            <Select label="Stock #" value={form.stockNum} onChange={v => upd("stockNum", v)} options={data.vehicles.map(v => v.stockNum)} placeholder="(General)" />
+            <Input label="Date *" value={form.date} onChange={v => upd("date", v)} type="date" />
+            <Select label="Stock # *" value={form.stockNum} onChange={v => upd("stockNum", v)} options={data.vehicles.map(v => v.stockNum)} placeholder="Select vehicle..." />
             <Input label="Vehicle" value={form.vehicle} onChange={v => upd("vehicle", v)} readOnly />
-            <Select label="Category" value={form.category} onChange={v => upd("category", v)} options={EXPENSE_CATEGORIES} placeholder="Select..." />
-            <Input label="Amount" value={form.amount} onChange={v => upd("amount", v)} type="number" step="0.01" />
-            <Input label="Description" value={form.description} onChange={v => upd("description", v)} placeholder="What for?" />
-            <Input label="Vendor" value={form.vendor} onChange={v => upd("vendor", v)} />
+            <Select label="Category *" value={form.category} onChange={v => upd("category", v)} options={EXPENSE_CATEGORIES} placeholder="Select..." />
+            <Input label="Amount *" value={form.amount} onChange={v => upd("amount", v)} type="number" step="0.01" />
+            <Input label="Description *" value={form.description} onChange={v => upd("description", v)} placeholder="What for?" />
+            <Input label="Vendor *" value={form.vendor} onChange={v => upd("vendor", v)} />
             <Select label="Payment" value={form.paymentMethod} onChange={v => upd("paymentMethod", v)} options={PAYMENT_METHODS} placeholder="Select..." />
             <Input label="Receipt #" value={form.receipt} onChange={v => upd("receipt", v)} />
           </div>
+          <div style={{ fontSize: 10, color: BRAND.gray, marginTop: 6, fontStyle: "italic" }}>* Required. Receipt photo upload isn't wired yet — attach a receipt # or URL for now.</div>
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 18 }}>
             <div>{editing && <Btn variant="danger" onClick={() => setConfirm(editing)}>Delete</Btn>}</div>
             <div style={{ display: "flex", gap: 6 }}><Btn variant="secondary" onClick={() => setShowForm(false)}>Cancel</Btn><Btn onClick={save}>{editing ? "Save" : "Add"}</Btn></div>
@@ -2159,14 +2574,21 @@ function ExpensesTab({ data, setData }) {
 // ═══════════════════════════════════════════════════════════════
 function SalesTab({ data, setData }) {
   const [showForm, setShowForm] = useState(false); const [editing, setEditing] = useState(null); const [confirm, setConfirm] = useState(null);
-  const empty = () => ({ id: genId(), date: new Date().toISOString().slice(0, 10), stockNum: "", vehicle: "", buyerName: "", saleType: "", grossPrice: "", auctionFee: "", titleFee: "", otherDeductions: "", buyerPhone: "", buyerEmail: "", notes: "" });
+  const empty = () => ({ id: genId(), date: new Date().toISOString().slice(0, 10), stockNum: "", vehicle: "", buyerName: "", saleType: "", grossPrice: "", auctionFee: "", titleFee: "", otherDeductions: "", buyerPhone: "", buyerEmail: "", paymentMethod: "", notes: "", payments: [] });
   const [form, setForm] = useState(empty());
   const upd = (k, v) => { setForm(prev => { const n = { ...prev, [k]: v }; if (k === "stockNum" && v) { const vh = data.vehicles.find(x => x.stockNum === v); if (vh) n.vehicle = `${vh.year} ${vh.make} ${vh.model}`; } return n; }); };
   const net = s => p(s.grossPrice) - p(s.auctionFee) - p(s.titleFee) - p(s.otherDeductions);
   const openNew = () => { setForm(empty()); setEditing(null); setShowForm(true); };
   const openEdit = s => { setForm({ ...s }); setEditing(s.id); setShowForm(true); };
   const save = () => {
-    if (!form.grossPrice && !form.stockNum) return;
+    if (!form.grossPrice && !form.stockNum) { alert("Gross price or stock # is required"); return; }
+    const moneyErr = validateMoneyFields([
+      [form.grossPrice, "Gross price"],
+      [form.auctionFee, "Auction fee"],
+      [form.titleFee, "Title fee"],
+      [form.otherDeductions, "Other deductions"],
+    ]);
+    if (moneyErr) { alert(moneyErr); return; }
     if (form.stockNum && !form.vehicle) { const v = data.vehicles.find(x => x.stockNum === form.stockNum); if (v) form.vehicle = `${v.year} ${v.make} ${v.model}`; }
     if (editing) setData(d => ({ ...d, sales: d.sales.map(s => s.id === editing ? form : s) }));
     else setData(d => ({ ...d, sales: [...d.sales, form], vehicles: d.vehicles.map(v => v.stockNum === form.stockNum ? { ...v, status: "Sold" } : v) }));
@@ -2190,7 +2612,7 @@ function SalesTab({ data, setData }) {
               <tbody>
                 {sorted.map(s => {
                   const v = data.vehicles.find(vh => vh.stockNum === s.stockNum);
-                  const m = v ? calcVehicleFullMetrics(v, s, data.holdCosts) : null;
+                  const m = v ? calcVehicleFullMetrics(v, s, data.holdCosts, data.expenses) : null;
                   return (
                     <tr key={s.id} onClick={() => openEdit(s)} style={{ borderBottom: `1px solid ${BRAND.grayLight}`, cursor: "pointer" }} onMouseEnter={ev => ev.currentTarget.style.background = "#FAFAFA"} onMouseLeave={ev => ev.currentTarget.style.background = "transparent"}>
                       <TD style={{ color: BRAND.gray }}>{s.date}</TD>
@@ -2230,7 +2652,7 @@ function SalesTab({ data, setData }) {
           {form.stockNum && (() => {
             const v = data.vehicles.find(x => x.stockNum === form.stockNum);
             if (!v) return null;
-            const inv = calcTotalInvested(v);
+            const inv = calcTotalInvested(v, data.expenses);
             const netP = net(form);
             const profit = netP - inv;
             const days = v.purchaseDate && form.date ? daysBetween(v.purchaseDate, form.date) : null;
@@ -2346,7 +2768,7 @@ const STAGE_COLORS = {
 };
 
 function PipelineTab({ data, setData }) {
-  const { vehicles, sales, holdCosts } = data;
+  const { vehicles, sales, expenses, holdCosts } = data;
 
   const columns = useMemo(() => {
     const cols = {};
@@ -2375,10 +2797,10 @@ function PipelineTab({ data, setData }) {
     PIPELINE_STAGES.forEach(s => { byStage[s] = 0; });
     vehicles.forEach(v => {
       const stage = getPipelineStage(v, sales);
-      if (byStage[stage] !== undefined) byStage[stage] += calcTotalInvested(v);
+      if (byStage[stage] !== undefined) byStage[stage] += calcTotalInvested(v, expenses);
     });
     return byStage;
-  }, [vehicles, sales]);
+  }, [vehicles, sales, expenses]);
 
   return (
     <div>
@@ -2417,7 +2839,7 @@ function PipelineTab({ data, setData }) {
                 {items.length === 0 ? (
                   <div style={{ textAlign: "center", color: BRAND.gray, fontSize: 11, padding: 20, opacity: 0.6 }}>No vehicles</div>
                 ) : items.map(v => {
-                  const m = calcVehicleFullMetrics(v, sales.find(s => s.stockNum === v.stockNum), holdCosts);
+                  const m = calcVehicleFullMetrics(v, sales.find(s => s.stockNum === v.stockNum), holdCosts, expenses);
                   const stageIdx = PIPELINE_STAGES.indexOf(stage);
                   return (
                     <div key={v.id} style={{ background: BRAND.white, borderRadius: 8, padding: 10, border: `1px solid ${BRAND.grayLight}`, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" }}>
@@ -2584,7 +3006,7 @@ function CalendarTab({ data, setData }) {
               <Input label="Date" value={form.date} onChange={v => setForm(f => ({ ...f, date: v }))} type="date" />
               <Select label="Type" value={form.type} onChange={v => setForm(f => ({ ...f, type: v }))} options={[{ value: "auction", label: "Auction" }, { value: "pickup", label: "Pickup" }, { value: "deadline", label: "Deadline" }, { value: "reminder", label: "Reminder" }]} />
             </div>
-            <Select label="Auction Source" value={form.source} onChange={v => setForm(f => ({ ...f, source: v }))} options={AUCTION_SOURCES.map(s => ({ value: s, label: AUCTION_FEE_TIERS[s]?.name || s }))} />
+            <Select label="Acquisition Source" value={form.source} onChange={v => setForm(f => ({ ...f, source: v }))} options={AUCTION_SOURCES.map(s => ({ value: s, label: AUCTION_FEE_TIERS[s]?.name || s }))} />
             <Input label="Notes" value={form.notes} onChange={v => setForm(f => ({ ...f, notes: v }))} placeholder="Optional notes" />
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 18 }}>
@@ -2608,9 +3030,9 @@ function AnalyticsTab({ data }) {
   const dealCards = useMemo(() => {
     return sold.map(v => {
       const sale = sales.find(s => s.stockNum === v.stockNum);
-      return { vehicle: v, sale, metrics: calcVehicleFullMetrics(v, sale, holdCosts) };
+      return { vehicle: v, sale, metrics: calcVehicleFullMetrics(v, sale, holdCosts, expenses) };
     }).sort((a, b) => (b.metrics.grossProfit || 0) - (a.metrics.grossProfit || 0));
-  }, [sold, sales, holdCosts]);
+  }, [sold, sales, holdCosts, expenses]);
 
   // Cash flow
   const cashFlow = useMemo(() => buildCashFlow(vehicles, sales, expenses), [vehicles, sales, expenses]);
@@ -2622,7 +3044,7 @@ function AnalyticsTab({ data }) {
       const src = v.auctionSource || "custom";
       if (!m[src]) m[src] = { count: 0, totalProfit: 0, totalInvested: 0, days: [] };
       const sale = sales.find(s => s.stockNum === v.stockNum);
-      const met = calcVehicleFullMetrics(v, sale, holdCosts);
+      const met = calcVehicleFullMetrics(v, sale, holdCosts, expenses);
       m[src].count++;
       m[src].totalProfit += met.grossProfit || 0;
       m[src].totalInvested += met.invested;
@@ -2635,7 +3057,7 @@ function AnalyticsTab({ data }) {
       avgDays: d.days.length > 0 ? Math.round(d.days.reduce((a, b) => a + b, 0) / d.days.length) : 0,
       roi: d.totalInvested > 0 ? d.totalProfit / d.totalInvested : 0,
     })).sort((a, b) => b.avgProfit - a.avgProfit);
-  }, [sold, sales, holdCosts]);
+  }, [sold, sales, holdCosts, expenses]);
 
   // Performance by title status
   const byTitle = useMemo(() => {
@@ -2644,7 +3066,7 @@ function AnalyticsTab({ data }) {
       const ts = v.titleStatus || "clean";
       if (!m[ts]) m[ts] = { count: 0, totalProfit: 0, totalInvested: 0 };
       const sale = sales.find(s => s.stockNum === v.stockNum);
-      const met = calcVehicleFullMetrics(v, sale, holdCosts);
+      const met = calcVehicleFullMetrics(v, sale, holdCosts, expenses);
       m[ts].count++;
       m[ts].totalProfit += met.grossProfit || 0;
       m[ts].totalInvested += met.invested;
@@ -2656,7 +3078,7 @@ function AnalyticsTab({ data }) {
       avgProfit: d.count > 0 ? d.totalProfit / d.count : 0,
       roi: d.totalInvested > 0 ? d.totalProfit / d.totalInvested : 0,
     })).sort((a, b) => b.avgProfit - a.avgProfit);
-  }, [sold, sales, holdCosts]);
+  }, [sold, sales, holdCosts, expenses]);
 
   // Industry benchmarks
   const benchmarks = useMemo(() => {
@@ -2667,7 +3089,7 @@ function AnalyticsTab({ data }) {
     return [
       { metric: "Avg Profit/Car", value: fmt$(avgP), level: getBenchmarkLevel("avgProfitPerCar", avgP) },
       { metric: "Avg Days to Sell", value: `${Math.round(avgD)}d`, level: getBenchmarkLevel("avgDaysToSell", avgD) },
-      { metric: "Avg Margin", value: fmtPct(avgM), level: getBenchmarkLevel("profitMargin", avgM) },
+      { metric: "Avg Gross Margin %", value: fmtPct(avgM), level: getBenchmarkLevel("profitMargin", avgM) },
       { metric: "Profit Velocity", value: `${fmt$2(avgV)}/d`, level: getBenchmarkLevel("profitVelocity", avgV) },
     ];
   }, [dealCards, sold]);
@@ -2699,7 +3121,7 @@ function AnalyticsTab({ data }) {
         {dealCards.length === 0 ? <div style={{ color: BRAND.gray, fontSize: 12 }}>No completed deals yet</div> : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead><tr style={{ background: BRAND.redBg }}>{["Rank","Vehicle","Invested","Net Sale","Profit","Margin","Days","Velocity","Ann. ROI","Grade"].map(h => <TH key={h}>{h}</TH>)}</tr></thead>
+              <thead><tr style={{ background: BRAND.redBg }}>{["Rank","Vehicle","Invested","Net Sale","Profit","Gross Margin %","Days","Velocity","Ann. ROI","Grade"].map(h => <TH key={h}>{h}</TH>)}</tr></thead>
               <tbody>
                 {dealCards.map((d, i) => (
                   <tr key={d.vehicle.id} style={{ borderBottom: `1px solid ${BRAND.grayLight}`, background: i === 0 ? "#FEFCE8" : i < 3 ? "#FFFBEB" : "transparent" }}>
@@ -2767,7 +3189,7 @@ function AnalyticsTab({ data }) {
             const key = `${(v.make || "Unknown").trim()} ${(v.model || "").trim()}`.trim();
             if (!byMakeModel[key]) byMakeModel[key] = { count: 0, totalProfit: 0, totalInvested: 0, days: [], profits: [] };
             const sale = sales.find(s => s.stockNum === v.stockNum);
-            const met = calcVehicleFullMetrics(v, sale, holdCosts);
+            const met = calcVehicleFullMetrics(v, sale, holdCosts, expenses);
             byMakeModel[key].count++;
             byMakeModel[key].totalProfit += met.grossProfit || 0;
             byMakeModel[key].totalInvested += met.invested;
@@ -2939,10 +3361,14 @@ function ReportsTab({ data }) {
 
     const totalRevenue = periodSales.reduce((s, x) => s + p(x.grossPrice), 0);
     const totalNet = periodSales.reduce((s, x) => s + p(x.grossPrice) - p(x.auctionFee) - p(x.titleFee) - p(x.otherDeductions), 0);
-    const soldInvested = periodSold.reduce((s, v) => s + calcTotalInvested(v), 0);
+    const soldInvested = periodSold.reduce((s, v) => s + calcTotalInvested(v, expenses), 0);
     const grossProfit = totalNet - soldInvested;
     const totalExp = periodExpenses.reduce((s, e) => s + p(e.amount), 0);
-    const netIncome = grossProfit - totalExp;
+    // Per-vehicle expenses on sold vehicles are already in soldInvested;
+    // deduct only overhead (non-vehicle-linked) here to avoid double-counting.
+    const periodSoldStocks = new Set(periodSold.map(v => v.stockNum));
+    const overheadExp = periodExpenses.filter(e => !e.stockNum || !periodSoldStocks.has(e.stockNum)).reduce((s, e) => s + p(e.amount), 0);
+    const netIncome = grossProfit - overheadExp;
 
     const avgProfit = periodSold.length > 0 ? grossProfit / periodSold.length : 0;
     const daysArr = periodSold.map(v => { const sl = sales.find(s => s.stockNum === v.stockNum); return sl && v.purchaseDate && sl.date ? daysBetween(v.purchaseDate, sl.date) : null; }).filter(Boolean);
@@ -2951,15 +3377,31 @@ function ReportsTab({ data }) {
     // Top deals
     const topDeals = periodSold.map(v => {
       const sl = sales.find(s => s.stockNum === v.stockNum);
-      return { vehicle: v, sale: sl, metrics: calcVehicleFullMetrics(v, sl, holdCosts) };
+      return { vehicle: v, sale: sl, metrics: calcVehicleFullMetrics(v, sl, holdCosts, expenses) };
     }).sort((a, b) => (b.metrics.grossProfit || 0) - (a.metrics.grossProfit || 0)).slice(0, 5);
 
     // Expense breakdown
     const expByCat = {};
     periodExpenses.forEach(e => { const c = e.category || "Other"; expByCat[c] = (expByCat[c] || 0) + p(e.amount); });
 
-    return { label, periodPurchased, periodSold, periodSales, periodExpenses, totalRevenue, totalNet, soldInvested, grossProfit, totalExp, netIncome, avgProfit, avgDays, topDeals, expByCat };
-  }, [vehicles, sales, expenses, holdCosts, period, selectedMonth]);
+    // In-inventory snapshot: vehicles that exist as of endDate and whose sale
+    // (if any) is after endDate. Average days-held is computed against
+    // endDate so "days held" makes sense for historical periods.
+    const endDateObj = new Date(endDate + "T23:59:59");
+    const periodInInventory = vehicles.filter(v => {
+      if (!v.purchaseDate || v.purchaseDate > endDate) return false;
+      const sl = sales.find(s => s.stockNum === v.stockNum);
+      return !sl || sl.date > endDate;
+    });
+    const inventoryDays = periodInInventory.map(v => {
+      const start = new Date(v.purchaseDate);
+      return Math.max(0, Math.round((endDateObj - start) / 86400000));
+    });
+    const avgInventoryDays = inventoryDays.length > 0 ? Math.round(inventoryDays.reduce((a, b) => a + b, 0) / inventoryDays.length) : 0;
+    const inventoryValue = periodInInventory.reduce((s, v) => s + calcTotalInvested(v, expenses), 0);
+
+    return { label, startDate, endDate, periodPurchased, periodSold, periodSales, periodExpenses, periodInInventory, inventoryValue, avgInventoryDays, totalRevenue, totalNet, soldInvested, grossProfit, totalExp, overheadExp, netIncome, avgProfit, avgDays, topDeals, expByCat };
+  }, [vehicles, sales, expenses, holdCosts, period, selectedMonth, data.auctionFeeTiers]);
 
   const handlePrintReport = () => {
     const r = reportData;
@@ -2982,12 +3424,14 @@ td{padding:8px;border-bottom:1px solid #eee}
 <div class="grid">
 <div class="stat"><div class="stat-label">Purchased</div><div class="stat-value">${r.periodPurchased.length}</div></div>
 <div class="stat"><div class="stat-label">Sold</div><div class="stat-value">${r.periodSold.length}</div></div>
+<div class="stat"><div class="stat-label">In Inventory</div><div class="stat-value">${r.periodInInventory.length}</div><div style="font-size:10px;color:#888;margin-top:3px">${fmt$(r.inventoryValue)}</div></div>
 <div class="stat"><div class="stat-label">Revenue</div><div class="stat-value">${fmt$(r.totalRevenue)}</div></div>
 <div class="stat"><div class="stat-label">Gross Profit</div><div class="stat-value" style="color:${r.grossProfit >= 0 ? "#166534" : "#DC2626"}">${fmt$(r.grossProfit)}</div></div>
-<div class="stat"><div class="stat-label">Expenses</div><div class="stat-value" style="color:#DC2626">${fmt$(r.totalExp)}</div></div>
+<div class="stat"><div class="stat-label">Overhead</div><div class="stat-value" style="color:#DC2626">${fmt$(r.overheadExp)}</div><div style="font-size:10px;color:#888;margin-top:3px">${fmt$(r.totalExp)} total exp</div></div>
 <div class="stat"><div class="stat-label">Net Income</div><div class="stat-value" style="color:${r.netIncome >= 0 ? "#166534" : "#DC2626"}">${fmt$(r.netIncome)}</div></div>
 <div class="stat"><div class="stat-label">Avg Profit/Car</div><div class="stat-value">${fmt$(r.avgProfit)}</div></div>
 <div class="stat"><div class="stat-label">Avg Days to Sell</div><div class="stat-value">${r.avgDays}d</div></div>
+<div class="stat"><div class="stat-label">Avg Days in Inv.</div><div class="stat-value">${r.avgInventoryDays}d</div></div>
 </div>
 ${r.topDeals.length > 0 ? `<div class="section"><h3>Top Deals</h3><table><thead><tr><th>Vehicle</th><th>Invested</th><th>Sold For</th><th>Profit</th><th>Days</th><th>Grade</th></tr></thead><tbody>${r.topDeals.map(d => `<tr><td>#${esc(d.vehicle.stockNum)} ${esc(d.vehicle.year)} ${esc(d.vehicle.make)} ${esc(d.vehicle.model)}</td><td>${fmt$(d.metrics.invested)}</td><td>${fmt$(d.metrics.netSale)}</td><td style="color:${(d.metrics.grossProfit||0)>=0?"#166534":"#DC2626"};font-weight:700">${fmt$(d.metrics.grossProfit)}</td><td>${d.metrics.days||"—"}d</td><td>${d.metrics.grade?esc(d.metrics.grade.grade):"—"}</td></tr>`).join("")}</tbody></table></div>` : ""}
 ${Object.keys(r.expByCat).length > 0 ? `<div class="section"><h3>Expense Breakdown</h3><table><thead><tr><th>Category</th><th>Amount</th></tr></thead><tbody>${Object.entries(r.expByCat).sort((a,b)=>b[1]-a[1]).map(([c,a])=>`<tr><td>${esc(c)}</td><td style="font-weight:700">${fmt$(a)}</td></tr>`).join("")}</tbody></table></div>` : ""}
@@ -3039,12 +3483,14 @@ ${Object.keys(r.expByCat).length > 0 ? `<div class="section"><h3>Expense Breakdo
       <div className="stat-cards-row" style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
         <StatCard label="Purchased" value={r.periodPurchased.length} color={BRAND.black} />
         <StatCard label="Sold" value={r.periodSold.length} color={BRAND.green} />
+        <StatCard label="In Inventory" value={r.periodInInventory.length} color={BRAND.blue} sub={fmt$(r.inventoryValue)} />
         <StatCard label="Revenue" value={fmt$(r.totalRevenue)} color={BRAND.blue} />
         <StatCard label="Gross Profit" value={fmt$(r.grossProfit)} color={r.grossProfit >= 0 ? BRAND.green : "#DC2626"} />
-        <StatCard label="Expenses" value={fmt$(r.totalExp)} color="#DC2626" />
+        <StatCard label="Overhead" value={fmt$(r.overheadExp)} color="#DC2626" sub={`of ${fmt$(r.totalExp)} total exp`} />
         <StatCard label="Net Income" value={fmt$(r.netIncome)} color={r.netIncome >= 0 ? BRAND.green : "#DC2626"} />
         <StatCard label="Avg Profit/Car" value={fmt$(r.avgProfit)} color={r.avgProfit >= 0 ? BRAND.green : "#DC2626"} />
         <StatCard label="Avg Days to Sell" value={`${r.avgDays}d`} color={BRAND.grayDark} />
+        <StatCard label="Avg Days in Inv." value={`${r.avgInventoryDays}d`} color={BRAND.grayDark} />
       </div>
 
       {/* Top Deals */}
@@ -3324,6 +3770,125 @@ function timeAgo(isoString) {
   return `${months}mo ago`;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// TRASH TAB (Admin Only) — restore / purge soft-deleted records
+// ═══════════════════════════════════════════════════════════════
+function TrashTab({ data, setData, currentUser }) {
+  const [filter, setFilter] = useState("all");
+  const [confirmPurge, setConfirmPurge] = useState(null); // trash item or "__ALL__"
+  const trash = [...(data.trash || [])].sort((a, b) => (b._deletedAt || "").localeCompare(a._deletedAt || ""));
+  const filtered = filter === "all" ? trash : trash.filter(t => t._entity === filter);
+  const counts = { all: trash.length, vehicle: trash.filter(t => t._entity === "vehicle").length, expense: trash.filter(t => t._entity === "expense").length, sale: trash.filter(t => t._entity === "sale").length };
+
+  const describe = (item) => {
+    if (item._entity === "vehicle") return `#${item.stockNum || "—"} ${item.year || ""} ${item.make || ""} ${item.model || ""}`.trim();
+    if (item._entity === "expense") return `${item.category || "—"} · ${fmt$2(p(item.amount))}${item.stockNum ? ` · #${item.stockNum}` : ""}`;
+    if (item._entity === "sale") return `${fmt$2(p(item.grossPrice))} · ${item.buyerName || "—"}${item.stockNum ? ` · #${item.stockNum}` : ""}`;
+    return "—";
+  };
+
+  // Match on id + _deletedAt — that combination is unique
+  const matches = (t, item) => t.id === item.id && t._deletedAt === item._deletedAt;
+
+  const restore = (item) => {
+    const entity = item._entity;
+    // Strip trash metadata before restoring
+    const { _entity, _deletedAt, _deletedBy, _trashId, ...clean } = item;
+    setData(d => {
+      const remainingTrash = (d.trash || []).filter(t => !matches(t, item));
+      const restored = { ...clean };
+      if (entity === "vehicle") {
+        const ids = new Set(d.vehicles.map(v => v.id));
+        if (ids.has(restored.id)) restored.id = genId();
+        const stocks = new Set(d.vehicles.map(v => v.stockNum));
+        let nextStock = d.nextStockNum || 1;
+        if (stocks.has(restored.stockNum)) { restored.stockNum = nextStock; nextStock += 1; }
+        return { ...d, vehicles: [...d.vehicles, restored], trash: remainingTrash, nextStockNum: nextStock };
+      }
+      if (entity === "expense") {
+        const ids = new Set(d.expenses.map(e => e.id));
+        if (ids.has(restored.id)) restored.id = genId();
+        return { ...d, expenses: [...d.expenses, restored], trash: remainingTrash };
+      }
+      if (entity === "sale") {
+        const ids = new Set(d.sales.map(s => s.id));
+        if (ids.has(restored.id)) restored.id = genId();
+        return { ...d, sales: [...d.sales, restored], trash: remainingTrash };
+      }
+      return d;
+    });
+    logActivity(currentUser, `restored_${entity}`, `Restored ${entity}: ${describe(item)}`);
+  };
+
+  const purgeOne = (item) => {
+    setData(d => ({ ...d, trash: (d.trash || []).filter(t => !matches(t, item)) }));
+    logActivity(currentUser, "purged_trash", `Permanently deleted ${item._entity}: ${describe(item)}`);
+    setConfirmPurge(null);
+  };
+
+  const purgeAll = () => {
+    const n = (data.trash || []).length;
+    setData(d => ({ ...d, trash: [] }));
+    logActivity(currentUser, "purged_trash", `Emptied trash (${n} items)`);
+    setConfirmPurge(null);
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: BRAND.black }}>Trash</div>
+          <div style={{ fontSize: 12, color: BRAND.gray }}>Recently deleted records · restore or purge permanently</div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <select value={filter} onChange={e => setFilter(e.target.value)} style={{ border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, padding: "5px 10px", fontSize: 12, background: BRAND.white }}>
+            <option value="all">All ({counts.all})</option>
+            <option value="vehicle">Vehicles ({counts.vehicle})</option>
+            <option value="expense">Expenses ({counts.expense})</option>
+            <option value="sale">Sales ({counts.sale})</option>
+          </select>
+          {trash.length > 0 && <Btn variant="danger" size="sm" onClick={() => setConfirmPurge("__ALL__")}>Empty Trash</Btn>}
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
+        <Empty icon={<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>} title="Trash is empty" sub="Deleted records will appear here for recovery" />
+      ) : (
+        <Card style={{ padding: 0, overflow: "hidden" }}>
+          <div style={{ maxHeight: 600, overflowY: "auto" }}>
+            {filtered.map((item, i) => {
+              const color = item._entity === "vehicle" ? BRAND.blue : item._entity === "expense" ? "#D97706" : BRAND.green;
+              const when = item._deletedAt ? new Date(item._deletedAt) : null;
+              return (
+                <div key={`${item.id}-${item._deletedAt}`} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: `1px solid ${BRAND.grayLight}`, background: i % 2 === 0 ? "#FAFAFA" : BRAND.white }}>
+                  <div style={{ width: 6, height: 6, borderRadius: "50%", background: color, flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, color: BRAND.black, fontWeight: 600 }}>
+                      <span style={{ textTransform: "uppercase", fontSize: 10, color, marginRight: 8, letterSpacing: "0.05em" }}>{item._entity}</span>
+                      {describe(item)}
+                    </div>
+                    <div style={{ fontSize: 10, color: BRAND.gray, marginTop: 2 }}>
+                      Deleted by <b>{item._deletedBy || "—"}</b>
+                      {when && <span style={S.mono}> · {when.toLocaleDateString()} {when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                    <Btn size="sm" variant="secondary" onClick={() => restore(item)}>Restore</Btn>
+                    <Btn size="sm" variant="danger" onClick={() => setConfirmPurge(item)}>Purge</Btn>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+
+      {confirmPurge === "__ALL__" && <Confirm msg={`Permanently delete all ${trash.length} items in trash? This cannot be undone.`} onOk={purgeAll} onCancel={() => setConfirmPurge(null)} />}
+      {confirmPurge && confirmPurge !== "__ALL__" && <Confirm msg={`Permanently delete this ${confirmPurge._entity}? This cannot be undone.`} onOk={() => purgeOne(confirmPurge)} onCancel={() => setConfirmPurge(null)} />}
+    </div>
+  );
+}
+
 function UsersTab() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -3460,7 +4025,291 @@ function UsersTab() {
 // ═══════════════════════════════════════════════════════════════
 // SETTINGS TAB
 // ═══════════════════════════════════════════════════════════════
-function SettingsTab({ darkMode, username, userRole, firebaseUid }) {
+// ═══════════════════════════════════════════════════════════════
+// HOLD COSTS CARD — admin-editable rates used in profit calculations
+// ═══════════════════════════════════════════════════════════════
+const HOLD_COST_FIELDS = [
+  { key: "insurancePerDay", label: "Insurance / day", prefix: "$", suffix: "", step: "0.01", help: "Daily insurance cost per vehicle" },
+  { key: "storagePerDay", label: "Storage / day", prefix: "$", suffix: "", step: "0.01", help: "Daily lot/storage cost (0 if home lot)" },
+  { key: "depreciationPerDay", label: "Depreciation / day", prefix: "$", suffix: "", step: "0.01", help: "Average daily depreciation estimate" },
+  { key: "opportunityCostRate", label: "Opportunity cost rate", prefix: "", suffix: "%", step: "0.01", help: "Annual return on capital (10% = 0.10)", isPct: true },
+  { key: "agingThresholdDays", label: "Aging warning threshold", prefix: "", suffix: "days", step: "1", help: "Flag vehicles held longer than this (default 45)" },
+];
+function HoldCostsCard({ data, setData, darkMode, username }) {
+  const current = data.holdCosts || DEFAULT_HOLD_COSTS;
+  const [form, setForm] = useState({ ...current });
+  const [err, setErr] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  const upd = (k, v) => { setErr(""); setSaved(false); setForm(f => ({ ...f, [k]: v })); };
+
+  const save = () => {
+    const bounds = [
+      [form.insurancePerDay, "Insurance / day", { max: 1000 }],
+      [form.storagePerDay, "Storage / day", { max: 1000 }],
+      [form.depreciationPerDay, "Depreciation / day", { max: 1000 }],
+      [form.opportunityCostRate, "Opportunity cost rate", { max: 1 }],
+      [form.agingThresholdDays, "Aging threshold", { max: 3650 }],
+    ];
+    const e = validateMoneyFields(bounds);
+    if (e) { setErr(e); return; }
+    const clean = {
+      insurancePerDay: p(form.insurancePerDay),
+      storagePerDay: p(form.storagePerDay),
+      depreciationPerDay: p(form.depreciationPerDay),
+      opportunityCostRate: p(form.opportunityCostRate),
+      agingThresholdDays: Math.max(1, Math.round(p(form.agingThresholdDays)) || 45),
+    };
+    setData(d => ({ ...d, holdCosts: clean }));
+    logActivity(username, "updated_hold_costs", `Updated hold cost rates`);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  };
+
+  const reset = () => {
+    setForm({ ...DEFAULT_HOLD_COSTS });
+    setErr("");
+    setSaved(false);
+  };
+
+  const dirty = Object.keys(current).some(k => p(form[k]) !== p(current[k]));
+
+  return (
+    <Card style={{ marginTop: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+        <div style={{ width: 36, height: 36, borderRadius: 8, background: "#FEF3C7", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#D97706" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: BRAND.black }}>Hold Cost Rates</div>
+          <div style={{ fontSize: 11, color: BRAND.gray }}>Used in profit & break-even calculations for every vehicle</div>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+        {HOLD_COST_FIELDS.map(f => (
+          <div key={f.key}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>{f.label}</div>
+            <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+              {f.prefix && <span style={{ position: "absolute", left: 10, color: BRAND.gray, fontSize: 12 }}>{f.prefix}</span>}
+              <input
+                type="number"
+                step={f.step}
+                value={form[f.key] ?? ""}
+                onChange={e => upd(f.key, e.target.value === "" ? "" : parseFloat(e.target.value))}
+                style={{ width: "100%", padding: f.prefix ? "9px 26px 9px 22px" : "9px 26px 9px 11px", borderRadius: 8, border: `1px solid ${BRAND.grayLight}`, fontSize: 13, fontFamily: "inherit", outline: "none", boxSizing: "border-box" }}
+              />
+              {f.suffix && <span style={{ position: "absolute", right: 10, color: BRAND.gray, fontSize: 12 }}>{f.suffix}</span>}
+            </div>
+            <div style={{ fontSize: 10, color: BRAND.gray, marginTop: 3 }}>{f.help}</div>
+          </div>
+        ))}
+      </div>
+      {err && <div style={{ background: "#FEF2F2", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginTop: 12 }}>{err}</div>}
+      {saved && <div style={{ background: "#F0FDF4", color: "#166534", padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginTop: 12 }}>Saved — new rates apply immediately.</div>}
+      <div style={{ display: "flex", gap: 8, marginTop: 14, justifyContent: "flex-end" }}>
+        <Btn variant="secondary" size="sm" onClick={reset} disabled={!dirty}>Reset to defaults</Btn>
+        <Btn size="sm" onClick={save} disabled={!dirty}>Save rates</Btn>
+      </div>
+    </Card>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AUCTION FEE TIERS CARD — admin-editable Copart/IAAI/etc. fee schedules
+// ═══════════════════════════════════════════════════════════════
+function AuctionFeeTiersCard({ data, setData, darkMode, username }) {
+  const custom = data.auctionFeeTiers || {};
+  // Build a working copy: merged defaults + overrides, for editing.
+  const build = () => {
+    const out = {};
+    for (const [k, v] of Object.entries(DEFAULT_AUCTION_FEE_TIERS)) {
+      const ov = custom[k] || {};
+      out[k] = {
+        ...v,
+        gateFee: typeof ov.gateFee === "number" ? ov.gateFee : v.gateFee,
+        envFee: typeof ov.envFee === "number" ? ov.envFee : v.envFee,
+        titleFee: typeof ov.titleFee === "number" ? ov.titleFee : v.titleFee,
+        virtualBidFee: typeof ov.virtualBidFee === "number" ? ov.virtualBidFee : v.virtualBidFee,
+        tiers: (Array.isArray(ov.tiers) && ov.tiers.length > 0)
+          ? ov.tiers.map(t => ({ ...t, max: (t.max == null || t.max === "Infinity") ? Infinity : Number(t.max) }))
+          : v.tiers.map(t => ({ ...t })),
+      };
+    }
+    return out;
+  };
+  const [form, setForm] = useState(build);
+  const [openSrc, setOpenSrc] = useState(null);
+  const [err, setErr] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  const updFlat = (src, key, val) => {
+    setErr(""); setSaved(false);
+    setForm(f => ({ ...f, [src]: { ...f[src], [key]: val === "" ? "" : parseFloat(val) } }));
+  };
+  const updTier = (src, idx, key, val) => {
+    setErr(""); setSaved(false);
+    setForm(f => {
+      const tiers = f[src].tiers.map((t, i) => i === idx ? { ...t, [key]: (val === "" ? "" : Number(val)) } : t);
+      return { ...f, [src]: { ...f[src], tiers } };
+    });
+  };
+  const addTier = (src) => {
+    setForm(f => {
+      const last = f[src].tiers[f[src].tiers.length - 1];
+      const newRow = last?.max === Infinity
+        ? { max: 9999.99, fee: 0 }
+        : { max: Infinity, pct: 5 };
+      const tiers = last?.max === Infinity
+        ? [...f[src].tiers.slice(0, -1), newRow, last]
+        : [...f[src].tiers, newRow];
+      return { ...f, [src]: { ...f[src], tiers } };
+    });
+  };
+  const removeTier = (src, idx) => {
+    setForm(f => ({ ...f, [src]: { ...f[src], tiers: f[src].tiers.filter((_, i) => i !== idx) } }));
+  };
+  const resetSrc = (src) => {
+    setErr(""); setSaved(false);
+    setForm(f => ({ ...f, [src]: { ...DEFAULT_AUCTION_FEE_TIERS[src], tiers: DEFAULT_AUCTION_FEE_TIERS[src].tiers.map(t => ({ ...t })) } }));
+  };
+
+  const save = () => {
+    // Validate: every tier has a numeric max (or Infinity) and either fee or pct
+    for (const [src, cfg] of Object.entries(form)) {
+      const flatErr = validateMoneyFields([
+        [cfg.gateFee, `${cfg.name} gate fee`, { max: 10_000 }],
+        [cfg.envFee, `${cfg.name} env fee`, { max: 10_000 }],
+        [cfg.titleFee, `${cfg.name} title fee`, { max: 10_000 }],
+        [cfg.virtualBidFee, `${cfg.name} virtual bid fee`, { max: 10_000 }],
+      ]);
+      if (flatErr) { setErr(flatErr); return; }
+      if (!Array.isArray(cfg.tiers) || cfg.tiers.length === 0) { setErr(`${cfg.name}: at least one tier row is required`); return; }
+      for (let i = 0; i < cfg.tiers.length; i++) {
+        const t = cfg.tiers[i];
+        const isLast = i === cfg.tiers.length - 1;
+        if (!isLast && (!Number.isFinite(Number(t.max)) || Number(t.max) <= 0)) { setErr(`${cfg.name} tier ${i + 1}: max must be a positive number`); return; }
+        if (t.pct != null && t.pct !== "") {
+          if (!Number.isFinite(Number(t.pct)) || Number(t.pct) < 0 || Number(t.pct) > 100) { setErr(`${cfg.name} tier ${i + 1}: pct must be 0–100`); return; }
+        } else if (t.fee != null && t.fee !== "") {
+          if (!Number.isFinite(Number(t.fee)) || Number(t.fee) < 0) { setErr(`${cfg.name} tier ${i + 1}: fee must be ≥ 0`); return; }
+        } else {
+          setErr(`${cfg.name} tier ${i + 1}: need either fee or pct`); return;
+        }
+      }
+    }
+    // Persist as sparse overrides: only sources where anything differs from defaults
+    const overrides = {};
+    for (const [src, cfg] of Object.entries(form)) {
+      const def = DEFAULT_AUCTION_FEE_TIERS[src];
+      const different = (
+        cfg.gateFee !== def.gateFee ||
+        cfg.envFee !== def.envFee ||
+        cfg.titleFee !== def.titleFee ||
+        cfg.virtualBidFee !== def.virtualBidFee ||
+        cfg.tiers.length !== def.tiers.length ||
+        cfg.tiers.some((t, i) => t.max !== def.tiers[i]?.max || t.fee !== def.tiers[i]?.fee || t.pct !== def.tiers[i]?.pct)
+      );
+      if (different) overrides[src] = serializeTierOverrides(cfg);
+    }
+    setData(d => ({ ...d, auctionFeeTiers: Object.keys(overrides).length > 0 ? overrides : null }));
+    logActivity(username, "updated_auction_fees", `Updated auction fee tiers (${Object.keys(overrides).join(", ") || "reset to defaults"})`);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  };
+
+  const resetAll = () => {
+    setErr(""); setSaved(false);
+    setForm(build());
+  };
+
+  return (
+    <Card style={{ marginTop: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+        <div style={{ width: 36, height: 36, borderRadius: 8, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2563EB" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: BRAND.black }}>Auction Fee Tiers</div>
+          <div style={{ fontSize: 11, color: BRAND.gray }}>Override Copart/IAAI/etc. fee schedules when auction houses update their rates</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {Object.entries(form).map(([src, cfg]) => {
+          const open = openSrc === src;
+          const overridden = !!(data.auctionFeeTiers && data.auctionFeeTiers[src]);
+          return (
+            <div key={src} style={{ border: `1px solid ${BRAND.grayLight}`, borderRadius: 8, padding: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }} onClick={() => setOpenSrc(open ? null : src)}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: BRAND.black }}>{cfg.name}</div>
+                  {overridden && <span style={{ fontSize: 9, padding: "1px 6px", borderRadius: 4, background: "#FEF3C7", color: "#92400E", fontWeight: 700 }}>CUSTOM</span>}
+                  <span style={{ fontSize: 10, color: BRAND.gray }}>{cfg.tiers.length} tier{cfg.tiers.length === 1 ? "" : "s"}</span>
+                </div>
+                <span style={{ fontSize: 11, color: BRAND.gray }}>{open ? "▾" : "▸"}</span>
+              </div>
+              {open && (
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px dashed ${BRAND.grayLight}` }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8, marginBottom: 10 }}>
+                    {[["gateFee", "Gate"], ["envFee", "Env"], ["titleFee", "Title"], ["virtualBidFee", "Virtual Bid"]].map(([k, lbl]) => (
+                      <div key={k}>
+                        <div style={{ fontSize: 9, color: BRAND.gray, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>{lbl}</div>
+                        <input type="number" step="0.01" value={cfg[k] ?? ""} onChange={e => updFlat(src, k, e.target.value)} style={{ width: "100%", padding: "6px 8px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, fontSize: 11, fontFamily: "inherit", boxSizing: "border-box", ...S.mono }} />
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Tiers (first-match: price &le; max)</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 280, overflowY: "auto" }}>
+                    {cfg.tiers.map((t, i) => (
+                      <div key={i} style={{ display: "grid", gridTemplateColumns: "100px 80px 100px 30px", gap: 6, alignItems: "center", fontSize: 11 }}>
+                        <input type={t.max === Infinity ? "text" : "number"} step="0.01" value={t.max === Infinity ? "∞ (last)" : t.max} disabled={t.max === Infinity} onChange={e => updTier(src, i, "max", e.target.value)} style={{ padding: "4px 6px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 4, fontSize: 11, fontFamily: "inherit", ...S.mono, background: t.max === Infinity ? "#F5F5F5" : BRAND.white }} />
+                        {t.pct != null && t.pct !== "" ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                            <input type="number" step="0.01" value={t.pct} onChange={e => updTier(src, i, "pct", e.target.value)} style={{ width: "100%", padding: "4px 6px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 4, fontSize: 11, fontFamily: "inherit", ...S.mono }} />
+                            <span style={{ color: BRAND.gray, fontSize: 10 }}>%</span>
+                          </div>
+                        ) : (
+                          <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                            <span style={{ color: BRAND.gray, fontSize: 10 }}>$</span>
+                            <input type="number" step="0.01" value={t.fee ?? ""} onChange={e => updTier(src, i, "fee", e.target.value)} style={{ width: "100%", padding: "4px 6px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 4, fontSize: 11, fontFamily: "inherit", ...S.mono }} />
+                          </div>
+                        )}
+                        <select value={t.pct != null && t.pct !== "" ? "pct" : "fee"} onChange={e => {
+                          setForm(f => {
+                            const tiers = f[src].tiers.map((row, idx) => {
+                              if (idx !== i) return row;
+                              return e.target.value === "pct" ? { max: row.max, pct: row.fee ?? 5 } : { max: row.max, fee: row.pct ?? 25 };
+                            });
+                            return { ...f, [src]: { ...f[src], tiers } };
+                          });
+                        }} style={{ padding: "4px 6px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 4, fontSize: 11, fontFamily: "inherit", background: BRAND.white }}>
+                          <option value="fee">flat</option>
+                          <option value="pct">percent</option>
+                        </select>
+                        <button onClick={() => removeTier(src, i)} disabled={cfg.tiers.length === 1} aria-label="Remove tier" style={{ border: "none", background: "transparent", color: cfg.tiers.length === 1 ? BRAND.grayLight : "#DC2626", cursor: cfg.tiers.length === 1 ? "not-allowed" : "pointer", fontSize: 14, fontWeight: 700, padding: 0 }}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10 }}>
+                    <Btn size="sm" variant="secondary" onClick={() => addTier(src)}>+ Add tier</Btn>
+                    {overridden && <Btn size="sm" variant="ghost" onClick={() => resetSrc(src)} style={{ color: BRAND.gray, fontSize: 10 }}>Reset {cfg.name} to default</Btn>}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {err && <div style={{ background: "#FEF2F2", color: "#DC2626", padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginTop: 12 }}>{err}</div>}
+      {saved && <div style={{ background: "#F0FDF4", color: "#166534", padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginTop: 12 }}>Saved — new rates apply immediately to all calculations.</div>}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+        <Btn variant="secondary" size="sm" onClick={resetAll}>Revert changes</Btn>
+        <Btn size="sm" onClick={save}>Save fee tiers</Btn>
+      </div>
+    </Card>
+  );
+}
+
+function SettingsTab({ darkMode, username, userRole, firebaseUid, data, setData, adminMode }) {
   const [loginInfo, setLoginInfo] = useState(null);
   useEffect(() => {
     if (firebaseUid) getUserProfile(firebaseUid).then(p => setLoginInfo(p)).catch(() => {});
@@ -3562,6 +4411,16 @@ function SettingsTab({ darkMode, username, userRole, firebaseUid }) {
           </div>
         </Card>
       </div>
+
+      {/* Hold Cost Rates — admin-only */}
+      {adminMode && data && setData && (
+        <HoldCostsCard data={data} setData={setData} darkMode={darkMode} username={username} />
+      )}
+
+      {/* Auction Fee Tiers — admin-only */}
+      {adminMode && data && setData && (
+        <AuctionFeeTiersCard data={data} setData={setData} darkMode={darkMode} username={username} />
+      )}
 
       {/* Login Activity */}
       {loginInfo && (
@@ -3708,6 +4567,10 @@ function AppInner() {
   const [userRole, setUserRole] = useState("user");
   const [tab, setTab] = useState("Dashboard");
   const [data, setData] = useState(defaultData());
+  // Keep module-level AUCTION_FEE_TIERS in sync with admin overrides stored in
+  // data.auctionFeeTiers. Runs during render (before child memos) so every
+  // calcAuctionFees call this pass sees the up-to-date rates.
+  useMemo(() => applyCustomAuctionFeeTiers(data.auctionFeeTiers), [data.auctionFeeTiers]);
   const [loaded, setLoaded] = useState(true);
   const [saving, setSaving] = useState(false);
   const [darkMode, setDarkMode] = useState(() => loadTheme() === "dark");
@@ -3750,7 +4613,7 @@ function AppInner() {
 
   const adminMode = isAdmin(userRole);
   const managerMode = isManager(userRole);
-  const allAdminTabs = [...TABS, "Calendar", "Reports", "Approvals", "Activity", "Users", "Settings"];
+  const allAdminTabs = [...TABS, "Calendar", "Reports", "Approvals", "Activity", "Trash", "Users", "Settings"];
   const visibleTabs = adminMode ? allAdminTabs : managerMode ? (allowedTabs && allowedTabs.length ? allowedTabs.filter(t => allAdminTabs.includes(t)) : ["Dashboard"]) : [...TABS, "Calendar", "Settings"];
 
   // Navigation — clean flat tabs, Settings accessed via gear icon only
@@ -3859,39 +4722,55 @@ function AppInner() {
   }, []);
 
   // ─── Save data: Shared Firestore OR localStorage (only after cloud data loaded) ───
-  // Uses read-merge-write to prevent concurrent users from overwriting each other
+  // Uses a Firestore transaction for atomic read-merge-write. Firestore retries
+  // the transaction automatically if the doc changes between read and write,
+  // so concurrent writers can't silently overwrite each other. Arrays are
+  // merged by `id` with local changes winning for the same item; monotonic
+  // fields (nextStockNum, _version) grow; `trash` is unioned.
   useEffect(() => {
     if (!loaded || !dataReady) return;
     if (FIREBASE_ENABLED && firebaseUid) {
       const t = setTimeout(async () => {
         setSaving(true);
         try {
-          // Read latest shared data and merge arrays by ID to avoid overwrites
-          const latest = await loadSharedData();
-          if (latest) {
-            const mergeArrays = (local, remote, key = "id") => {
-              const map = new Map();
-              (remote || []).forEach(item => map.set(item[key], item));
-              (local || []).forEach(item => map.set(item[key], item)); // local wins for same ID
-              return [...map.values()];
-            };
-            const merged = {
+          const mergeArrays = (local, remote, key = "id") => {
+            const map = new Map();
+            (remote || []).forEach(item => map.set(item[key], item));
+            (local || []).forEach(item => map.set(item[key], item)); // local wins for same ID
+            return [...map.values()];
+          };
+          const trashKey = t => `${t.id}::${t._deletedAt || ""}`;
+          const result = await saveSharedDataTxn((remote) => {
+            if (!remote) return data;
+            return {
               ...data,
-              vehicles: mergeArrays(data.vehicles, latest.vehicles),
-              expenses: mergeArrays(data.expenses, latest.expenses),
-              sales: mergeArrays(data.sales, latest.sales),
-              mileage: mergeArrays(data.mileage, latest.mileage),
-              documents: mergeArrays(data.documents, latest.documents),
-              auctionEvents: mergeArrays(data.auctionEvents, latest.auctionEvents),
-              nextStockNum: Math.max(data.nextStockNum || 1, latest.nextStockNum || 1),
+              vehicles: mergeArrays(data.vehicles, remote.vehicles),
+              expenses: mergeArrays(data.expenses, remote.expenses),
+              sales: mergeArrays(data.sales, remote.sales),
+              mileage: mergeArrays(data.mileage, remote.mileage),
+              documents: mergeArrays(data.documents, remote.documents),
+              auctionEvents: mergeArrays(data.auctionEvents, remote.auctionEvents),
+              trash: (() => {
+                const seen = new Map();
+                (remote.trash || []).forEach(t => seen.set(trashKey(t), t));
+                (data.trash || []).forEach(t => seen.set(trashKey(t), t));
+                return [...seen.values()];
+              })(),
+              nextStockNum: Math.max(data.nextStockNum || 1, remote.nextStockNum || 1),
+              holdCosts: data.holdCosts || remote.holdCosts,
+              startingCapital: data.startingCapital ?? remote.startingCapital,
             };
-            await saveSharedData(merged);
-            // Update local state if remote had items we didn't have
-            if (merged.vehicles.length !== data.vehicles.length) setData(merged);
-          } else {
-            await saveSharedData(data);
+          });
+          // If merge produced a shape different from local state, hydrate
+          if (result?.value && (
+            (result.value.vehicles?.length || 0) !== (data.vehicles?.length || 0) ||
+            (result.value.trash?.length || 0) !== (data.trash?.length || 0)
+          )) {
+            setData(result.value);
           }
-        } catch { /* save failed silently */ }
+        } catch (err) {
+          console.warn("shared save txn failed:", err);
+        }
         setTimeout(() => setSaving(false), 400);
       }, 800);
       return () => clearTimeout(t);
@@ -4118,8 +4997,9 @@ function AppInner() {
         {tab === "Reports" && (adminMode || managerMode) && <ReportsTab data={data} />}
         {tab === "Approvals" && (adminMode || managerMode) && <ApprovalsTab data={data} setData={setData} />}
         {tab === "Activity" && (adminMode || managerMode) && <ActivityTab />}
+        {tab === "Trash" && adminMode && <TrashTab data={data} setData={setData} currentUser={username} />}
         {tab === "Users" && adminMode && <UsersTab />}
-        {tab === "Settings" && <SettingsTab darkMode={darkMode} username={username} userRole={userRole} firebaseUid={firebaseUid} />}
+        {tab === "Settings" && <SettingsTab darkMode={darkMode} username={username} userRole={userRole} firebaseUid={firebaseUid} data={data} setData={setData} adminMode={adminMode} />}
       </div>
       {/* Footer */}
       <div style={{ textAlign: "center", padding: "24px 16px", borderTop: `1px solid ${BRAND.grayLight}`, marginTop: 40 }}>
