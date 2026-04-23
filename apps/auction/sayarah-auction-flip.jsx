@@ -201,12 +201,20 @@ function gradeDeal(profitMargin, daysHeld, annualizedROI, profitVelocity) {
 
 // ─── Profit Velocity ($/day) ──────────────────────────────────
 function calcProfitVelocity(profit, daysHeld) {
-  return daysHeld > 0 ? profit / daysHeld : 0;
+  // Returns null when daysHeld is invalid so downstream can render "—"
+  // instead of a misleading 0. Previously returned 0 which caused Deal
+  // Grades to score against fake inputs and Avg Velocity to look healthy
+  // on records with no holding period.
+  if (!Number.isFinite(profit) || !Number.isFinite(daysHeld) || daysHeld <= 0) return null;
+  return profit / daysHeld;
 }
 
 // ─── Annualized ROI ───────────────────────────────────────────
 function calcAnnualizedROI(profit, totalInvested, daysHeld) {
-  if (totalInvested <= 0 || daysHeld <= 0) return 0;
+  // Returns null (not 0) when the computation is undefined — divide-by-zero
+  // or missing data. The caller must null-check before displaying.
+  if (!Number.isFinite(profit) || !Number.isFinite(totalInvested) || !Number.isFinite(daysHeld)) return null;
+  if (totalInvested <= 0 || daysHeld <= 0) return null;
   const roi = profit / totalInvested;
   return roi * (365 / daysHeld);
 }
@@ -603,7 +611,10 @@ const validateExpenseEntry = (e) => {
 };
 const fmt$ = n => (n == null || isNaN(n)) ? "$0" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
 const fmt$2 = n => (n == null || isNaN(n)) ? "$0.00" : new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
-const fmtPct = n => (n == null || isNaN(n)) ? "0%" : (n * 100).toFixed(1) + "%";
+// Percent formatter. Missing/NaN/Infinity render as "—" rather than "0%" so
+// users never see a misleading zero when the underlying computation was
+// undefined (e.g. ROI when invested=0, margin when netSale=0).
+const fmtPct = n => (n == null || !Number.isFinite(n)) ? "—" : (n * 100).toFixed(1) + "%";
 const daysBetween = (d1, d2) => (!d1 || !d2) ? null : Math.round((new Date(d2) - new Date(d1)) / 86400000);
 const daysFromNow = d => d ? Math.round((new Date() - new Date(d)) / 86400000) : 0;
 const S = { mono: { fontFamily: "'DM Mono', monospace" } };
@@ -660,7 +671,15 @@ function calcVehicleFullMetrics(v, sale, holdCosts, expenses = []) {
   const margin = sale && netSale > 0 ? grossProfit / netSale : null;
   const velocity = grossProfit != null && days > 0 ? calcProfitVelocity(grossProfit, days) : null;
   const annROI = grossProfit != null && days > 0 ? calcAnnualizedROI(grossProfit, invested, days) : null;
-  const grade = grossProfit != null ? gradeDeal(margin || 0, days || 30, annROI || 0, velocity || 0) : null;
+  // Only grade when every input is actually defined. Previously we graded
+  // on zero-defaulted inputs, producing misleading "F" grades for records
+  // that were simply missing data (e.g. no invested = no ROI = F).
+  const canGrade = grossProfit != null
+    && margin != null && Number.isFinite(margin)
+    && annROI != null && Number.isFinite(annROI)
+    && velocity != null && Number.isFinite(velocity)
+    && days > 0;
+  const grade = canGrade ? gradeDeal(margin, days, annROI, velocity) : null;
   const breakEven = calcBreakEven(invested, hc.total, 0);
   const risk = calcRiskScore(v);
   const aging = v.status !== "Sold" ? getAgingStatus(days || 0) : null;
@@ -783,8 +802,20 @@ function StatusBadge({ status }) {
   return <Badge color={x.fg} bg={x.bg}>{status}</Badge>;
 }
 
-function GradeBadge({ grade }) {
-  if (!grade) return null;
+function GradeBadge({ grade, showPending = true }) {
+  if (!grade) {
+    if (!showPending) return null;
+    // Shown when the grade cannot be computed yet — e.g. the vehicle hasn't
+    // been sold, or required financial inputs are missing. Avoids the
+    // previous behavior of grading 0-defaulted inputs as "F" which misled
+    // users into thinking a data-incomplete deal had failed.
+    return (
+      <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+        <span style={{ fontSize: 14, fontWeight: 800, color: BRAND.gray, ...S.mono }}>—</span>
+        <span style={{ fontSize: 10, color: BRAND.gray, fontWeight: 600 }}>Pending</span>
+      </div>
+    );
+  }
   return <div style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
     <span style={{ fontSize: 18, fontWeight: 900, color: grade.color, ...S.mono }}>{grade.grade}</span>
     <span style={{ fontSize: 10, color: grade.color, fontWeight: 600 }}>{grade.label}</span>
@@ -2006,13 +2037,19 @@ td{padding:8px 10px;border-bottom:1px solid #f3f4f6}
 </div>
 
 <div class="section">
-  <div class="section-title">Acquisition Costs</div>
+  <div class="section-title">Cost Breakdown</div>
   <table>
     <tr><td>Purchase Price</td><td class="amt">${fmt$2(p(v.purchasePrice))}</td></tr>
     <tr><td>Auction Fees (${(AUCTION_FEE_TIERS[v.auctionSource] || AUCTION_FEE_TIERS.custom).name})</td><td class="amt">${fmt$2(calcAuctionFees(p(v.purchasePrice), v.auctionSource || "custom").total)}</td></tr>
-    <tr><td>Transport Cost</td><td class="amt">${fmt$2(p(v.transportCost))}</td></tr>
-    <tr><td>Repair/Recon Cost</td><td class="amt">${fmt$2(p(v.repairCost))}</td></tr>
-    <tr><td>Other Expenses</td><td class="amt">${fmt$2(p(v.otherExpenses))}</td></tr>
+    ${p(v.transportCost) > 0 ? `<tr><td>Transport (legacy field)</td><td class="amt">${fmt$2(p(v.transportCost))}</td></tr>` : ""}
+    ${p(v.repairCost) > 0 ? `<tr><td>Repair/Recon (legacy field)</td><td class="amt">${fmt$2(p(v.repairCost))}</td></tr>` : ""}
+    ${p(v.otherExpenses) > 0 ? `<tr><td>Other (legacy field)</td><td class="amt">${fmt$2(p(v.otherExpenses))}</td></tr>` : ""}
+    ${(() => {
+      const byCat = {};
+      expenses.forEach(e => { const c = e.category || "Uncategorized"; byCat[c] = (byCat[c] || 0) + p(e.amount); });
+      return Object.entries(byCat).sort((a, b) => b[1] - a[1])
+        .map(([c, a]) => `<tr><td>${esc(c)} <span style="font-size:10px;color:#999">tracked</span></td><td class="amt">${fmt$2(a)}</td></tr>`).join("");
+    })()}
     <tr class="total-row"><td>Total Invested</td><td class="amt">${fmt$2(m.invested)}</td></tr>
   </table>
 </div>
@@ -2045,10 +2082,10 @@ ${sale ? `<div class="section">
   <div class="section-title" style="color:${m.grossProfit >= 0 ? "#166534" : "#DC2626"};border-color:${m.grossProfit >= 0 ? "#D1FAE5" : "#FECACA"}">Profit & Loss Summary</div>
   <table style="width:100%;font-size:12px;margin-bottom:12px">
     <tr><td style="padding:3px 0;color:#666">Gross Sale Price</td><td style="padding:3px 0;text-align:right;font-weight:700">${fmt$2(p(sale.grossPrice))}</td></tr>
-    <tr><td style="padding:3px 0;color:#666">− Sale-time deductions</td><td style="padding:3px 0;text-align:right;color:#DC2626">${fmt$2(m.saleDeductions)}</td></tr>
+    <tr><td style="padding:3px 0;color:#666">− Sale-time deductions <span style="font-size:10px;color:#999">auction seller-fee · title · other</span></td><td style="padding:3px 0;text-align:right;color:#DC2626">${fmt$2(m.saleDeductions)}</td></tr>
     <tr style="border-top:1px dashed #ddd"><td style="padding:3px 0">Net Sale</td><td style="padding:3px 0;text-align:right;font-weight:700">${fmt$2(saleNet)}</td></tr>
-    <tr><td style="padding:3px 0;color:#666">− Total Invested</td><td style="padding:3px 0;text-align:right;color:#DC2626">${fmt$2(m.invested)}</td></tr>
-    <tr><td style="padding:3px 0;color:#666">− Selling Costs (post-sale)</td><td style="padding:3px 0;text-align:right;color:#DC2626">${fmt$2(m.sellingCosts)}</td></tr>
+    <tr><td style="padding:3px 0;color:#666">− Total Invested <span style="font-size:10px;color:#999">purchase · auction fees · all tracked expenses</span></td><td style="padding:3px 0;text-align:right;color:#DC2626">${fmt$2(m.invested)}</td></tr>
+    <tr><td style="padding:3px 0;color:#666">− Selling Costs (post-sale) <span style="font-size:10px;color:#999">commission, post-sale repairs, marketing</span></td><td style="padding:3px 0;text-align:right;color:#DC2626">${fmt$2(m.sellingCosts)}</td></tr>
     <tr style="border-top:2px solid ${m.grossProfit >= 0 ? "#166534" : "#DC2626"}"><td style="padding:6px 0;font-weight:800;color:${m.grossProfit >= 0 ? "#166534" : "#DC2626"}">Net Profit / (Loss)</td><td style="padding:6px 0;text-align:right;font-weight:900;font-size:14px;color:${m.grossProfit >= 0 ? "#166534" : "#DC2626"}">${fmt$2(m.grossProfit)}</td></tr>
   </table>
   <div class="summary-grid">
@@ -2345,17 +2382,62 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
             />
           </Card>
 
-          {/* Cost Breakdown */}
+          {/* Cost Breakdown — explicit roll-up. Every line is additive so
+              the Total Invested figure at the bottom equals the sum of
+              what's shown above it. Legacy acquisition-cost fields are
+              hidden when zero so they don't clutter new records. Tracked
+              expenses are broken down by category so users can see where
+              every dollar went and spot miscategorizations. */}
           <Card style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.red, textTransform: "uppercase", marginBottom: 8 }}>Cost Breakdown</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8, fontSize: 12 }}>
-              <div><span style={{ color: BRAND.gray }}>Purchase Price:</span> <b style={S.mono}>{fmt$(p(v.purchasePrice))}</b></div>
-              <div><span style={{ color: BRAND.gray }}>Auction Fees:</span> <b style={S.mono}>{fmt$(calcAuctionFees(p(v.purchasePrice), v.auctionSource || "custom").total)}</b></div>
-              <div><span style={{ color: BRAND.gray }}>Transport:</span> <b style={S.mono}>{fmt$(p(v.transportCost))}</b></div>
-              <div><span style={{ color: BRAND.gray }}>Repairs/Recon:</span> <b style={S.mono}>{fmt$(p(v.repairCost))}</b></div>
-              <div><span style={{ color: BRAND.gray }}>Other Expenses:</span> <b style={S.mono}>{fmt$(p(v.otherExpenses))}</b></div>
-              <div><span style={{ color: BRAND.gray }}>Tracked Expenses:</span> <b style={S.mono}>{fmt$(totalExpenses)}</b></div>
-            </div>
+            <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.red, textTransform: "uppercase", marginBottom: 10, letterSpacing: "0.08em" }}>Cost Breakdown</div>
+            {(() => {
+              const pp = p(v.purchasePrice);
+              const auctFees = calcAuctionFees(pp, v.auctionSource || "custom").total;
+              const tCost = p(v.transportCost);
+              const rCost = p(v.repairCost);
+              const oCost = p(v.otherExpenses);
+              const byCat = {};
+              expenses.forEach(e => {
+                const c = e.category || "Uncategorized";
+                byCat[c] = (byCat[c] || 0) + p(e.amount);
+              });
+              const legacyTotal = tCost + rCost + oCost;
+              const trackedTotal = Object.values(byCat).reduce((s, x) => s + x, 0);
+              const grandTotal = pp + auctFees + legacyTotal + trackedTotal;
+              const line = (label, amount, sub, subtle) => (
+                <tr style={{ borderBottom: `1px dashed ${BRAND.grayLight}` }}>
+                  <td style={{ padding: "6px 0", color: subtle ? BRAND.gray : BRAND.grayDark, fontSize: 12 }}>
+                    {label}
+                    {sub && <span style={{ fontSize: 10, color: BRAND.gray, marginLeft: 8 }}>{sub}</span>}
+                  </td>
+                  <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 700, color: BRAND.black, ...S.mono }}>{fmt$2(amount)}</td>
+                </tr>
+              );
+              return (
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <tbody>
+                    {line("Purchase Price", pp)}
+                    {line("Auction Fees", auctFees, `${(AUCTION_FEE_TIERS[v.auctionSource] || {}).name || "custom"} · derived from purchase price`, true)}
+                    {tCost > 0 && line("Transport (legacy field)", tCost, "use Tracked Expenses going forward", true)}
+                    {rCost > 0 && line("Repair/Recon (legacy field)", rCost, "use Tracked Expenses going forward", true)}
+                    {oCost > 0 && line("Other (legacy field)", oCost, "use Tracked Expenses going forward", true)}
+                    {Object.entries(byCat).sort((a, b) => b[1] - a[1]).map(([cat, amt]) => (
+                      <tr key={cat} style={{ borderBottom: `1px dashed ${BRAND.grayLight}` }}>
+                        <td style={{ padding: "6px 0", color: BRAND.grayDark, fontSize: 12 }}>
+                          {cat}
+                          <span style={{ fontSize: 10, color: BRAND.gray, marginLeft: 8 }}>tracked expense</span>
+                        </td>
+                        <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 700, color: BRAND.black, ...S.mono }}>{fmt$2(amt)}</td>
+                      </tr>
+                    ))}
+                    <tr style={{ borderTop: `2px solid ${BRAND.red}` }}>
+                      <td style={{ padding: "10px 0 4px", fontWeight: 900, textTransform: "uppercase", fontSize: 12, color: BRAND.red, letterSpacing: "0.05em" }}>Total Invested</td>
+                      <td style={{ padding: "10px 0 4px", textAlign: "right", fontWeight: 900, fontSize: 16, color: BRAND.black, ...S.mono }}>{fmt$2(grandTotal)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              );
+            })()}
           </Card>
 
           {v.notes && (
@@ -2619,17 +2701,24 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
                 </Card>
 
                 {/* Full Profit & Loss — the source-of-truth P&L per #6:
-                    Sale Price − Total Invested − Selling Costs = Net P/L. */}
+                    Sale Price − Total Invested − Selling Costs = Net P/L.
+                    The two deduction categories are intentionally separate:
+                      · Sale-time deductions = fees baked into the sale itself
+                        (auction seller-fee, title transfer, buyer paid fees)
+                      · Selling Costs (post-sale) = tracked expenses with the
+                        "Selling Costs (post-sale)" category (commission paid
+                        out, post-sale repairs absorbed by seller, marketing)
+                    Both reduce profit but are entered in different screens. */}
                 {m.grossProfit != null && (
                   <div style={{ background: m.grossProfit >= 0 ? "#F0FDF4" : "#FEF2F2", borderRadius: 10, padding: 16, marginTop: 12, border: `1px solid ${m.grossProfit >= 0 ? "#D1FAE5" : "#FECACA"}` }}>
                     <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: m.grossProfit >= 0 ? BRAND.green : "#DC2626", marginBottom: 10, letterSpacing: "0.06em" }}>Profit & Loss</div>
                     <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
                       <tbody>
                         <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>Sale Price (gross)</td><td style={{ padding: "4px 0", textAlign: "right", fontWeight: 700, ...S.mono }}>{fmt$2(p(sale.grossPrice))}</td></tr>
-                        <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>− Sale-time deductions <span style={{ fontSize: 10 }}>(auction fee, title, other)</span></td><td style={{ padding: "4px 0", textAlign: "right", color: "#DC2626", ...S.mono }}>{fmt$2(m.saleDeductions)}</td></tr>
+                        <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>− Sale-time deductions <span style={{ fontSize: 10 }}>fees on the sale record itself — auction seller-fee, title, other</span></td><td style={{ padding: "4px 0", textAlign: "right", color: "#DC2626", ...S.mono }}>{fmt$2(m.saleDeductions)}</td></tr>
                         <tr style={{ borderTop: `1px dashed ${m.grossProfit >= 0 ? "#86EFAC" : "#FCA5A5"}` }}><td style={{ padding: "4px 0", color: BRAND.grayDark }}>Net Sale</td><td style={{ padding: "4px 0", textAlign: "right", fontWeight: 700, ...S.mono }}>{fmt$2(m.netSale)}</td></tr>
                         <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>− Total Invested <span style={{ fontSize: 10 }}>(purchase + auction fees + all costs)</span></td><td style={{ padding: "4px 0", textAlign: "right", color: "#DC2626", ...S.mono }}>{fmt$2(m.invested)}</td></tr>
-                        <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>− Selling Costs <span style={{ fontSize: 10 }}>(post-sale expenses)</span></td><td style={{ padding: "4px 0", textAlign: "right", color: "#DC2626", ...S.mono }}>{fmt$2(m.sellingCosts)}</td></tr>
+                        <tr><td style={{ padding: "4px 0", color: BRAND.gray }}>− Selling Costs <span style={{ fontSize: 10 }}>tracked expenses categorized "Selling Costs (post-sale)" — commission, post-sale repairs, marketing</span></td><td style={{ padding: "4px 0", textAlign: "right", color: "#DC2626", ...S.mono }}>{fmt$2(m.sellingCosts)}</td></tr>
                         <tr style={{ borderTop: `2px solid ${m.grossProfit >= 0 ? BRAND.green : "#DC2626"}` }}>
                           <td style={{ padding: "6px 0", fontWeight: 800, textTransform: "uppercase", fontSize: 11, color: m.grossProfit >= 0 ? BRAND.green : "#DC2626" }}>Net Profit / (Loss)</td>
                           <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 900, fontSize: 14, color: m.grossProfit >= 0 ? BRAND.green : "#DC2626", ...S.mono }}>{fmt$2(m.grossProfit)}</td>
@@ -2885,7 +2974,10 @@ function SalesTab({ data, setData }) {
             const days = v.purchaseDate && form.date ? daysBetween(v.purchaseDate, form.date) : null;
             const vel = days && days > 0 ? profit / days : null;
             const roi = days && days > 0 ? calcAnnualizedROI(profit, inv, days) : null;
-            const gr = gradeDeal(netP > 0 ? profit / netP : 0, days || 30, roi || 0, vel || 0);
+            const mg = netP > 0 ? profit / netP : null;
+            // Gate the grade: only render one when all financial inputs are
+            // actually computable. Otherwise downstream shows "Pending".
+            const gr = (mg != null && vel != null && roi != null && days > 0) ? gradeDeal(mg, days, roi, vel) : null;
             return (
               <div style={{ background: profit >= 0 ? "#F0FDF4" : "#FEF2F2", borderRadius: 10, padding: 14, marginTop: 12, border: `1px solid ${profit >= 0 ? "#D1FAE5" : "#FECACA"}` }}>
                 <div style={{ fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: profit >= 0 ? BRAND.green : "#DC2626", marginBottom: 6 }}>Deal Analysis</div>
