@@ -447,3 +447,167 @@ export const entriesForAccount = (ledger, accountId) =>
 
 export const entriesForRef = (ledger, predicate) =>
   (ledger || []).filter((e) => e.ref && predicate(e.ref));
+
+// Entries inside an inclusive date range (YYYY-MM-DD strings).
+export const entriesInRange = (ledger, start, end) =>
+  (ledger || []).filter((e) => e.date >= start && e.date <= end);
+
+// ═══════════════════════════════════════════════════════════════
+// REPORT-CALCULATION HELPERS (Phase 2)
+//
+// Every report is derived from the ledger + chart of accounts on
+// demand. No stored aggregates that can go stale.
+// ═══════════════════════════════════════════════════════════════
+
+// Compute P&L (income statement) for a period.
+// Returns { revenue, expenses, netIncome, byAccount: {…} }.
+export function calcProfitLoss(ledger, accounts, startDate, endDate) {
+  const inRange = entriesInRange(ledger, startDate, endDate);
+  const accountsById = Object.fromEntries((accounts || []).map((a) => [a.id, a]));
+  const byAccount = {};
+  let revenue = 0;
+  let expenses = 0;
+  for (const entry of inRange) {
+    for (const line of entry.lines) {
+      const acc = accountsById[line.accountId];
+      if (!acc) continue;
+      const amount = acc.type === "revenue"
+        ? p(line.credit) - p(line.debit)       // revenue: credit-normal
+        : acc.type === "expense"
+          ? p(line.debit) - p(line.credit)      // expense: debit-normal
+          : 0;
+      if (amount !== 0) {
+        byAccount[line.accountId] = (byAccount[line.accountId] || 0) + amount;
+        if (acc.type === "revenue") revenue += amount;
+        else if (acc.type === "expense") expenses += amount;
+      }
+    }
+  }
+  return { revenue, expenses, netIncome: revenue - expenses, byAccount, startDate, endDate };
+}
+
+// Balance sheet as of a given date.
+// Returns { assets: {…}, liabilities: {…}, equity: {…}, totals: {…} }.
+export function calcBalanceSheet(ledger, accounts, asOfDate) {
+  const upTo = (ledger || []).filter((e) => !asOfDate || e.date <= asOfDate);
+  const balances = calcAllBalances(upTo, accounts);
+  const out = { assets: {}, liabilities: {}, equity: {}, totals: { assets: 0, liabilities: 0, equity: 0 } };
+  for (const acc of accounts || []) {
+    const bal = balances[acc.id] || 0;
+    if (Math.abs(bal) < 0.005) continue;
+    if (acc.type === "asset") { out.assets[acc.id] = { name: acc.name, balance: bal }; out.totals.assets += bal; }
+    else if (acc.type === "liability") { out.liabilities[acc.id] = { name: acc.name, balance: bal }; out.totals.liabilities += bal; }
+    else if (acc.type === "equity") { out.equity[acc.id] = { name: acc.name, balance: bal }; out.totals.equity += bal; }
+  }
+  return { ...out, asOfDate };
+}
+
+// K-1 prep: per-member capital balance + share of net income for
+// the period. `members` is the list of member records from
+// data.money.members.
+export function calcMemberK1Prep(ledger, accounts, members, startDate, endDate) {
+  const pl = calcProfitLoss(ledger, accounts, startDate, endDate);
+  const share = (members || []).length > 0 ? pl.netIncome / members.length : 0;
+  const accountsById = Object.fromEntries((accounts || []).map((a) => [a.id, a]));
+  const endBalances = calcAllBalances(entriesInRange(ledger, "0000-00-00", endDate), accounts);
+  return (members || []).map((m) => ({
+    memberId: m.id,
+    name: m.name,
+    endingCapital: endBalances[memberAccountId(m.id)] || 0,
+    shareOfIncome: share,
+    startDate,
+    endDate,
+  }));
+}
+
+// 1099 tracking: vendors paid > $600 in the period. Scans expense
+// entries where a memo or ref has a vendor field.
+export function calc1099Report(ledger, startDate, endDate, threshold = 600) {
+  const inRange = entriesInRange(ledger, startDate, endDate);
+  const byVendor = {};
+  for (const entry of inRange) {
+    const vendor = entry.ref?.vendor || (entry.memo && entry.memo.match(/vendor:\s*([^·,;]+)/i)?.[1]);
+    if (!vendor) continue;
+    const name = vendor.trim();
+    if (!name) continue;
+    // Sum debits on expense accounts only (that's what "paid to vendor" means).
+    for (const line of entry.lines) {
+      if (!line.accountId.startsWith("expense:")) continue;
+      byVendor[name] = (byVendor[name] || 0) + p(line.debit) - p(line.credit);
+    }
+  }
+  return Object.entries(byVendor)
+    .filter(([, amt]) => amt >= threshold)
+    .map(([name, amount]) => ({ name, amount }))
+    .sort((a, b) => b.amount - a.amount);
+}
+
+// MA sales tax collected + owed: sums the Sales Tax Payable liability.
+export function calcMaSalesTax(ledger, accounts, startDate, endDate) {
+  const inRange = entriesInRange(ledger, startDate, endDate);
+  let collected = 0;
+  for (const entry of inRange) {
+    for (const line of entry.lines) {
+      if (line.accountId === SYSTEM_ACCOUNTS.SALES_TAX_PAYABLE) {
+        collected += p(line.credit) - p(line.debit);
+      }
+    }
+  }
+  return { collected, startDate, endDate };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BANK RECONCILIATION HELPERS
+// ═══════════════════════════════════════════════════════════════
+
+// Extremely forgiving CSV parser: splits on newlines, strips BOM,
+// handles simple quoted fields. Headers are taken from the first
+// non-empty row. Returns [{ headers, rows: [{ [header]: value }] }].
+// For the bank-recon use case we expect columns including at least:
+// date, description, amount (in some form).
+export function parseBankCsv(text) {
+  if (!text) return { headers: [], rows: [] };
+  const clean = text.replace(/^﻿/, "");
+  const lines = clean.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length === 0) return { headers: [], rows: [] };
+  const splitLine = (line) => {
+    const out = [];
+    let cur = "";
+    let inQ = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') { inQ = !inQ; continue; }
+      if (ch === "," && !inQ) { out.push(cur); cur = ""; continue; }
+      cur += ch;
+    }
+    out.push(cur);
+    return out.map((s) => s.trim());
+  };
+  const headers = splitLine(lines[0]);
+  const rows = lines.slice(1).map((line, idx) => {
+    const cells = splitLine(line);
+    const row = { _id: `csv_${idx}` };
+    headers.forEach((h, i) => { row[h] = cells[i] || ""; });
+    return row;
+  });
+  return { headers, rows };
+}
+
+// Heuristically match a CSV row to a ledger entry. Good enough for
+// the recon UI to suggest matches; user confirms. Criteria: same
+// date (YYYY-MM-DD) AND amount within $1.00 of the entry's total.
+export function suggestMatches(csvRow, ledger) {
+  const amountStr = csvRow.amount || csvRow.Amount || csvRow.AMOUNT || "";
+  const amount = Math.abs(p(amountStr));
+  const date = (csvRow.date || csvRow.Date || csvRow.DATE || "").slice(0, 10);
+  if (!date || !amount) return [];
+  const candidates = [];
+  for (const entry of ledger || []) {
+    if (entry.date !== date) continue;
+    const entryTotal = entry.lines.reduce((s, l) => s + p(l.debit), 0);
+    if (Math.abs(entryTotal - amount) < 1.00) {
+      candidates.push(entry);
+    }
+  }
+  return candidates;
+}

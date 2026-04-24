@@ -44,6 +44,14 @@ import {
   ATLANTIC_FUND_LOW_BALANCE,
   LARGE_OUTFLOW_THRESHOLD,
   entriesForAccount,
+  entriesInRange,
+  calcProfitLoss,
+  calcBalanceSheet,
+  calcMemberK1Prep,
+  calc1099Report,
+  calcMaSalesTax,
+  parseBankCsv,
+  suggestMatches,
 } from "./src/money.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
@@ -1666,7 +1674,22 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
   const canEdit = canEditVehicles(role);
   const canDelete = canDeleteVehicles(role);
 
-  const empty = () => ({ id: genId(), stockNum: String(data.nextStockNum).padStart(3, "0"), year: "", make: "", model: "", trim: "", vin: "", color: "", odometer: "", purchaseDate: "", auctionSource: "copart", useCustomPremium: false, buyerPremiumPct: "", transportCost: "", repairCost: "", otherExpenses: "", titleStatus: "clean", status: "In Recon", purchasePrice: "", reconBudget: "", notes: "", photos: [], estRetailValue: "", location: "", zipCode: "" });
+  const empty = () => ({
+    id: genId(), stockNum: String(data.nextStockNum).padStart(3, "0"),
+    year: "", make: "", model: "", trim: "", vin: "", color: "", odometer: "", purchaseDate: "",
+    auctionSource: "copart", useCustomPremium: false, buyerPremiumPct: "",
+    transportCost: "", repairCost: "", otherExpenses: "",
+    titleStatus: "clean", status: "In Recon",
+    purchasePrice: "", reconBudget: "", notes: "", photos: [], estRetailValue: "",
+    location: "", zipCode: "",
+    // Money Management funding source — Phase 1b. depositSource/balanceSource
+    // is either "fund" or "member:<id>". When set, this is the destination
+    // used on sale (principal returns to whoever funded). When unset the
+    // vehicle exists in inventory but isn't on the ledger yet.
+    depositSource: "", depositAmount: "",
+    balanceSource: "", balanceAmount: "",
+    postedToLedger: false,
+  });
   const [form, setForm] = useState(empty());
   const [formError, setFormError] = useState("");
   const upd = (k, v) => { setFormError(""); setForm(f => ({ ...f, [k]: v })); };
@@ -1978,6 +2001,34 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
               <Input label="ZIP / Postal Code" value={form.zipCode} onChange={v => upd("zipCode", v)} placeholder="02101" />
               <Select label="Status" value={form.status} onChange={v => upd("status", v)} options={STATUS_OPTIONS} />
             </div>
+            {/* Funding source — Money Management. Splits purchase price into
+                a deposit and balance, each of which can come from a member
+                personally or from the shared Atlantic Fund. Kept optional
+                so vehicles that predate this module can still be saved;
+                "Post to ledger" on the detail screen is what actually
+                books the journal entries. */}
+            {(data.money && data.money.members && data.money.members.length > 0) && (
+              <div style={{ marginTop: 14, padding: 12, border: `1px dashed ${BRAND.grayLight}`, borderRadius: 8, background: "#FAFAFA" }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>Funding Source (Money Management)</div>
+                <div className="form-grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                  <Select label="Deposit paid by" value={form.depositSource} onChange={v => upd("depositSource", v)} options={[
+                    { value: "", label: "(none — not on ledger)" },
+                    { value: "fund", label: "Atlantic Fund" },
+                    ...data.money.members.map(m => ({ value: `member:${m.id}`, label: m.name })),
+                  ]} placeholder="Select..." />
+                  <Input label="Deposit amount" value={form.depositAmount} onChange={v => upd("depositAmount", v)} type="number" step="0.01" placeholder="0.00" />
+                  <Select label="Balance paid by" value={form.balanceSource} onChange={v => upd("balanceSource", v)} options={[
+                    { value: "", label: "(none — same as deposit, or unpaid)" },
+                    { value: "fund", label: "Atlantic Fund" },
+                    ...data.money.members.map(m => ({ value: `member:${m.id}`, label: m.name })),
+                  ]} placeholder="Select..." />
+                  <Input label="Balance amount" value={form.balanceAmount} onChange={v => upd("balanceAmount", v)} type="number" step="0.01" placeholder="0.00" />
+                </div>
+                <div style={{ fontSize: 10, color: BRAND.gray, marginTop: 6, fontStyle: "italic" }}>
+                  Leave blank to skip the ledger for this vehicle. To book, fill these in and click "Post to ledger" on the vehicle detail screen.
+                </div>
+              </div>
+            )}
             {/* Photos — uploaded to Firebase Storage under vehicles/{id}/photos/.
                 First photo becomes the inventory row thumbnail. */}
             <div style={{ marginTop: 14 }}>
@@ -2232,6 +2283,85 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
     generateInvoicePDF(v, expenses, sale, m, userInfo);
   };
 
+  // ─── Post vehicle purchase to the Money Management ledger ───
+  // Converts the funding-source fields on the vehicle into proper
+  // journal entries and marks the vehicle `postedToLedger: true` so
+  // the button only fires once. Large outflows (> $10K from the
+  // fund) are routed through the existing approval queue as a
+  // "fund_outflow" request — a second member / admin approves
+  // and the entries are booked then.
+  const postVehicleToLedger = () => {
+    if (v.postedToLedger) { alert("This vehicle has already been posted to the ledger."); return; }
+    if (!admin) { alert("Only admins can post vehicles to the ledger."); return; }
+    const deposit = p(v.depositAmount);
+    const balance = p(v.balanceAmount);
+    if (deposit + balance <= 0) { alert("Set a deposit or balance amount first (with a funding source)."); return; }
+    if (deposit > 0 && !v.depositSource) { alert("Pick a deposit source (fund or member)."); return; }
+    if (balance > 0 && !v.balanceSource) { alert("Pick a balance source (fund or member)."); return; }
+
+    const fundBalance = calcAllBalances(data.money?.ledger || [], data.money?.accounts || DEFAULT_ACCOUNTS)[SYSTEM_ACCOUNTS.ATLANTIC_FUND] || 0;
+    const fundOutflow = (v.depositSource === "fund" ? deposit : 0) + (v.balanceSource === "fund" ? balance : 0);
+
+    if (fundOutflow > fundBalance) {
+      alert(`Atlantic Fund has ${fmt$2(fundBalance)} but this vehicle needs ${fmt$2(fundOutflow)} from the fund. The fund cannot be overdrawn.`);
+      return;
+    }
+
+    if (fundOutflow > LARGE_OUTFLOW_THRESHOLD) {
+      // Route through approval queue — first approver is the admin
+      // clicking now; they're recorded and the entry is deferred
+      // until a second member approves.
+      addApproval({
+        id: genId(),
+        type: "fund_outflow",
+        requestedBy: currentUser,
+        requestedAt: new Date().toISOString(),
+        status: "pending",
+        stockNum: v.stockNum,
+        vehicle: `${v.year} ${v.make} ${v.model}`,
+        description: `Fund outflow ${fmt$2(fundOutflow)} for vehicle #${v.stockNum} — requires second-member approval (threshold ${fmt$2(LARGE_OUTFLOW_THRESHOLD)})`,
+        targetId: v.id,
+        originalData: null,
+        newData: { vehicleId: v.id, deposit, balance, depositSource: v.depositSource, balanceSource: v.balanceSource, fundOutflow },
+      });
+      logActivity(currentUser, "fund_outflow_requested", `Requested ${fmt$2(fundOutflow)} fund outflow for #${v.stockNum}`, { stockNum: v.stockNum });
+      alert(`Posted as a pending request. A second member must approve the $${fundOutflow.toLocaleString()} outflow in the Approvals tab before the ledger is updated.`);
+      return;
+    }
+
+    const entries = [];
+    const date = v.purchaseDate || new Date().toISOString().slice(0, 10);
+    if (deposit > 0) {
+      if (v.depositSource === "fund") {
+        entries.push(vehiclePurchaseFromFundEntry({ stockNum: v.stockNum, amount: deposit, date, memo: `Deposit — #${v.stockNum}`, user: currentUser }));
+      } else if (v.depositSource.startsWith("member:")) {
+        entries.push(vehiclePurchaseFromMemberEntry({ stockNum: v.stockNum, memberId: v.depositSource.slice(7), amount: deposit, date, memo: `Deposit — #${v.stockNum}`, user: currentUser }));
+      }
+    }
+    if (balance > 0) {
+      if (v.balanceSource === "fund") {
+        entries.push(vehiclePurchaseFromFundEntry({ stockNum: v.stockNum, amount: balance, date, memo: `Balance — #${v.stockNum}`, user: currentUser }));
+      } else if (v.balanceSource.startsWith("member:")) {
+        entries.push(vehiclePurchaseFromMemberEntry({ stockNum: v.stockNum, memberId: v.balanceSource.slice(7), amount: balance, date, memo: `Balance — #${v.stockNum}`, user: currentUser }));
+      }
+    }
+    setData(d => {
+      let ledger = d.money?.ledger || [];
+      for (const e of entries) ledger = postJournalEntry(ledger, e);
+      // Ensure the vehicle inventory account exists in the chart so
+      // balance lookups in the Money tab resolve.
+      const accounts = d.money?.accounts || DEFAULT_ACCOUNTS;
+      const hasVehicleAcc = accounts.some(a => a.id === vehicleAccountId(v.stockNum));
+      const newAccounts = hasVehicleAcc ? accounts : [...accounts, buildVehicleAccount(v.stockNum, `${v.year} ${v.make} ${v.model}`)];
+      return {
+        ...d,
+        money: { ...d.money, ledger, accounts: newAccounts },
+        vehicles: d.vehicles.map(x => x.id === v.id ? { ...x, postedToLedger: true } : x),
+      };
+    });
+    logActivity(currentUser, "vehicle_posted_to_ledger", `Posted #${v.stockNum} ${v.year} ${v.make} ${v.model} to ledger (${fmt$2(deposit + balance)})`, { stockNum: v.stockNum });
+  };
+
   // ─── Expense form state ────────────────────────────────────
   const [showExpForm, setShowExpForm] = useState(false);
   const [editingExp, setEditingExp] = useState(null);
@@ -2346,8 +2476,42 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
       const desc = `Edited sale on #${v.stockNum} ${v.year} ${v.make} ${v.model}` + (diff.summary ? ` — ${diff.summary}` : "");
       logActivity(currentUser, "edited_sale", desc, { stockNum: v.stockNum, saleId: editingSale, changes: diff.changes });
     } else {
-      setData(d => ({ ...d, sales: [...d.sales, saleForm], vehicles: d.vehicles.map(vh => vh.stockNum === saleForm.stockNum ? { ...vh, status: "Sold" } : vh) }));
-      logActivity(currentUser, "finalized_sale", `Finalized sale on #${v.stockNum} ${v.year} ${v.make} ${v.model}: ${fmt$2(p(saleForm.grossPrice))} to ${saleForm.buyerName} via ${saleForm.paymentMethod}`, { stockNum: v.stockNum, grossPrice: p(saleForm.grossPrice), buyerName: saleForm.buyerName, paymentMethod: saleForm.paymentMethod });
+      // Auto-post sale entries to the Money Management ledger if the
+      // vehicle was posted to the ledger when purchased. Principal
+      // routes to whichever source funded the vehicle; $295 to Tax;
+      // remainder to Profit Distribution. Skipped for vehicles that
+      // were never ledger-booked (pre-Money-Management records).
+      setData(d => {
+        const next = {
+          ...d,
+          sales: [...d.sales, saleForm],
+          vehicles: d.vehicles.map(vh => vh.stockNum === saleForm.stockNum ? { ...vh, status: "Sold" } : vh),
+        };
+        if (v.postedToLedger && d.money) {
+          const totalCost = calcTotalCost(v, d.expenses);
+          const grossSale = p(saleForm.grossPrice);
+          // Principal destination: use the deposit source as primary
+          // (typical case: deposit source = balance source). If split,
+          // the user can reverse and re-post manually via admin tools.
+          const srcStr = v.depositSource || v.balanceSource || "fund";
+          const principalDestination = srcStr === "fund"
+            ? { type: "fund" }
+            : { type: "member", memberId: srcStr.replace(/^member:/, "") };
+          const entries = vehicleSaleEntries({
+            stockNum: v.stockNum,
+            totalCost,
+            grossSale,
+            principalDestination,
+            date: saleForm.date,
+            user: currentUser,
+          });
+          let ledger = d.money.ledger || [];
+          for (const e of entries) ledger = postJournalEntry(ledger, e);
+          next.money = { ...d.money, ledger };
+        }
+        return next;
+      });
+      logActivity(currentUser, "finalized_sale", `Finalized sale on #${v.stockNum} ${v.year} ${v.make} ${v.model}: ${fmt$2(p(saleForm.grossPrice))} to ${saleForm.buyerName} via ${saleForm.paymentMethod}${v.postedToLedger ? " — ledger entries posted" : ""}`, { stockNum: v.stockNum, grossPrice: p(saleForm.grossPrice), buyerName: saleForm.buyerName, paymentMethod: saleForm.paymentMethod });
     }
     setShowSaleForm(false);
   };
@@ -2407,6 +2571,12 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
           </div>
           <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <Btn variant="secondary" size="sm" onClick={handleExportPDF} style={{ background: BRAND.blueBg, color: BRAND.blue, border: `1px solid #BFDBFE` }}>Export PDF</Btn>
+            {admin && data.money && !v.postedToLedger && (p(v.depositAmount) > 0 || p(v.balanceAmount) > 0) && (
+              <Btn size="sm" onClick={postVehicleToLedger} style={{ background: "#059669" }}>Post to Ledger</Btn>
+            )}
+            {v.postedToLedger && (
+              <span style={{ fontSize: 10, color: "#059669", fontWeight: 700, padding: "4px 8px", background: "#D1FAE5", borderRadius: 6 }}>✓ On Ledger</span>
+            )}
             {canEditProp && <Btn variant="secondary" size="sm" onClick={onEdit}>Edit</Btn>}
             {/* Admins/managers delete directly; other authenticated users
                 submit an approval request. Button label reflects which
@@ -4029,6 +4199,35 @@ function ApprovalsTab({ data, setData }) {
           ? [...(d.trash || []), toTrash(approval.originalData, "vehicle", approval.requestedBy)]
           : (d.trash || []),
       }));
+    } else if (approval.type === "fund_outflow" && approval.newData) {
+      // Second-approver greenlighted a > $10K fund outflow. Now book
+      // the deferred journal entries. Same logic as postVehicleToLedger
+      // but runs on approval instead of the initial click.
+      const { vehicleId, deposit, balance, depositSource, balanceSource } = approval.newData;
+      const veh = (data.vehicles || []).find(x => x.id === vehicleId);
+      if (!veh) return;
+      const date = veh.purchaseDate || new Date().toISOString().slice(0, 10);
+      const entries = [];
+      if (deposit > 0) {
+        if (depositSource === "fund") entries.push(vehiclePurchaseFromFundEntry({ stockNum: veh.stockNum, amount: deposit, date, memo: `Deposit — #${veh.stockNum} (approved outflow)`, user: "Admin" }));
+        else if (depositSource.startsWith("member:")) entries.push(vehiclePurchaseFromMemberEntry({ stockNum: veh.stockNum, memberId: depositSource.slice(7), amount: deposit, date, memo: `Deposit — #${veh.stockNum}`, user: "Admin" }));
+      }
+      if (balance > 0) {
+        if (balanceSource === "fund") entries.push(vehiclePurchaseFromFundEntry({ stockNum: veh.stockNum, amount: balance, date, memo: `Balance — #${veh.stockNum} (approved outflow)`, user: "Admin" }));
+        else if (balanceSource.startsWith("member:")) entries.push(vehiclePurchaseFromMemberEntry({ stockNum: veh.stockNum, memberId: balanceSource.slice(7), amount: balance, date, memo: `Balance — #${veh.stockNum}`, user: "Admin" }));
+      }
+      setData(d => {
+        let ledger = d.money?.ledger || [];
+        for (const e of entries) ledger = postJournalEntry(ledger, e);
+        const accounts = d.money?.accounts || DEFAULT_ACCOUNTS;
+        const hasAcc = accounts.some(a => a.id === vehicleAccountId(veh.stockNum));
+        const newAccounts = hasAcc ? accounts : [...accounts, buildVehicleAccount(veh.stockNum, `${veh.year} ${veh.make} ${veh.model}`)];
+        return {
+          ...d,
+          money: { ...d.money, ledger, accounts: newAccounts },
+          vehicles: d.vehicles.map(x => x.id === vehicleId ? { ...x, postedToLedger: true } : x),
+        };
+      });
     }
     // Update approval status
     const all = (await loadApprovals()).map(a => a.id === approval.id ? { ...a, status: "approved", resolvedAt: new Date().toISOString() } : a);
@@ -4222,7 +4421,13 @@ function ActivityTab() {
 // ═══════════════════════════════════════════════════════════════
 const SUPER_ADMIN_EMAIL = import.meta.env.VITE_SUPER_ADMIN_EMAIL || "support@sayarah.io";
 const ALL_AUCTION_TABS = ["Dashboard", "Pipeline", "Inventory", "Mileage", "Analytics", "Calendar", "Reports", "Approvals", "Activity", "Settings"];
-const USER_ROLES = [{ key: "admin", label: "Admin", color: "#D97706", bg: "#FEF3C7" }, { key: "manager", label: "Manager", color: "#2563EB", bg: "#DBEAFE" }, { key: "user", label: "User", color: "#059669", bg: "#D1FAE5" }];
+const USER_ROLES = [
+  { key: "admin", label: "Admin", color: "#D97706", bg: "#FEF3C7" },
+  { key: "manager", label: "Manager", color: "#2563EB", bg: "#DBEAFE" },
+  { key: "user", label: "User", color: "#059669", bg: "#D1FAE5" },
+  { key: "accountant", label: "Accountant/CPA", color: "#7C3AED", bg: "#EDE9FE" },
+  { key: "viewer", label: "Viewer", color: "#4B5563", bg: "#E5E7EB" },
+];
 
 function timeAgo(isoString) {
   if (!isoString) return "Never";
@@ -4466,18 +4671,54 @@ function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
   };
 
   const saveRules = (content) => {
-    setData(d => ({
-      ...d,
-      rules: {
-        content,
-        version: (d.rules?.version || 0) + 1,
-        updatedAt: new Date().toISOString(),
-        updatedBy: username,
-      },
-    }));
+    setData(d => {
+      const prev = d.rules || { content: DEFAULT_RULES_CONTENT, version: 1, updatedAt: new Date().toISOString(), updatedBy: "system" };
+      const history = prev.history || [];
+      return {
+        ...d,
+        rules: {
+          content,
+          version: (prev.version || 0) + 1,
+          updatedAt: new Date().toISOString(),
+          updatedBy: username,
+          // Rules versioning per spec #12 — keep prior rule sets with
+          // their effective date so members can see what changed.
+          history: [...history, { version: prev.version || 1, content: prev.content, effectiveFrom: prev.updatedAt, effectiveTo: new Date().toISOString(), updatedBy: prev.updatedBy }],
+          // Reset everyone's acknowledgement so members see a "please
+          // review the updated rules" banner next time they open the tab.
+          acknowledgedBy: [],
+        },
+      };
+    });
     logActivity(username, "rules_updated", `Updated Money Management rules to v${(data.rules?.version || 0) + 1}`);
     setShowEditRules(false);
   };
+  const acknowledgeRules = () => {
+    setData(d => ({
+      ...d,
+      rules: {
+        ...(d.rules || {}),
+        acknowledgedBy: Array.from(new Set([...((d.rules?.acknowledgedBy) || []), username])),
+      },
+    }));
+  };
+
+  // Auto month-end distribution check — runs on tab mount and each
+  // render. Triggers a distribution post if today is the last day
+  // of the month AND there's profit sitting in the distribution
+  // account AND no distribution has been posted for this month yet.
+  useEffect(() => {
+    if (!admin) return;
+    const now = new Date();
+    const tomorrow = new Date(now); tomorrow.setDate(tomorrow.getDate() + 1);
+    const isLastDayOfMonth = now.getMonth() !== tomorrow.getMonth();
+    if (!isLastDayOfMonth || profitBalance <= 0) return;
+    const alreadyDistributed = (money.ledger || []).some(e => e.ref && e.ref.type === "distribution" && e.ref.month === currentMonth);
+    if (alreadyDistributed) return;
+    // Auto-run. The admin can always reverse by posting the reversing entry.
+    runMonthEndDistribution();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profitBalance, currentMonth]);
 
   // ══════════════════════════════════════════════════════════════
   // UI
@@ -4490,7 +4731,39 @@ function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
     { id: "members", label: "Members" },
     { id: "vehicles", label: "Vehicle P&L" },
     { id: "transactions", label: "Transactions" },
+    { id: "reconciliation", label: "Bank Recon" },
+    { id: "reports", label: "Tax Exports" },
   ];
+
+  // Notifications: derive from state (no stored feed). Surfaced as a
+  // banner at the top of the tab so admins + members see pending
+  // action items at a glance.
+  const notifications = [];
+  if (fundBalance < ATLANTIC_FUND_LOW_BALANCE) {
+    notifications.push({ id: "low-balance", level: "warn", message: `Atlantic Fund is below ${fmt$2(ATLANTIC_FUND_LOW_BALANCE)} — currently ${fmt$2(fundBalance)}.` });
+  }
+  const pendingContribs = (money.contributions || []).filter(c => c.month === currentMonth && c.status !== "paid").length;
+  if (pendingContribs > 0) {
+    notifications.push({ id: "pending-contribs", level: "info", message: `${pendingContribs} member contribution${pendingContribs > 1 ? "s" : ""} still pending for ${currentMonth}.` });
+  }
+  if (admin) {
+    const missingApprovals = (money.members || []).filter(m => {
+      const a = findApproval(money.approvals, m.id, currentMonth);
+      return !a || a.status !== "approved";
+    }).length;
+    if (missingApprovals > 0) {
+      notifications.push({ id: "missing-approvals", level: "warn", message: `${missingApprovals} member${missingApprovals > 1 ? "s" : ""} awaiting your ${currentMonth} fund-usage approval.` });
+    }
+  }
+  if (profitBalance > 0) {
+    notifications.push({ id: "distribution-ready", level: "info", message: `${fmt$2(profitBalance)} pending in Profit Distribution — will auto-distribute on the last day of the month.` });
+  }
+  // Rules-updated nudge for non-admin members (and admins who haven't
+  // acknowledged). Keeps until the user clicks acknowledge.
+  const rulesAcked = ((data.rules?.acknowledgedBy) || []).includes(username);
+  if (!rulesAcked && data.rules && data.rules.version > 1) {
+    notifications.push({ id: "rules-updated", level: "info", message: `Money Management rules updated to v${data.rules.version}. Please review.`, action: "acknowledge" });
+  }
 
   return (
     <div>
@@ -4504,6 +4777,21 @@ function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
           {admin && <Btn size="sm" onClick={seedMonth}>Seed {currentMonth}</Btn>}
         </div>
       </div>
+
+      {/* Notifications banner — aggregates low-balance, pending contributions,
+          pending approvals, distribution-ready, and rules-updated prompts. */}
+      {notifications.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+          {notifications.map(n => (
+            <div key={n.id} style={{ padding: "8px 12px", borderRadius: 8, background: n.level === "warn" ? "#FEF3C7" : "#EFF6FF", color: n.level === "warn" ? "#92400E" : "#1E40AF", border: `1px solid ${n.level === "warn" ? "#FCD34D" : "#BFDBFE"}`, fontSize: 11, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+              <span>{n.message}</span>
+              {n.action === "acknowledge" && (
+                <Btn size="sm" variant="secondary" onClick={acknowledgeRules}>I've reviewed</Btn>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Sub-view tabs */}
       <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
@@ -4581,6 +4869,8 @@ function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
       {view === "members" && <MembersView money={money} balances={balances} admin={admin} memberFilter={memberFilter} setMemberFilter={setMemberFilter} />}
       {view === "vehicles" && <VehiclePLView data={data} balances={balances} />}
       {view === "transactions" && <TransactionsView ledger={money.ledger} accounts={money.accounts} members={money.members} />}
+      {view === "reconciliation" && <BankReconciliationView data={data} setData={setData} admin={admin} username={username} />}
+      {view === "reports" && <TaxExportsView data={data} money={money} />}
 
       {/* Rules modal */}
       {showRules && (
@@ -4759,6 +5049,282 @@ function TransactionsView({ ledger, accounts, members }) {
         <LedgerTable entries={[...filtered].reverse()} accounts={accounts} members={members} />
       )}
     </Card>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BANK CSV RECONCILIATION — paste or upload CSV, suggest matches,
+// flag unmatched entries. Rows persist in data.money.bankImports
+// so admins can pick up later. No Plaid integration in v1.
+// ═══════════════════════════════════════════════════════════════
+function BankReconciliationView({ data, setData, admin, username }) {
+  const imports = data.money?.bankImports || [];
+  const ledger = data.money?.ledger || [];
+  const [csvText, setCsvText] = useState("");
+  const [parseError, setParseError] = useState("");
+
+  const onFile = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => setCsvText(e.target.result || "");
+    reader.readAsText(file);
+  };
+
+  const importParsed = () => {
+    setParseError("");
+    const parsed = parseBankCsv(csvText);
+    if (parsed.rows.length === 0) { setParseError("No rows parsed. CSV should have a header row."); return; }
+    const batchId = `batch_${Date.now().toString(36)}`;
+    const rows = parsed.rows.map((r) => ({ ...r, batchId, matchedEntryId: null, ignored: false }));
+    setData(d => ({
+      ...d,
+      money: { ...d.money, bankImports: [...(d.money?.bankImports || []), ...rows] },
+    }));
+    logActivity(username, "bank_csv_imported", `Imported ${rows.length} bank rows (batch ${batchId})`);
+    setCsvText("");
+  };
+
+  const matchRow = (rowId, entryId) => {
+    setData(d => ({
+      ...d,
+      money: {
+        ...d.money,
+        bankImports: (d.money?.bankImports || []).map(r => r._id === rowId ? { ...r, matchedEntryId: entryId, ignored: false } : r),
+      },
+    }));
+  };
+  const ignoreRow = (rowId) => {
+    setData(d => ({
+      ...d,
+      money: {
+        ...d.money,
+        bankImports: (d.money?.bankImports || []).map(r => r._id === rowId ? { ...r, ignored: true, matchedEntryId: null } : r),
+      },
+    }));
+  };
+
+  const matchedCount = imports.filter(r => r.matchedEntryId).length;
+  const ignoredCount = imports.filter(r => r.ignored).length;
+  const unmatchedCount = imports.length - matchedCount - ignoredCount;
+
+  return (
+    <div>
+      {admin && (
+        <Card style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: BRAND.black, marginBottom: 8 }}>Import Chase CSV</div>
+          <div style={{ display: "flex", gap: 10, alignItems: "flex-start", flexWrap: "wrap" }}>
+            <input type="file" accept=".csv,text/csv" onChange={e => onFile(e.target.files?.[0])} style={{ fontSize: 11 }} />
+            <div style={{ fontSize: 10, color: BRAND.gray, fontStyle: "italic" }}>…or paste below. Expects columns: date, description, amount (case-insensitive).</div>
+          </div>
+          <textarea value={csvText} onChange={e => setCsvText(e.target.value)} placeholder="date,description,amount&#10;2025-01-05,Wire from member,25000.00" style={{ width: "100%", minHeight: 120, marginTop: 8, padding: 10, border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, fontSize: 11, fontFamily: "ui-monospace, monospace", boxSizing: "border-box" }} />
+          {parseError && <div style={{ marginTop: 6, color: "#DC2626", fontSize: 11, fontWeight: 600 }}>{parseError}</div>}
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+            <Btn size="sm" onClick={importParsed} disabled={!csvText.trim()}>Import rows</Btn>
+          </div>
+        </Card>
+      )}
+      <Card>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: BRAND.black }}>Bank Rows ({imports.length})</div>
+          <div style={{ fontSize: 11, color: BRAND.gray }}>
+            <span style={{ color: BRAND.green, fontWeight: 700 }}>{matchedCount} matched</span> ·
+            <span style={{ color: "#DC2626", fontWeight: 700, marginLeft: 6 }}>{unmatchedCount} unmatched</span> ·
+            <span style={{ marginLeft: 6 }}>{ignoredCount} ignored</span>
+          </div>
+        </div>
+        {imports.length === 0 ? (
+          <div style={{ padding: 16, textAlign: "center", color: BRAND.gray, fontStyle: "italic" }}>No bank rows imported yet.</div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: "#F9FAFB" }}>
+                  {["Date", "Description", "Amount", "Status", "Action"].map(h => (
+                    <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: BRAND.gray, textTransform: "uppercase" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {imports.map(r => {
+                  const matched = r.matchedEntryId ? ledger.find(e => e.id === r.matchedEntryId) : null;
+                  const candidates = !r.matchedEntryId && !r.ignored ? suggestMatches(r, ledger) : [];
+                  return (
+                    <tr key={r._id} style={{ borderBottom: `1px solid ${BRAND.grayLight}` }}>
+                      <td style={{ padding: "6px 8px", ...S.mono, color: BRAND.grayDark }}>{r.date || r.Date || "—"}</td>
+                      <td style={{ padding: "6px 8px", color: BRAND.black }}>{r.description || r.Description || "—"}</td>
+                      <td style={{ padding: "6px 8px", textAlign: "right", ...S.mono }}>{fmt$2(p(r.amount || r.Amount || 0))}</td>
+                      <td style={{ padding: "6px 8px", fontSize: 10 }}>
+                        {r.ignored ? <span style={{ color: BRAND.gray }}>Ignored</span>
+                          : matched ? <span style={{ color: BRAND.green, fontWeight: 700 }}>✓ {matched.memo}</span>
+                          : <span style={{ color: "#DC2626", fontWeight: 700 }}>Unmatched</span>}
+                      </td>
+                      <td style={{ padding: "6px 8px" }}>
+                        {admin && !r.ignored && !r.matchedEntryId && (
+                          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                            {candidates.slice(0, 2).map(c => (
+                              <button key={c.id} onClick={() => matchRow(r._id, c.id)} style={{ fontSize: 10, padding: "3px 7px", border: `1px solid ${BRAND.green}`, background: "transparent", color: BRAND.green, borderRadius: 4, cursor: "pointer", fontFamily: "inherit" }}>Match: {c.memo.slice(0, 30)}</button>
+                            ))}
+                            <button onClick={() => ignoreRow(r._id)} style={{ fontSize: 10, padding: "3px 7px", border: `1px solid ${BRAND.grayLight}`, background: "transparent", color: BRAND.gray, borderRadius: 4, cursor: "pointer", fontFamily: "inherit" }}>Ignore</button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TAX EXPORTS — P&L, Balance Sheet, Member K-1 prep, 1099, MA sales tax,
+// and a combined Form 1120-S package. Uses browser Print → Save as PDF;
+// no PDF library dependency.
+// ═══════════════════════════════════════════════════════════════
+function TaxExportsView({ data, money }) {
+  const thisYear = new Date().getFullYear();
+  const [startDate, setStartDate] = useState(`${thisYear}-01-01`);
+  const [endDate, setEndDate] = useState(`${thisYear}-12-31`);
+
+  const pl = calcProfitLoss(money.ledger, money.accounts, startDate, endDate);
+  const bs = calcBalanceSheet(money.ledger, money.accounts, endDate);
+  const k1 = calcMemberK1Prep(money.ledger, money.accounts, money.members, startDate, endDate);
+  const t1099 = calc1099Report(money.ledger, startDate, endDate);
+  const maTax = calcMaSalesTax(money.ledger, money.accounts, startDate, endDate);
+
+  const print = (title, bodyHtml) => {
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
+<style>body{font-family:Arial,sans-serif;max-width:820px;margin:20px auto;padding:20px;color:#111;font-size:12px;line-height:1.4}
+h1{color:#8B1A1A;font-size:20px;border-bottom:2px solid #8B1A1A;padding-bottom:6px;margin-bottom:14px}
+h2{font-size:14px;color:#111;margin:16px 0 6px;border-bottom:1px solid #ddd;padding-bottom:4px}
+table{width:100%;border-collapse:collapse;margin-bottom:14px;font-size:11px}
+th{background:#f3f4f6;padding:5px 8px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;color:#555;letter-spacing:0.05em;border-bottom:1px solid #ddd}
+td{padding:5px 8px;border-bottom:1px solid #eee}
+.amt{text-align:right;font-family:"Courier New",monospace;font-weight:600}
+.total{border-top:2px solid #111;font-weight:900;background:#f9fafb}
+.meta{color:#888;font-size:10px;margin-bottom:12px}
+.header-info{margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid #ccc}
+.footer{margin-top:24px;padding-top:10px;border-top:1px solid #ddd;font-size:9px;color:#888;text-align:center}
+@media print{body{padding:10px}}</style></head><body>
+<div class="header-info"><div style="font-weight:900;font-size:13px">Sayarah Inc — S-Corp · Massachusetts</div>
+<div class="meta">Period: ${startDate} to ${endDate} · Generated ${new Date().toLocaleString()}</div></div>
+<h1>${title}</h1>
+${bodyHtml}
+<div class="footer">Internal document. For accountant / CPA use. Sayarah Inc · © ${thisYear}</div>
+</body></html>`;
+    const w = window.open("", "_blank");
+    w.document.write(html);
+    w.document.close();
+    w.onload = () => w.print();
+  };
+
+  const plHtml = `
+    <table>
+      <thead><tr><th>Account</th><th class="amt">Amount</th></tr></thead>
+      <tbody>
+        <tr><td colspan="2"><b>Revenue</b></td></tr>
+        ${Object.entries(pl.byAccount).filter(([id]) => id.startsWith("revenue:")).map(([id, amt]) =>
+          `<tr><td>${(money.accounts.find(a => a.id === id)?.name) || id}</td><td class="amt">${fmt$2(amt)}</td></tr>`
+        ).join("")}
+        <tr class="total"><td>Total Revenue</td><td class="amt">${fmt$2(pl.revenue)}</td></tr>
+        <tr><td colspan="2"><b>Expenses</b></td></tr>
+        ${Object.entries(pl.byAccount).filter(([id]) => id.startsWith("expense:")).map(([id, amt]) =>
+          `<tr><td>${(money.accounts.find(a => a.id === id)?.name) || id}</td><td class="amt">${fmt$2(amt)}</td></tr>`
+        ).join("")}
+        <tr class="total"><td>Total Expenses</td><td class="amt">${fmt$2(pl.expenses)}</td></tr>
+        <tr class="total" style="font-size:14px;color:${pl.netIncome >= 0 ? "#166534" : "#DC2626"}"><td>Net Income</td><td class="amt">${fmt$2(pl.netIncome)}</td></tr>
+      </tbody>
+    </table>`;
+
+  const bsHtml = `
+    <h2>Assets</h2>
+    <table><tbody>
+      ${Object.entries(bs.assets).map(([id, a]) => `<tr><td>${a.name}</td><td class="amt">${fmt$2(a.balance)}</td></tr>`).join("") || '<tr><td colspan="2"><i>No assets</i></td></tr>'}
+      <tr class="total"><td>Total Assets</td><td class="amt">${fmt$2(bs.totals.assets)}</td></tr>
+    </tbody></table>
+    <h2>Liabilities</h2>
+    <table><tbody>
+      ${Object.entries(bs.liabilities).map(([id, a]) => `<tr><td>${a.name}</td><td class="amt">${fmt$2(a.balance)}</td></tr>`).join("") || '<tr><td colspan="2"><i>None</i></td></tr>'}
+      <tr class="total"><td>Total Liabilities</td><td class="amt">${fmt$2(bs.totals.liabilities)}</td></tr>
+    </tbody></table>
+    <h2>Equity</h2>
+    <table><tbody>
+      ${Object.entries(bs.equity).map(([id, a]) => `<tr><td>${a.name}</td><td class="amt">${fmt$2(a.balance)}</td></tr>`).join("") || '<tr><td colspan="2"><i>None</i></td></tr>'}
+      <tr class="total"><td>Total Equity</td><td class="amt">${fmt$2(bs.totals.equity)}</td></tr>
+    </tbody></table>
+    <div class="meta">Balance check: Assets (${fmt$2(bs.totals.assets)}) = Liabilities (${fmt$2(bs.totals.liabilities)}) + Equity (${fmt$2(bs.totals.equity)}) · difference ${fmt$2(bs.totals.assets - bs.totals.liabilities - bs.totals.equity)}</div>`;
+
+  const k1Html = `
+    <table>
+      <thead><tr><th>Member</th><th class="amt">Ending Capital</th><th class="amt">Share of Net Income</th></tr></thead>
+      <tbody>
+        ${k1.map(m => `<tr><td>${m.name}</td><td class="amt">${fmt$2(m.endingCapital)}</td><td class="amt">${fmt$2(m.shareOfIncome)}</td></tr>`).join("")}
+      </tbody>
+    </table>
+    <div class="meta">Equal-split allocation. Give each member's row to your CPA for their K-1 preparation.</div>`;
+
+  const t1099Html = `
+    <table>
+      <thead><tr><th>Vendor</th><th class="amt">Total Paid</th><th>1099-NEC Required?</th></tr></thead>
+      <tbody>
+        ${t1099.length === 0 ? '<tr><td colspan="3"><i>No vendor-attributed expenses over $600 in this period. Vendors must be recorded in the journal-entry <code>vendor</code> ref field or memo to be tracked.</i></td></tr>' :
+          t1099.map(v => `<tr><td>${v.name}</td><td class="amt">${fmt$2(v.amount)}</td><td>${v.amount >= 600 ? "Yes" : "No"}</td></tr>`).join("")}
+      </tbody>
+    </table>`;
+
+  const maTaxHtml = `
+    <table><tbody>
+      <tr><td>MA Sales Tax Collected (period)</td><td class="amt">${fmt$2(maTax.collected)}</td></tr>
+    </tbody></table>
+    <div class="meta">Sourced from the MA Sales Tax Payable liability account. Register sales that include MA sales tax by posting to account <code>${SYSTEM_ACCOUNTS.SALES_TAX_PAYABLE}</code>.</div>`;
+
+  const form1120SHtml = `
+    <h2>Profit & Loss</h2>${plHtml}
+    <h2 style="page-break-before:always">Balance Sheet (as of ${endDate})</h2>${bsHtml}
+    <h2 style="page-break-before:always">Member K-1 Preparation</h2>${k1Html}
+    <h2 style="page-break-before:always">1099 Tracking</h2>${t1099Html}
+    <h2 style="page-break-before:always">MA Sales Tax</h2>${maTaxHtml}`;
+
+  return (
+    <Card>
+      <div style={{ fontSize: 15, fontWeight: 800, color: BRAND.black, marginBottom: 12 }}>Tax & Compliance Exports</div>
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, alignItems: "flex-end", flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontSize: 10, color: BRAND.gray, textTransform: "uppercase", fontWeight: 700 }}>From</div>
+          <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} style={{ padding: "5px 8px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, fontSize: 11 }} />
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: BRAND.gray, textTransform: "uppercase", fontWeight: 700 }}>To</div>
+          <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} style={{ padding: "5px 8px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, fontSize: 11 }} />
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
+        <ExportCard title="Profit & Loss Statement" summary={`Revenue ${fmt$2(pl.revenue)} · Expenses ${fmt$2(pl.expenses)} · Net ${fmt$2(pl.netIncome)}`} onPrint={() => print("Profit & Loss Statement", plHtml)} onCsv={() => exportCSV(`pl_${startDate}_to_${endDate}.csv`, ["Account", "Amount"], Object.entries(pl.byAccount).map(([id, amt]) => [(money.accounts.find(a => a.id === id)?.name) || id, amt.toFixed(2)]))} />
+        <ExportCard title="Balance Sheet" summary={`Assets ${fmt$2(bs.totals.assets)} · Equity ${fmt$2(bs.totals.equity)} · as of ${endDate}`} onPrint={() => print(`Balance Sheet (as of ${endDate})`, bsHtml)} onCsv={() => exportCSV(`bs_${endDate}.csv`, ["Section", "Account", "Balance"], [...Object.entries(bs.assets).map(([, a]) => ["Asset", a.name, a.balance.toFixed(2)]), ...Object.entries(bs.liabilities).map(([, a]) => ["Liability", a.name, a.balance.toFixed(2)]), ...Object.entries(bs.equity).map(([, a]) => ["Equity", a.name, a.balance.toFixed(2)])])} />
+        <ExportCard title="Member K-1 Preparation" summary={`${k1.length} members · Net share ${fmt$2(k1[0]?.shareOfIncome || 0)}`} onPrint={() => print("Member Capital / K-1 Preparation", k1Html)} onCsv={() => exportCSV(`k1_${startDate}_to_${endDate}.csv`, ["Member", "Ending Capital", "Share of Net Income"], k1.map(m => [m.name, m.endingCapital.toFixed(2), m.shareOfIncome.toFixed(2)]))} />
+        <ExportCard title="1099 Tracking" summary={`${t1099.length} vendor${t1099.length === 1 ? "" : "s"} over $600`} onPrint={() => print("Vendor / 1099 Tracking", t1099Html)} onCsv={() => exportCSV(`1099_${startDate}_to_${endDate}.csv`, ["Vendor", "Total Paid", "1099-NEC Required"], t1099.map(v => [v.name, v.amount.toFixed(2), v.amount >= 600 ? "Yes" : "No"]))} />
+        <ExportCard title="MA Sales Tax" summary={`${fmt$2(maTax.collected)} collected in period`} onPrint={() => print("MA Sales Tax", maTaxHtml)} onCsv={() => exportCSV(`ma_sales_tax_${startDate}_to_${endDate}.csv`, ["Period Start", "Period End", "Collected"], [[startDate, endDate, maTax.collected.toFixed(2)]])} />
+        <ExportCard title="Form 1120-S Package" summary="Combined P&L + Balance Sheet + K-1 + 1099 + MA tax" onPrint={() => print("Form 1120-S Preparation Package", form1120SHtml)} />
+      </div>
+    </Card>
+  );
+}
+
+function ExportCard({ title, summary, onPrint, onCsv }) {
+  return (
+    <div style={{ border: `1px solid ${BRAND.grayLight}`, borderRadius: 8, padding: 12 }}>
+      <div style={{ fontSize: 12, fontWeight: 800, color: BRAND.black, marginBottom: 4 }}>{title}</div>
+      <div style={{ fontSize: 10, color: BRAND.gray, marginBottom: 8 }}>{summary}</div>
+      <div style={{ display: "flex", gap: 6 }}>
+        <Btn size="sm" onClick={onPrint} style={{ fontSize: 10, padding: "4px 8px" }}>Print / PDF</Btn>
+        {onCsv && <Btn size="sm" variant="secondary" onClick={onCsv} style={{ fontSize: 10, padding: "4px 8px" }}>CSV</Btn>}
+      </div>
+    </div>
   );
 }
 
@@ -5993,7 +6559,7 @@ function AppInner() {
         {tab === "Analytics" && <AnalyticsTab data={data} />}
         {tab === "Calendar" && <CalendarTab data={data} setData={setData} />}
         {tab === "Reports" && (adminMode || managerMode) && <ReportsTab data={data} />}
-        {tab === "Money" && (adminMode || managerMode) && <MoneyManagementTab data={data} setData={setData} username={username} userRole={userRole} darkMode={darkMode} />}
+        {tab === "Money" && (adminMode || managerMode || userRole === "accountant") && <MoneyManagementTab data={data} setData={setData} username={username} userRole={userRole} darkMode={darkMode} />}
         {tab === "Approvals" && (adminMode || managerMode) && <ApprovalsTab data={data} setData={setData} />}
         {tab === "Activity" && (adminMode || managerMode) && <ActivityTab />}
         {tab === "Trash" && adminMode && <TrashTab data={data} setData={setData} currentUser={username} />}

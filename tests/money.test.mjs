@@ -392,3 +392,104 @@ test("monthKey formats correctly", () => {
   assert.equal(monthKey(new Date("2025-04-15")), "2025-04");
   assert.equal(monthKey("2025-01-01"), "2025-01");
 });
+
+// ─── Report-calculation helpers ───────────────────────────────
+import {
+  calcProfitLoss,
+  calcBalanceSheet,
+  calcMemberK1Prep,
+  calc1099Report,
+  calcMaSalesTax,
+  parseBankCsv,
+  suggestMatches,
+  entriesInRange,
+} from "../apps/auction/src/money.js";
+
+test("calcProfitLoss sums revenue minus expenses in the date range", () => {
+  const accounts = [
+    { id: SYSTEM_ACCOUNTS.REVENUE_VEHICLE_SALES, type: "revenue" },
+    { id: SYSTEM_ACCOUNTS.COGS_VEHICLES, type: "expense" },
+    { id: "bank", type: "asset" },
+  ];
+  const ledger = [
+    buildJournalEntry({ date: "2025-01-10", lines: [
+      { accountId: "bank", debit: 10000, credit: 0 },
+      { accountId: SYSTEM_ACCOUNTS.REVENUE_VEHICLE_SALES, debit: 0, credit: 10000 },
+    ]}),
+    buildJournalEntry({ date: "2025-01-10", lines: [
+      { accountId: SYSTEM_ACCOUNTS.COGS_VEHICLES, debit: 7000, credit: 0 },
+      { accountId: "bank", debit: 0, credit: 7000 },
+    ]}),
+    buildJournalEntry({ date: "2025-02-01", lines: [
+      // Outside the Jan range — should be excluded.
+      { accountId: "bank", debit: 1, credit: 0 },
+      { accountId: SYSTEM_ACCOUNTS.REVENUE_VEHICLE_SALES, debit: 0, credit: 1 },
+    ]}),
+  ];
+  const pl = calcProfitLoss(ledger, accounts, "2025-01-01", "2025-01-31");
+  assert.equal(pl.revenue, 10000);
+  assert.equal(pl.expenses, 7000);
+  assert.equal(pl.netIncome, 3000);
+});
+
+test("calcBalanceSheet: assets = liabilities + equity as of a date", () => {
+  // Include the member capital account so it's classified as equity
+  // on the balance sheet (member accounts are generated dynamically).
+  const accounts = [...DEFAULT_ACCOUNTS, memberAccount("m1", "Alice")];
+  let ledger = [];
+  ledger = postJournalEntry(ledger, contributionPaidEntryBalanced({ memberId: "m1", month: "2025-01", amount: 50000, user: "u" }));
+  const bs = calcBalanceSheet(ledger, accounts, "2025-01-31");
+  assert.equal(bs.totals.assets, 50000, "bank asset $50K");
+  assert.equal(bs.totals.liabilities, 0);
+  assert.equal(bs.totals.equity, 50000, "member capital $50K");
+  assert.ok(Math.abs(bs.totals.assets - bs.totals.liabilities - bs.totals.equity) < 0.01, "bs must balance");
+});
+
+test("calcMemberK1Prep: equal share of period net income", () => {
+  const accounts = [
+    ...DEFAULT_ACCOUNTS,
+    memberAccount("m1", "Alice"),
+    memberAccount("m2", "Bob"),
+  ];
+  const members = [{ id: "m1", name: "Alice" }, { id: "m2", name: "Bob" }];
+  // Give each $10K capital, then recognize $2K net income via rev/cogs.
+  let ledger = [];
+  ledger = postJournalEntry(ledger, contributionPaidEntryBalanced({ memberId: "m1", month: "2025-01", amount: 10000, user: "u" }));
+  ledger = postJournalEntry(ledger, contributionPaidEntryBalanced({ memberId: "m2", month: "2025-01", amount: 10000, user: "u" }));
+  ledger = postJournalEntry(ledger, buildJournalEntry({ date: "2025-01-15", lines: [
+    { accountId: SYSTEM_ACCOUNTS.SAYARAH_BANK, debit: 2000, credit: 0 },
+    { accountId: SYSTEM_ACCOUNTS.REVENUE_VEHICLE_SALES, debit: 0, credit: 2000 },
+  ]}));
+  const k1 = calcMemberK1Prep(ledger, accounts, members, "2025-01-01", "2025-01-31");
+  assert.equal(k1[0].shareOfIncome, 1000);
+  assert.equal(k1[1].shareOfIncome, 1000);
+  assert.equal(k1[0].endingCapital, 10000);
+});
+
+test("parseBankCsv handles simple CSV with headers", () => {
+  const csv = `date,description,amount\n2025-01-05,Wire from Alice,25000.00\n2025-01-10,Car dealer payout,-9000.00`;
+  const parsed = parseBankCsv(csv);
+  assert.equal(parsed.rows.length, 2);
+  assert.equal(parsed.rows[0].date, "2025-01-05");
+  assert.equal(parsed.rows[1].amount, "-9000.00");
+});
+
+test("suggestMatches: date + amount within $1 returns a candidate", () => {
+  const entry = buildJournalEntry({ date: "2025-01-05", lines: [
+    { accountId: SYSTEM_ACCOUNTS.SAYARAH_BANK, debit: 25000, credit: 0 },
+    { accountId: "equity:member:m1", debit: 0, credit: 25000 },
+  ]});
+  const csvRow = { date: "2025-01-05", description: "Wire from Alice", amount: "25000.00" };
+  const matches = suggestMatches(csvRow, [entry]);
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].id, entry.id);
+});
+
+test("suggestMatches: no match on different date", () => {
+  const entry = buildJournalEntry({ date: "2025-01-05", lines: [
+    { accountId: "bank", debit: 25000, credit: 0 },
+    { accountId: "cap", debit: 0, credit: 25000 },
+  ]});
+  const csvRow = { date: "2025-01-06", amount: "25000.00" };
+  assert.equal(suggestMatches(csvRow, [entry]).length, 0);
+});
