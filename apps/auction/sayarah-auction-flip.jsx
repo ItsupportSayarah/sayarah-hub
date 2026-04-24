@@ -4701,7 +4701,12 @@ function ActivityTab() {
 // USERS MANAGEMENT — Firebase Admin Panel
 // ═══════════════════════════════════════════════════════════════
 const SUPER_ADMIN_EMAIL = import.meta.env.VITE_SUPER_ADMIN_EMAIL || "support@sayarah.io";
-const ALL_AUCTION_TABS = ["Dashboard", "Pipeline", "Inventory", "Mileage", "Analytics", "Calendar", "Reports", "Accounting", "Approvals", "Activity", "Settings"];
+// Grant-able auction tabs. MUST stay in sync with AUCTION_TABS in
+// apps/admin/sayarah-admin-panel.jsx — both permission grids read
+// from their own copy, so drift here means admins see different
+// assignable tabs in each app. Users/Trash stay admin-only and are
+// intentionally excluded from this list.
+const ALL_AUCTION_TABS = ["Dashboard", "Pipeline", "Inventory", "Mileage", "Analytics", "Calendar", "Reports", "Money", "Accounting", "Approvals", "Activity", "Settings"];
 const USER_ROLES = [
   { key: "admin", label: "Admin", color: "#D97706", bg: "#FEF3C7" },
   { key: "manager", label: "Manager", color: "#2563EB", bg: "#DBEAFE" },
