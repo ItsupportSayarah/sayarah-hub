@@ -1,5 +1,12 @@
 import { useState, useEffect, useMemo, useRef, useCallback, createContext, useContext, Component } from "react";
-import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserProfile, updateUserRole, getAllUsers, addUserByEmail, deleteUserDoc, ensureUserDoc, updateUserPermissions, getUserData, saveAppData, loadAppData, saveSharedData, saveSharedDataTxn, loadSharedData, onSharedDataChange, saveApprovalsFB, loadApprovalsFB, addActivityLogEntryFB, loadActivityLogFB, changePassword, resetPassword, uploadFile, deleteFile } from "./src/firebase.js";
+import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserProfile, updateUserRole, getAllUsers, addUserByEmail, deleteUserDoc, ensureUserDoc, updateUserPermissions, getUserData, saveAppData, loadAppData, saveSharedData, saveSharedDataTxn, loadSharedData, onSharedDataChange, saveApprovalsFB, loadApprovalsFB, addActivityLogEntryFB, loadActivityLogFB, changePassword, resetPassword, uploadFile, deleteFile,
+  // MFA
+  listMfaFactors, unenrollMfaFactor, isMfaRequiredError, getMfaResolver,
+  startTotpEnrollment, finishTotpEnrollment,
+  buildRecaptchaVerifier, startSmsEnrollment, finishSmsEnrollment,
+  submitTotpChallenge, startSmsChallenge, submitSmsChallenge,
+} from "./src/firebase.js";
+import QRCode from "qrcode";
 // Pure calculation functions live in src/calc.js so they can be
 // unit-tested (see tests/calc.test.mjs). Every display of Total Cost,
 // Net Profit, Gross Margin, etc. funnels through these — no parallel
@@ -1218,6 +1225,211 @@ function TD({ children, style = {} }) { return <td style={{ padding: "10px 12px"
 // ═══════════════════════════════════════════════════════════════
 // LOGIN PAGE
 // ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+// MFA CHALLENGE — shown during sign-in when the backend requires a
+// second factor. The resolver comes from catching
+// auth/multi-factor-auth-required on firebaseSignIn().
+// ═══════════════════════════════════════════════════════════════
+function MfaChallengeView({ resolver, onResolved, onCancel }) {
+  const hints = resolver?.hints || [];
+  const [factorUid, setFactorUid] = useState(hints[0]?.uid || "");
+  const selected = hints.find(h => h.uid === factorUid) || hints[0];
+  const isSms = selected?.factorId === "phone";
+  const [code, setCode] = useState("");
+  const [smsSent, setSmsSent] = useState(false);
+  const [verificationId, setVerificationId] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const recapId = "mfa-challenge-recaptcha";
+
+  const sendSms = async () => {
+    setErr(""); setBusy(true);
+    try {
+      const verifier = buildRecaptchaVerifier(recapId);
+      const vid = await startSmsChallenge(resolver, selected.uid, verifier);
+      setVerificationId(vid); setSmsSent(true);
+    } catch (e) { setErr(e?.message || "Failed to send code"); }
+    setBusy(false);
+  };
+
+  const submit = async () => {
+    if (!code.trim()) { setErr("Enter the 6-digit code"); return; }
+    setErr(""); setBusy(true);
+    try {
+      if (isSms) await submitSmsChallenge(resolver, verificationId, code.trim());
+      else await submitTotpChallenge(resolver, selected.uid, code.trim());
+      onResolved();
+    } catch (e) {
+      setErr(e?.code === "auth/invalid-verification-code" ? "Wrong code — try again." : (e?.message || "Verification failed"));
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div style={{ maxWidth: 440 }}>
+      <div style={{ fontSize: 18, fontWeight: 900, color: BRAND.black, marginBottom: 4 }}>Two-Factor Verification</div>
+      <div style={{ fontSize: 12, color: BRAND.gray, marginBottom: 14 }}>Enter the 6-digit code from your second factor to finish signing in.</div>
+      {hints.length > 1 && (
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.06em" }}>Method</label>
+          <select value={factorUid} onChange={e => { setFactorUid(e.target.value); setCode(""); setSmsSent(false); }} style={{ width: "100%", marginTop: 4, padding: "8px 10px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, fontSize: 13 }}>
+            {hints.map(h => <option key={h.uid} value={h.uid}>{h.displayName || (h.factorId === "phone" ? `SMS to ${h.phoneNumber}` : "Authenticator App")}</option>)}
+          </select>
+        </div>
+      )}
+      {isSms && !smsSent && (
+        <Btn onClick={sendSms} disabled={busy}>{busy ? "Sending..." : `Send code to ${selected.phoneNumber}`}</Btn>
+      )}
+      {(!isSms || smsSent) && (
+        <div style={{ marginTop: 10 }}>
+          <label style={{ fontSize: 11, fontWeight: 700, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.06em" }}>6-digit code</label>
+          <input value={code} onChange={e => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            placeholder="123456" inputMode="numeric" autoFocus
+            onKeyDown={e => { if (e.key === "Enter") submit(); }}
+            style={{ width: "100%", marginTop: 4, padding: "10px 12px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, fontSize: 18, letterSpacing: 4, textAlign: "center", fontFamily: "'DM Mono', monospace" }} />
+        </div>
+      )}
+      <div id={recapId} style={{ marginTop: 8 }} />
+      {err && <div style={{ color: "#DC2626", fontSize: 12, fontWeight: 600, padding: "8px 12px", background: "#FEF2F2", borderRadius: 6, marginTop: 10 }}>{err}</div>}
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 18, gap: 6 }}>
+        <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
+        <Btn onClick={submit} disabled={busy || !code || (isSms && !smsSent)}>{busy ? "Verifying..." : "Verify"}</Btn>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MFA SETUP — post-login modal for enrolling a second factor.
+// User picks TOTP (authenticator app) or SMS, enters + verifies.
+// Required for all users (blocks the app until at least one factor
+// is enrolled). Super admin is exempt via the caller.
+// ═══════════════════════════════════════════════════════════════
+function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
+  const [method, setMethod] = useState(null); // "totp" | "sms"
+  const [step, setStep] = useState("choose"); // "choose" | "enrolling" | "verifying"
+  const [qrDataUrl, setQrDataUrl] = useState("");
+  const [secret, setSecret] = useState(null);
+  const [secretKey, setSecretKey] = useState("");
+  const [phone, setPhone] = useState("");
+  const [verificationId, setVerificationId] = useState("");
+  const [code, setCode] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const recapId = "mfa-setup-recaptcha";
+
+  const beginTotp = async () => {
+    setErr(""); setBusy(true);
+    try {
+      const { secret, otpAuthUrl, secretKey } = await startTotpEnrollment(user);
+      const dataUrl = await QRCode.toDataURL(otpAuthUrl, { margin: 1, width: 220 });
+      setSecret(secret); setSecretKey(secretKey); setQrDataUrl(dataUrl);
+      setMethod("totp"); setStep("verifying");
+    } catch (e) { setErr(e?.message || "Failed to start TOTP enrollment"); }
+    setBusy(false);
+  };
+
+  const beginSms = () => { setMethod("sms"); setStep("enrolling"); setErr(""); };
+
+  const sendSmsCode = async () => {
+    if (!/^\+\d{8,15}$/.test(phone.trim())) { setErr("Use E.164 format — e.g. +15555550123"); return; }
+    setErr(""); setBusy(true);
+    try {
+      const verifier = buildRecaptchaVerifier(recapId);
+      const vid = await startSmsEnrollment(user, phone.trim(), verifier);
+      setVerificationId(vid); setStep("verifying");
+    } catch (e) { setErr(e?.message || "Failed to send code"); }
+    setBusy(false);
+  };
+
+  const verifyAndEnroll = async () => {
+    if (!code.trim()) { setErr("Enter the 6-digit code"); return; }
+    setErr(""); setBusy(true);
+    try {
+      if (method === "totp") await finishTotpEnrollment(user, secret, code.trim(), "Authenticator App");
+      else await finishSmsEnrollment(user, verificationId, code.trim(), `SMS ${phone}`);
+      onEnrolled();
+    } catch (e) {
+      setErr(e?.code === "auth/invalid-verification-code" ? "Wrong code — try again." : (e?.message || "Enrollment failed"));
+    }
+    setBusy(false);
+  };
+
+  return (
+    <Modal title="Enable Two-Factor Authentication" onClose={dismissible ? onClose : undefined}>
+      {!dismissible && (
+        <div style={{ background: "#FEF3C7", color: "#92400E", padding: "8px 12px", borderRadius: 6, fontSize: 11, fontWeight: 600, marginBottom: 14 }}>
+          Two-factor authentication is required for all accounts. Enroll at least one method to continue.
+        </div>
+      )}
+
+      {step === "choose" && (
+        <div>
+          <div style={{ fontSize: 12, color: BRAND.grayDark, lineHeight: 1.5, marginBottom: 14 }}>
+            Pick how you want to receive the second-step code on every sign-in:
+          </div>
+          <div style={{ display: "grid", gap: 10 }}>
+            <button onClick={beginTotp} disabled={busy} style={{ textAlign: "left", padding: 14, border: `1px solid ${BRAND.grayLight}`, borderRadius: 8, background: BRAND.white, cursor: "pointer", fontFamily: "inherit" }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: BRAND.black }}>📱 Authenticator app (recommended)</div>
+              <div style={{ fontSize: 11, color: BRAND.gray, marginTop: 4 }}>Google Authenticator, Authy, 1Password, Microsoft Authenticator, etc. — no SMS cost, works offline.</div>
+            </button>
+            <button onClick={beginSms} disabled={busy} style={{ textAlign: "left", padding: 14, border: `1px solid ${BRAND.grayLight}`, borderRadius: 8, background: BRAND.white, cursor: "pointer", fontFamily: "inherit" }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: BRAND.black }}>💬 Text message (SMS)</div>
+              <div style={{ fontSize: 11, color: BRAND.gray, marginTop: 4 }}>A 6-digit code is sent to your phone each time you sign in.</div>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === "enrolling" && method === "sms" && (
+        <div>
+          <div style={{ fontSize: 12, color: BRAND.grayDark, marginBottom: 10 }}>Enter your phone number in E.164 format (e.g. <code>+15555550123</code>):</div>
+          <Input label="Phone" value={phone} onChange={setPhone} placeholder="+15555550123" />
+          <div id={recapId} style={{ marginTop: 8 }} />
+          {err && <div style={{ color: "#DC2626", fontSize: 12, marginTop: 10, padding: "8px 12px", background: "#FEF2F2", borderRadius: 6 }}>{err}</div>}
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 14 }}>
+            <Btn variant="secondary" onClick={() => { setStep("choose"); setErr(""); }}>Back</Btn>
+            <Btn onClick={sendSmsCode} disabled={busy}>{busy ? "Sending..." : "Send code"}</Btn>
+          </div>
+        </div>
+      )}
+
+      {step === "verifying" && method === "totp" && (
+        <div>
+          <div style={{ fontSize: 12, color: BRAND.grayDark, marginBottom: 10, lineHeight: 1.5 }}>
+            Scan this QR with your authenticator app, then enter the 6-digit code to confirm.
+          </div>
+          {qrDataUrl && <img src={qrDataUrl} alt="TOTP QR" style={{ display: "block", margin: "8px auto", border: `1px solid ${BRAND.grayLight}`, borderRadius: 8 }} />}
+          {secretKey && (
+            <details style={{ fontSize: 11, color: BRAND.gray, marginBottom: 10 }}>
+              <summary style={{ cursor: "pointer" }}>Can't scan? Enter this key manually</summary>
+              <code style={{ display: "block", padding: 8, marginTop: 6, background: BRAND.grayLight, borderRadius: 4, wordBreak: "break-all", fontFamily: "'DM Mono', monospace" }}>{secretKey}</code>
+            </details>
+          )}
+          <Input label="6-digit code" value={code} onChange={v => setCode(v.replace(/\D/g, "").slice(0, 6))} placeholder="123456" />
+          {err && <div style={{ color: "#DC2626", fontSize: 12, marginTop: 10, padding: "8px 12px", background: "#FEF2F2", borderRadius: 6 }}>{err}</div>}
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 14 }}>
+            <Btn variant="secondary" onClick={() => { setStep("choose"); setCode(""); setErr(""); }}>Back</Btn>
+            <Btn onClick={verifyAndEnroll} disabled={busy || !code}>{busy ? "Enrolling..." : "Confirm"}</Btn>
+          </div>
+        </div>
+      )}
+
+      {step === "verifying" && method === "sms" && (
+        <div>
+          <div style={{ fontSize: 12, color: BRAND.grayDark, marginBottom: 10 }}>Code sent to <b>{phone}</b>. Enter it below:</div>
+          <Input label="6-digit code" value={code} onChange={v => setCode(v.replace(/\D/g, "").slice(0, 6))} placeholder="123456" />
+          {err && <div style={{ color: "#DC2626", fontSize: 12, marginTop: 10, padding: "8px 12px", background: "#FEF2F2", borderRadius: 6 }}>{err}</div>}
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 14 }}>
+            <Btn variant="secondary" onClick={() => { setStep("enrolling"); setCode(""); setErr(""); }}>Back</Btn>
+            <Btn onClick={verifyAndEnroll} disabled={busy || !code}>{busy ? "Enrolling..." : "Confirm"}</Btn>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 function LoginPage({ onLogin }) {
   const [user, setUser] = useState(""); const [pass, setPass] = useState(""); const [error, setError] = useState(""); const [loading, setLoading] = useState(false); const [showForgot, setShowForgot] = useState(false);
   const [focused, setFocused] = useState(null);
@@ -1227,6 +1439,29 @@ function LoginPage({ onLogin }) {
   const [resetEmail, setResetEmail] = useState("");
   const [resetStatus, setResetStatus] = useState(""); // "sent", "error:...", ""
   const [resetLoading, setResetLoading] = useState(false);
+  // When Firebase demands a second factor during sign-in, it throws
+  // auth/multi-factor-auth-required. We keep the resolver in state so
+  // the challenge UI can complete the sign-in after the user enters
+  // their TOTP/SMS code. onLogin is fired only after resolveSignIn.
+  const [mfaResolver, setMfaResolver] = useState(null);
+
+  const finishAfterMfa = async () => {
+    // auth.currentUser is now populated. Load profile + complete login.
+    const fbUser = auth.currentUser;
+    if (!fbUser) { setError("Authentication lost. Please try again."); setMfaResolver(null); return; }
+    try {
+      const profile = await getUserProfile(fbUser.uid);
+      const role = profile?.role || "user";
+      const isSuperAdmin = (fbUser.email || "") === (import.meta.env.VITE_SUPER_ADMIN_EMAIL || "support@sayarah.io");
+      if (!isSuperAdmin && role !== "admin" && role !== "manager" && profile?.auctionAccess !== true) {
+        await firebaseSignOut();
+        setError("You don't have access to Auto Trade Hub. Contact your admin.");
+        setMfaResolver(null); return;
+      }
+      const firstName = profile?.firstName || (fbUser.displayName || fbUser.email.split("@")[0]).split(" ")[0];
+      onLogin(firstName, role, fbUser.uid);
+    } catch (e) { setError(e?.message || "Login failed"); setMfaResolver(null); }
+  };
 
   const go = async () => {
     if (FIREBASE_ENABLED) {
@@ -1248,6 +1483,13 @@ function LoginPage({ onLogin }) {
           onLogin(result.username, result.role, result.uid);
         }
       } catch (err) {
+        // Intercept Firebase's MFA-required signal and hand the flow
+        // to MfaChallengeView. The password was correct — we just
+        // need the second factor before sign-in completes.
+        if (isMfaRequiredError(err)) {
+          const resolver = getMfaResolver(err);
+          if (resolver) { setMfaResolver(resolver); setLoading(false); return; }
+        }
         const msg = err.code === "auth/user-not-found" ? "Invalid email or password"
           : err.code === "auth/wrong-password" ? "Invalid email or password"
           : err.code === "auth/invalid-email" ? "Invalid email format"
@@ -1286,6 +1528,22 @@ function LoginPage({ onLogin }) {
     @keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
     @keyframes borderGlow { 0%,100%{border-color:rgba(139,26,26,0.3)} 50%{border-color:rgba(139,26,26,0.7)} }
   `;
+
+  // If Firebase demanded MFA after password, show the challenge UI
+  // on top of the login page. Cancel returns to password entry.
+  if (mfaResolver) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F9FAFB", padding: 20 }}>
+        <div style={{ background: "#fff", borderRadius: 12, padding: 32, boxShadow: "0 10px 40px rgba(0,0,0,0.08)", maxWidth: 480, width: "100%" }}>
+          <MfaChallengeView
+            resolver={mfaResolver}
+            onResolved={() => { setMfaResolver(null); finishAfterMfa(); }}
+            onCancel={async () => { try { await firebaseSignOut(); } catch {} setMfaResolver(null); setError(""); setPass(""); }}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="login-split" style={{ minHeight: "100vh", display: "flex", fontFamily: "'DM Sans', sans-serif", position: "relative", overflow: "hidden" }}>
@@ -7897,6 +8155,66 @@ function AuctionFeeTiersCard({ data, setData, darkMode, username }) {
   );
 }
 
+// Security card — shown at the top of Settings. Lists enrolled MFA
+// factors and lets the user enroll more or remove existing ones.
+function SecurityCard() {
+  const [factors, setFactors] = useState(() => listMfaFactors(auth.currentUser));
+  const [showSetup, setShowSetup] = useState(false);
+  const [msg, setMsg] = useState("");
+  const refresh = () => setFactors(listMfaFactors(auth.currentUser));
+
+  const remove = async (uid) => {
+    if (!confirm("Remove this second factor? You'll need to re-enroll it before you can use it again.")) return;
+    try { await unenrollMfaFactor(auth.currentUser, uid); refresh(); setMsg("Second factor removed."); setTimeout(() => setMsg(""), 3000); }
+    catch (e) { setMsg("Error: " + (e?.message || "Failed to remove")); }
+  };
+
+  return (
+    <Card style={{ marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        <div style={{ width: 36, height: 36, borderRadius: 8, background: "#FEF3C7", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#92400E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: BRAND.black }}>Two-Factor Authentication</div>
+          <div style={{ fontSize: 11, color: BRAND.gray }}>Required on every sign-in. Use an authenticator app (preferred) or SMS text code.</div>
+        </div>
+        <Btn onClick={() => setShowSetup(true)}>+ Add method</Btn>
+      </div>
+      {msg && <div style={{ background: msg.startsWith("Error") ? "#FEF2F2" : "#F0FDF4", color: msg.startsWith("Error") ? "#DC2626" : "#166534", padding: "8px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600, marginBottom: 10 }}>{msg}</div>}
+      {factors.length === 0 ? (
+        <div style={{ fontSize: 12, color: BRAND.gray, fontStyle: "italic", padding: "8px 0" }}>
+          No second factor enrolled yet. Click <b>Add method</b> to set one up.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {factors.map(f => (
+            <div key={f.uid} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", border: `1px solid ${BRAND.grayLight}`, borderRadius: 8, padding: "10px 12px" }}>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.black }}>
+                  {f.factorId === "phone" ? "💬 SMS" : "📱 Authenticator App"}
+                  {f.displayName && <span style={{ color: BRAND.gray, marginLeft: 6, fontWeight: 400 }}>· {f.displayName}</span>}
+                </div>
+                {f.phoneNumber && <div style={{ fontSize: 11, color: BRAND.gray, ...S.mono }}>{f.phoneNumber}</div>}
+                {f.enrollmentTime && <div style={{ fontSize: 10, color: BRAND.gray }}>Enrolled {new Date(f.enrollmentTime).toLocaleDateString()}</div>}
+              </div>
+              <Btn variant="danger" size="sm" onClick={() => remove(f.uid)}>Remove</Btn>
+            </div>
+          ))}
+        </div>
+      )}
+      {showSetup && auth.currentUser && (
+        <MfaSetupModal
+          user={auth.currentUser}
+          dismissible={true}
+          onEnrolled={() => { setShowSetup(false); refresh(); setMsg("Second factor added."); setTimeout(() => setMsg(""), 3000); }}
+          onClose={() => setShowSetup(false)}
+        />
+      )}
+    </Card>
+  );
+}
+
 function SettingsTab({ darkMode, username, userRole, firebaseUid, data, setData, adminMode }) {
   const [loginInfo, setLoginInfo] = useState(null);
   useEffect(() => {
@@ -7938,6 +8256,9 @@ function SettingsTab({ darkMode, username, userRole, firebaseUid, data, setData,
     <div>
       <div style={{ fontSize: 22, fontWeight: 900, color: BRAND.black, marginBottom: 4 }}>Settings</div>
       <div style={{ fontSize: 12, color: BRAND.gray, marginBottom: 24 }}>Account settings and preferences</div>
+
+      {/* Two-Factor Authentication — full-width Security card */}
+      <SecurityCard />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         {/* Change Password */}
@@ -8151,6 +8472,11 @@ function ChangePasswordModal({ onClose, darkMode }) {
 function AppInner() {
   const toast = useToast();
   const [loggedIn, setLoggedIn] = useState(false);
+  // MFA enrollment gate. When a signed-in user has zero enrolled
+  // factors, they're routed to MfaSetupModal and blocked from the
+  // rest of the app until at least one factor is enrolled. The
+  // super admin is exempt so we never lock out the bootstrap account.
+  const [needsMfaEnroll, setNeedsMfaEnroll] = useState(false);
   const [username, setUsername] = useState("");
   const [userRole, setUserRole] = useState("user");
   const [tab, setTab] = useState("Dashboard");
@@ -8247,6 +8573,14 @@ function AppInner() {
             setUsername(fname);
             setUserRole(role);
             setLoggedIn(true);
+            // Force-enroll MFA if the user has no second factor yet.
+            // Super admin is exempt so the bootstrap account can't be
+            // locked out by a broken authenticator.
+            try {
+              const factors = listMfaFactors(fbUser);
+              if (factors.length === 0 && !isSuperAdmin) setNeedsMfaEnroll(true);
+              else setNeedsMfaEnroll(false);
+            } catch { /* no MFA API (Identity Platform not enabled) — skip silently */ }
             // Load user permissions for manager role
             if (role === "manager") {
               const ud = await getUserData(fbUser.uid);
@@ -8402,6 +8736,21 @@ function AppInner() {
 
   if (!loaded) return <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'DM Sans', sans-serif", background: theme.cream, gap: 16 }}><img src="/logo.png" alt="Auto Trade Hub" style={{ height: 70 }} /><div style={{ width: 28, height: 28, border: "3px solid #e5e7eb", borderTopColor: BRAND.red, borderRadius: "50%", animation: "spin 0.8s linear infinite" }} /><style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style></div>;
   if (!loggedIn) return <div style={{ fontFamily: "'DM Sans', sans-serif" }}><link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800;900&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" /><LoginPage onLogin={handleLogin} /></div>;
+
+  // Forced MFA enrollment: every non-super-admin must have at least
+  // one second factor before they can use the rest of the app.
+  if (needsMfaEnroll && auth.currentUser) {
+    return (
+      <div style={{ fontFamily: "'DM Sans', sans-serif", background: theme.cream, minHeight: "100vh" }}>
+        <MfaSetupModal
+          user={auth.currentUser}
+          dismissible={false}
+          onEnrolled={() => setNeedsMfaEnroll(false)}
+          onClose={() => {}}
+        />
+      </div>
+    );
+  }
 
   return (
     <div style={{ fontFamily: "'DM Sans', sans-serif", background: theme.cream, minHeight: "100vh", color: theme.black }}>

@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { initializeApp } from "firebase/app";
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail } from "firebase/auth";
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail, multiFactor, TotpMultiFactorGenerator, PhoneAuthProvider, PhoneMultiFactorGenerator, RecaptchaVerifier, getMultiFactorResolver } from "firebase/auth";
 import { getFirestore, doc, getDoc, setDoc, addDoc, onSnapshot, collection, getDocs, deleteDoc, query, where, orderBy, limit as fsLimit, serverTimestamp, runTransaction } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 
@@ -214,6 +214,101 @@ export async function ensureUserDoc(fbUser) {
     return { role: "admin", promoted: true };
   }
   return snap.data();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MULTI-FACTOR AUTHENTICATION (MFA)
+//
+//  Required for every user. Supports two kinds of second factor:
+//   - TOTP  — authenticator app (Google Authenticator, Authy, etc.)
+//   - SMS   — text message code
+//
+//  Requires Identity Platform to be enabled in the Firebase project
+//  (Firebase Console → Authentication → Settings → Upgrade). Rules
+//  files aren't affected; everything here is client-side against the
+//  Firebase Auth service.
+// ═══════════════════════════════════════════════════════════════
+
+// ─── Shared helpers ───
+export function listMfaFactors(user) {
+  if (!user) return [];
+  try { return multiFactor(user).enrolledFactors || []; } catch { return []; }
+}
+
+export async function unenrollMfaFactor(user, factorUid) {
+  if (!user) throw new Error("Not signed in");
+  await multiFactor(user).unenroll(factorUid);
+}
+
+export function isMfaRequiredError(error) {
+  return error?.code === "auth/multi-factor-auth-required";
+}
+
+export function getMfaResolver(error) {
+  if (!isMfaRequiredError(error)) return null;
+  return getMultiFactorResolver(auth, error);
+}
+
+// ─── TOTP (authenticator app) enrollment ───
+// Flow: start → show QR + secret → user enters code → finish.
+export async function startTotpEnrollment(user) {
+  if (!user) throw new Error("Not signed in");
+  const session = await multiFactor(user).getSession();
+  const secret = await TotpMultiFactorGenerator.generateSecret(session);
+  const otpAuthUrl = secret.generateQrCodeUrl(user.email || "user", "Sayarah Hub");
+  // Return the raw secret object — the caller passes it back to finishTotpEnrollment.
+  return { secret, otpAuthUrl, secretKey: secret.secretKey };
+}
+
+export async function finishTotpEnrollment(user, secret, verificationCode, displayName = "Authenticator App") {
+  if (!user) throw new Error("Not signed in");
+  const credential = TotpMultiFactorGenerator.assertionForEnrollment(secret, verificationCode);
+  await multiFactor(user).enroll(credential, displayName);
+}
+
+// ─── SMS enrollment ───
+// Requires a reCAPTCHA container element in the DOM.
+export function buildRecaptchaVerifier(containerId, size = "invisible") {
+  return new RecaptchaVerifier(auth, containerId, { size });
+}
+
+export async function startSmsEnrollment(user, phoneNumber, recaptchaVerifier) {
+  if (!user) throw new Error("Not signed in");
+  const session = await multiFactor(user).getSession();
+  const phoneInfoOptions = { phoneNumber, session };
+  const phoneProvider = new PhoneAuthProvider(auth);
+  const verificationId = await phoneProvider.verifyPhoneNumber(phoneInfoOptions, recaptchaVerifier);
+  return verificationId;
+}
+
+export async function finishSmsEnrollment(user, verificationId, verificationCode, displayName = "Phone") {
+  if (!user) throw new Error("Not signed in");
+  const cred = PhoneAuthProvider.credential(verificationId, verificationCode);
+  const assertion = PhoneMultiFactorGenerator.assertion(cred);
+  await multiFactor(user).enroll(assertion, displayName);
+}
+
+// ─── Sign-in MFA challenge (after password) ───
+// Flow: password sign-in throws auth/multi-factor-auth-required →
+// extract resolver → pick hint → user enters code → resolveSignIn.
+
+export async function submitTotpChallenge(resolver, factorUid, verificationCode) {
+  const credential = TotpMultiFactorGenerator.assertionForSignIn(factorUid, verificationCode);
+  return await resolver.resolveSignIn(credential);
+}
+
+export async function startSmsChallenge(resolver, factorUid, recaptchaVerifier) {
+  const hint = resolver.hints.find(h => h.uid === factorUid);
+  if (!hint) throw new Error("SMS factor not found on this account");
+  const phoneInfoOptions = { multiFactorHint: hint, session: resolver.session };
+  const phoneProvider = new PhoneAuthProvider(auth);
+  return await phoneProvider.verifyPhoneNumber(phoneInfoOptions, recaptchaVerifier);
+}
+
+export async function submitSmsChallenge(resolver, verificationId, verificationCode) {
+  const cred = PhoneAuthProvider.credential(verificationId, verificationCode);
+  const assertion = PhoneMultiFactorGenerator.assertion(cred);
+  return await resolver.resolveSignIn(assertion);
 }
 
 // Listen for auth state changes
