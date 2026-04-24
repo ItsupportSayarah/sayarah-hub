@@ -1950,17 +1950,17 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
                     {v.color && <span>{v.color}</span>}
                     {v.vin && <span style={S.mono}>VIN: {v.vin}</span>}
                   </div>
-                  {(v.location || v.zipCode) && (
-                    <div style={{ fontSize: 11, color: BRAND.gray, marginTop: 3, display: "flex", alignItems: "center", gap: 4 }}>
-                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
-                        <circle cx="12" cy="10" r="3"/>
-                      </svg>
-                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {v.location}{v.location && v.zipCode ? " · " : ""}{v.zipCode && <span style={S.mono}>{v.zipCode}</span>}
-                      </span>
-                    </div>
-                  )}
+                  <div style={{ fontSize: 12, marginTop: 4, display: "flex", alignItems: "center", gap: 4, color: (v.location || v.zipCode) ? BRAND.grayDark : BRAND.gray }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                      <circle cx="12" cy="10" r="3"/>
+                    </svg>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: (v.location || v.zipCode) ? 600 : 400, fontStyle: (v.location || v.zipCode) ? "normal" : "italic" }}>
+                      {v.location ? <span>{v.location}</span> : <span style={{ color: BRAND.gray }}>No location set</span>}
+                      {v.zipCode ? <span style={{ ...S.mono, marginLeft: v.location ? 6 : 0, padding: "1px 6px", background: BRAND.grayLight, borderRadius: 4, fontSize: 11, color: BRAND.grayDark, fontWeight: 700 }}>{v.zipCode}</span>
+                        : v.location && <span style={{ ...S.mono, marginLeft: 6, fontSize: 10, color: BRAND.gray, fontStyle: "italic" }}>no ZIP</span>}
+                    </span>
+                  </div>
                 </div>
 
                 {/* 4. Odometer */}
