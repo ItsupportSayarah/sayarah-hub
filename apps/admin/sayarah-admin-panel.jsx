@@ -42,7 +42,11 @@ const B = {
   purple: "#8B5CF6", purpleBg: "#EDE9FE",
 };
 
-const AUCTION_TABS = ["Dashboard", "Pipeline", "Inventory", "Mileage", "Analytics", "Calendar", "Reports", "Approvals", "Activity", "Settings"];
+// Full list of auction app tabs. MUST stay in sync with
+// ALL_AUCTION_TABS in apps/auction/sayarah-auction-flip.jsx — this
+// is the source of truth for the permissions UI, so missing tabs
+// here means admins can't grant access to them.
+const AUCTION_TABS = ["Dashboard", "Pipeline", "Inventory", "Mileage", "Analytics", "Calendar", "Reports", "Money", "Accounting", "Approvals", "Activity", "Settings"];
 const LOGISTICS_TABS = ["Dashboard", "Customers", "Vehicles", "Containers", "Towing", "Rates", "Invoices", "Settings"];
 // ─── Consistent line-style SVG icons ───
 const I = {
