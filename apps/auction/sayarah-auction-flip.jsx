@@ -1335,10 +1335,19 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
     if (!/^\+\d{8,15}$/.test(phone.trim())) { setErr("Use E.164 format — e.g. +15555550123"); return; }
     setErr(""); setBusy(true);
     try {
+      // Clear any prior reCAPTCHA widget on this container so a retry
+      // after an error doesn't fail with a stale token.
+      const container = document.getElementById(recapId);
+      if (container) container.innerHTML = "";
       const verifier = buildRecaptchaVerifier(recapId);
+      await verifier.render();
       const vid = await startSmsEnrollment(user, phone.trim(), verifier);
       setVerificationId(vid); setStep("verifying");
-    } catch (e) { setErr(e?.message || "Failed to send code"); }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("SMS enrollment error — full detail:", { code: e?.code, message: e?.message, customData: e?.customData, raw: e });
+      setErr(`${e?.code || "error"} · ${e?.message || "Failed to send code"}`);
+    }
     setBusy(false);
   };
 
@@ -1350,7 +1359,9 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
       else await finishSmsEnrollment(user, verificationId, code.trim(), `SMS ${phone}`);
       onEnrolled();
     } catch (e) {
-      setErr(e?.code === "auth/invalid-verification-code" ? "Wrong code — try again." : (e?.message || "Enrollment failed"));
+      // eslint-disable-next-line no-console
+      console.error("MFA enrollment error — full detail:", { code: e?.code, message: e?.message, customData: e?.customData, raw: e });
+      setErr(e?.code === "auth/invalid-verification-code" ? "Wrong code — try again." : `${e?.code || "error"} · ${e?.message || "Enrollment failed"}`);
     }
     setBusy(false);
   };
