@@ -53,6 +53,18 @@ export const TAX_PER_SALE = 295; // MA S-Corp — skimmed to the tax sub-account
 // Applied when a vehicle's acquisition source is flagged as out-of-state
 // and no MA sales tax was paid at purchase.
 export const MA_USE_TAX_RATE = 0.0625;
+// MA sales tax: 6.25% on vehicles delivered to a buyer in MA. Out-of-
+// state (US) and international export sales are exempt — those buyers
+// owe use tax in their own state, and exports are outside US sales-tax
+// jurisdiction entirely. Sayarah's office is in MA but most sales go
+// out-of-state or international, so this rate only bites the minority
+// of in-state deliveries.
+export const MA_SALES_TAX_RATE = 0.0625;
+export const SALE_DESTINATIONS = {
+  in_state_ma: { label: "In-state (MA)", taxable: true },
+  out_of_state_us: { label: "Out-of-state (US)", taxable: false },
+  international: { label: "International export", taxable: false },
+};
 
 // ─── Default chart of accounts ────────────────────────────────
 // Installed on first run via seedChartOfAccounts(). The app stores
@@ -381,7 +393,7 @@ export function vehiclePurchaseFromMemberEntry({ stockNum, memberId, amount, dat
 // came from, $295 to the tax account, remaining profit to the
 // distribution account. Loss scenarios: grossProfit is negative;
 // distribution is 0; tax is still $295 (it's a flat skim).
-export function vehicleSaleEntries({ stockNum, totalCost, grossSale, principalDestination, date, user, ip }) {
+export function vehicleSaleEntries({ stockNum, totalCost, grossSale, principalDestination, date, user, ip, destination }) {
   // principalDestination: { type: "fund" } or { type: "member", memberId }
   const gross = p(grossSale);
   const cost = p(totalCost);
@@ -398,7 +410,7 @@ export function vehicleSaleEntries({ stockNum, totalCost, grossSale, principalDe
     date,
     memo: `Vehicle sale — #${stockNum} — gross ${gross.toFixed(2)}`,
     user, ip,
-    ref: { type: "vehicle_sale", stockNum },
+    ref: { type: "vehicle_sale", stockNum, destination: destination || null },
     lines: [
       { accountId: SYSTEM_ACCOUNTS.SAYARAH_BANK, debit: gross, credit: 0 },
       { accountId: SYSTEM_ACCOUNTS.COGS_VEHICLES, debit: cost, credit: 0 },
@@ -569,18 +581,31 @@ export function calc1099Report(ledger, startDate, endDate, threshold = 600) {
     .sort((a, b) => b.amount - a.amount);
 }
 
-// MA sales tax collected + owed: sums the Sales Tax Payable liability.
+// MA sales tax collected + owed: sums the Sales Tax Payable liability,
+// and breaks down the underlying sales by destination so the CPA can
+// see "of $X gross sold in the period, $A was in-state taxable, $B was
+// out-of-state, $C international export."
 export function calcMaSalesTax(ledger, accounts, startDate, endDate) {
   const inRange = entriesInRange(ledger, startDate, endDate);
   let collected = 0;
+  const byDestination = { in_state_ma: 0, out_of_state_us: 0, international: 0, unspecified: 0 };
   for (const entry of inRange) {
     for (const line of entry.lines) {
       if (line.accountId === SYSTEM_ACCOUNTS.SALES_TAX_PAYABLE) {
         collected += p(line.credit) - p(line.debit);
       }
     }
+    // Sales allocation by destination (from the vehicle_sale entries).
+    if (entry.ref && entry.ref.type === "vehicle_sale") {
+      const bank = entry.lines.find((l) => l.accountId === SYSTEM_ACCOUNTS.SAYARAH_BANK);
+      if (bank) {
+        const gross = p(bank.debit);
+        const dest = entry.ref.destination || "unspecified";
+        byDestination[dest] = (byDestination[dest] || 0) + gross;
+      }
+    }
   }
-  return { collected, startDate, endDate };
+  return { collected, byDestination, startDate, endDate };
 }
 
 // MA use tax owed in a period (6.25% on out-of-state purchases
@@ -605,6 +630,33 @@ export function calcUseTax(purchasePrice) {
   return roundMoney(p(purchasePrice) * MA_USE_TAX_RATE);
 }
 const roundMoney = (n) => (n == null || !Number.isFinite(n)) ? 0 : Math.round(n * 100) / 100;
+
+// MA sales-tax collected on an in-state vehicle delivery.
+// Buyer pays tax on top of the gross price; the seller holds it as
+// a liability (Sales Tax Payable) and remits to MA DOR. Out-of-state
+// and international sales use returnNull (no entry posted).
+export function calcMaSalesTaxOnSale(grossPrice, destination) {
+  const rule = SALE_DESTINATIONS[destination] || SALE_DESTINATIONS.out_of_state_us;
+  if (!rule.taxable) return 0;
+  return roundMoney(p(grossPrice) * MA_SALES_TAX_RATE);
+}
+
+export function salesTaxOnSaleEntry({ stockNum, grossPrice, destination, date, user, ip }) {
+  const tax = calcMaSalesTaxOnSale(grossPrice, destination);
+  if (tax <= 0) return null;
+  return buildJournalEntry({
+    date,
+    memo: `MA Sales Tax 6.25% — in-state sale #${stockNum}`,
+    user, ip,
+    ref: { type: "sales_tax", stockNum, destination },
+    lines: [
+      // Buyer paid tax on top of the sale; cash came into the bank,
+      // liability owed to MA DOR.
+      { accountId: SYSTEM_ACCOUNTS.SAYARAH_BANK, debit: tax, credit: 0 },
+      { accountId: SYSTEM_ACCOUNTS.SALES_TAX_PAYABLE, debit: 0, credit: tax },
+    ],
+  });
+}
 
 // Journal entry that recognizes use-tax liability at purchase time.
 // Posted alongside the vehicle-purchase entries when the source is

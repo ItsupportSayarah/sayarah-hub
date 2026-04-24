@@ -59,6 +59,10 @@ import {
   useTaxOnPurchaseEntry,
   isDateInClosedPeriod,
   calcClosingEntries,
+  MA_SALES_TAX_RATE,
+  SALE_DESTINATIONS,
+  calcMaSalesTaxOnSale,
+  salesTaxOnSaleEntry,
 } from "./src/money.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
@@ -2477,7 +2481,7 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
   const [showSaleForm, setShowSaleForm] = useState(false);
   const [editingSale, setEditingSale] = useState(null);
   const [confirmSale, setConfirmSale] = useState(null);
-  const emptySale = () => ({ id: genId(), date: new Date().toISOString().slice(0, 10), stockNum: v.stockNum, vehicle: `${v.year} ${v.make} ${v.model}`, buyerName: "", saleType: "", grossPrice: "", auctionFee: "", titleFee: "", otherDeductions: "", buyerPhone: "", buyerEmail: "", paymentMethod: "", notes: "", payments: [] });
+  const emptySale = () => ({ id: genId(), date: new Date().toISOString().slice(0, 10), stockNum: v.stockNum, vehicle: `${v.year} ${v.make} ${v.model}`, buyerName: "", saleType: "", grossPrice: "", auctionFee: "", titleFee: "", otherDeductions: "", buyerPhone: "", buyerEmail: "", paymentMethod: "", notes: "", payments: [], saleDestination: "out_of_state_us", buyerState: "" });
   const [saleForm, setSaleForm] = useState(emptySale());
   const updSale = (k, val) => setSaleForm(f => ({ ...f, [k]: val }));
   const saleNet = s => p(s.grossPrice) - p(s.auctionFee) - p(s.titleFee) - p(s.otherDeductions);
@@ -2547,9 +2551,22 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
             principalDestination,
             date: saleForm.date,
             user: currentUser,
+            destination: saleForm.saleDestination || "out_of_state_us",
           });
+          // In-state MA sales only: post a separate sales-tax entry
+          // (buyer paid 6.25% on top of gross). Out-of-state and
+          // international sales are exempt — no entry.
+          const stEntry = salesTaxOnSaleEntry({
+            stockNum: v.stockNum,
+            grossPrice: grossSale,
+            destination: saleForm.saleDestination || "out_of_state_us",
+            date: saleForm.date,
+            user: currentUser,
+          });
+          if (stEntry) entries.push(stEntry);
           let ledger = d.money.ledger || [];
-          for (const e of entries) ledger = postJournalEntry(ledger, e);
+          const closedPeriods = d.money?.closedPeriods || [];
+          for (const e of entries) ledger = postJournalEntry(ledger, e, closedPeriods);
           next.money = { ...d.money, ledger };
         }
         return next;
@@ -3116,8 +3133,24 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
                   <Input label="Buyer Phone" value={saleForm.buyerPhone} onChange={val => updSale("buyerPhone", val)} />
                   <Input label="Buyer Email" value={saleForm.buyerEmail} onChange={val => updSale("buyerEmail", val)} />
                   <Select label="Payment Method *" value={saleForm.paymentMethod} onChange={val => updSale("paymentMethod", val)} options={PAYMENT_METHODS} placeholder="Select..." />
+                  <Select label="Sale Destination" value={saleForm.saleDestination || "out_of_state_us"} onChange={val => updSale("saleDestination", val)} options={[
+                    { value: "in_state_ma", label: "In-state (MA) — 6.25% sales tax" },
+                    { value: "out_of_state_us", label: "Out-of-state (US) — exempt" },
+                    { value: "international", label: "International export — exempt" },
+                  ]} />
                   <Input label="Notes" value={saleForm.notes} onChange={val => updSale("notes", val)} />
                 </div>
+                {/* Sales-tax preview: live 6.25% of gross price for in-state sales. */}
+                {saleForm.saleDestination === "in_state_ma" && p(saleForm.grossPrice) > 0 && (
+                  <div style={{ marginTop: 8, padding: "8px 10px", background: "#FFFBEB", borderRadius: 6, fontSize: 11, color: "#78350F", border: "1px solid #FDE68A" }}>
+                    <b>MA Sales Tax (6.25%):</b> {fmt$2(p(saleForm.grossPrice) * 0.0625)} — collected from buyer, posted to MA Sales Tax Payable on finalize.
+                  </div>
+                )}
+                {saleForm.saleDestination === "international" && (
+                  <div style={{ marginTop: 8, padding: "8px 10px", background: "#EFF6FF", borderRadius: 6, fontSize: 11, color: "#1E40AF", border: "1px solid #BFDBFE" }}>
+                    <b>International export — sales tax exempt.</b> Keep the bill of lading / export declaration on file.
+                  </div>
+                )}
                 <div style={{ fontSize: 10, color: BRAND.gray, marginTop: 6, fontStyle: "italic" }}>* Required to finalize the sale. The vehicle's status will flip to "Sold" only when price, date, buyer, and payment method are all set.</div>
                 {/* Payments — optional; track deposits, balances, refunds */}
                 <PaymentsEditor
@@ -3244,7 +3277,7 @@ function ExpensesTab({ data, setData }) {
 // ═══════════════════════════════════════════════════════════════
 function SalesTab({ data, setData }) {
   const [showForm, setShowForm] = useState(false); const [editing, setEditing] = useState(null); const [confirm, setConfirm] = useState(null);
-  const empty = () => ({ id: genId(), date: new Date().toISOString().slice(0, 10), stockNum: "", vehicle: "", buyerName: "", saleType: "", grossPrice: "", auctionFee: "", titleFee: "", otherDeductions: "", buyerPhone: "", buyerEmail: "", paymentMethod: "", notes: "", payments: [] });
+  const empty = () => ({ id: genId(), date: new Date().toISOString().slice(0, 10), stockNum: "", vehicle: "", buyerName: "", saleType: "", grossPrice: "", auctionFee: "", titleFee: "", otherDeductions: "", buyerPhone: "", buyerEmail: "", paymentMethod: "", notes: "", payments: [], saleDestination: "out_of_state_us", buyerState: "" });
   const [form, setForm] = useState(empty());
   const upd = (k, v) => { setForm(prev => { const n = { ...prev, [k]: v }; if (k === "stockNum" && v) { const vh = data.vehicles.find(x => x.stockNum === v); if (vh) n.vehicle = `${vh.year} ${vh.make} ${vh.model}`; } return n; }); };
   const net = s => p(s.grossPrice) - p(s.auctionFee) - p(s.titleFee) - p(s.otherDeductions);
@@ -4617,6 +4650,11 @@ function TrashTab({ data, setData, currentUser }) {
 function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
   const money = data.money || { accounts: DEFAULT_ACCOUNTS, members: [], ledger: [], contributions: [], approvals: [] };
   const admin = isAdmin(userRole);
+  // Super admin gets member-assignment + redo/pending privileges on
+  // top of regular admin capabilities. Resolved via email match so
+  // the check can't be bypassed by mutating the role field.
+  const currentEmail = (auth && auth.currentUser && auth.currentUser.email) || "";
+  const isSuper = currentEmail === SUPER_ADMIN_EMAIL;
   const today = new Date();
   const currentMonth = monthKey(today);
 
@@ -4624,6 +4662,7 @@ function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
   const [memberFilter, setMemberFilter] = useState(null);
   const [showRules, setShowRules] = useState(false);
   const [showEditRules, setShowEditRules] = useState(false);
+  const [showManageMembers, setShowManageMembers] = useState(false);
 
   // Balances are computed from the ledger every render — no stored
   // totals that could drift out of sync.
@@ -4710,6 +4749,106 @@ function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
     }));
     const name = money.members.find(m => m.id === memberId)?.name || memberId;
     logActivity(username, "fund_usage_approved", `Approved ${name} for fund usage ${currentMonth}`);
+  };
+
+  // ─── Super-admin-only: undo actions on this month's state ───
+  //
+  // These roll back the state record (contribution / approval) and
+  // post a reversing journal entry for anything that hit the ledger.
+  // The original entries stay in the ledger (immutable audit trail);
+  // the reversal makes the net effect zero.
+  const undoContributionPaid = (memberId) => {
+    const cont = findContribution(money.contributions, memberId, currentMonth);
+    if (!cont || cont.status !== "paid") return;
+    if (!confirm(`Undo ${cont.memberId}'s paid contribution for ${currentMonth}? The original ledger entry stays; a reversing entry is posted to net it out.`)) return;
+    setData(d => {
+      let ledger = d.money?.ledger || [];
+      const closedPeriods = d.money?.closedPeriods || [];
+      // Reverse the original contribution entry + its fund-allocation
+      // entry if we can find them by ref type.
+      const contribEntry = ledger.find(e => e.ref && e.ref.type === "contribution" && e.ref.memberId === memberId && e.ref.month === currentMonth && !ledger.some(x => x.ref && x.ref.type === "reversal" && x.ref.of === e.id));
+      if (contribEntry) {
+        try {
+          const rev = buildReversingEntry(contribEntry, { user: username, memo: `Undo contribution by super-admin` });
+          ledger = postJournalEntry(ledger, rev, closedPeriods);
+        } catch (err) { console.warn("contribution reversal failed:", err); }
+      }
+      return {
+        ...d,
+        money: {
+          ...d.money,
+          ledger,
+          contributions: (d.money.contributions || []).map(c =>
+            c.memberId === memberId && c.month === currentMonth
+              ? { ...c, status: "pending", paidDate: null, undoneBy: username, undoneAt: new Date().toISOString() }
+              : c
+          ),
+        },
+      };
+    });
+    const name = money.members.find(m => m.id === memberId)?.name || memberId;
+    logActivity(username, "contribution_undone", `Undid ${name}'s ${currentMonth} contribution (super-admin)`);
+  };
+  const revokeFundApproval = (memberId) => {
+    const name = money.members.find(m => m.id === memberId)?.name || memberId;
+    if (!confirm(`Revoke ${name}'s fund-usage approval for ${currentMonth}? They'll be blocked from fund usage until re-approved.`)) return;
+    setData(d => ({
+      ...d,
+      money: {
+        ...d.money,
+        approvals: (d.money?.approvals || []).map(a =>
+          a.memberId === memberId && a.month === currentMonth
+            ? { ...a, status: "pending", revokedBy: username, revokedAt: new Date().toISOString() }
+            : a
+        ),
+      },
+    }));
+    logActivity(username, "fund_approval_revoked", `Revoked ${name}'s ${currentMonth} fund-usage approval (super-admin)`);
+  };
+  const markContributionPending = (memberId) => {
+    const cont = findContribution(money.contributions, memberId, currentMonth);
+    if (!cont) return;
+    if (cont.status === "paid") {
+      // Paid → pending also requires reversing the ledger entry.
+      undoContributionPaid(memberId);
+      return;
+    }
+    setData(d => ({
+      ...d,
+      money: {
+        ...d.money,
+        contributions: (d.money?.contributions || []).map(c =>
+          c.memberId === memberId && c.month === currentMonth
+            ? { ...c, status: "pending" }
+            : c
+        ),
+      },
+    }));
+    const name = money.members.find(m => m.id === memberId)?.name || memberId;
+    logActivity(username, "contribution_marked_pending", `Marked ${name}'s ${currentMonth} contribution pending (super-admin)`);
+  };
+
+  // Assign a real User (from auction user pool) to a member slot.
+  const assignMember = (slotId, userRecord) => {
+    setData(d => ({
+      ...d,
+      money: {
+        ...d.money,
+        members: (d.money?.members || []).map(m =>
+          m.id === slotId
+            ? {
+                ...m,
+                name: userRecord ? (userRecord.firstName && userRecord.lastName ? `${userRecord.firstName} ${userRecord.lastName}` : userRecord.displayName || userRecord.email) : m.name,
+                email: userRecord?.email || "",
+                userId: userRecord?.id || userRecord?.uid || null,
+                assignedAt: new Date().toISOString(),
+                assignedBy: username,
+              }
+            : m
+        ),
+      },
+    }));
+    logActivity(username, "member_assigned", `Assigned ${userRecord?.email || "(unassigned)"} to ${slotId}`);
   };
 
   const runMonthEndDistribution = () => {
@@ -4825,6 +4964,7 @@ function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
         </div>
         <div style={{ display: "flex", gap: 6 }}>
           <Btn variant="secondary" size="sm" onClick={() => setShowRules(true)}>Rules</Btn>
+          {isSuper && <Btn variant="secondary" size="sm" onClick={() => setShowManageMembers(true)}>Manage Members</Btn>}
           {admin && <Btn size="sm" onClick={seedMonth}>Seed {currentMonth}</Btn>}
         </div>
       </div>
@@ -4887,9 +5027,22 @@ function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
                     <div>Admin approval: <b style={{ color: approval?.status === "approved" ? BRAND.green : "#DC2626" }}>{approval?.status || "—"}</b></div>
                   </div>
                   {admin && (
-                    <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+                    <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
                       {contribution && contribution.status !== "paid" && <Btn size="sm" variant="secondary" onClick={() => markContributionPaid(member.id)}>Mark paid</Btn>}
                       {(!approval || approval.status !== "approved") && <Btn size="sm" onClick={() => approveFundUsage(member.id)}>Approve fund</Btn>}
+                      {/* Super-admin redo / pending controls — surfaced inline
+                          so the common workflow of fixing a misclick doesn't
+                          need a separate screen. Each confirms before firing
+                          because the contribution-undo posts a ledger reversal. */}
+                      {isSuper && contribution && contribution.status === "paid" && (
+                        <Btn size="sm" variant="secondary" onClick={() => undoContributionPaid(member.id)} style={{ background: "#FEF3C7", color: "#92400E", border: "1px solid #FCD34D" }}>Undo paid</Btn>
+                      )}
+                      {isSuper && approval && approval.status === "approved" && (
+                        <Btn size="sm" variant="secondary" onClick={() => revokeFundApproval(member.id)} style={{ background: "#FEF3C7", color: "#92400E", border: "1px solid #FCD34D" }}>Revoke approval</Btn>
+                      )}
+                      {isSuper && contribution && contribution.status !== "pending" && (
+                        <Btn size="sm" variant="ghost" onClick={() => markContributionPending(member.id)} style={{ color: BRAND.gray }}>Mark pending</Btn>
+                      )}
                     </div>
                   )}
                 </div>
@@ -4920,7 +5073,19 @@ function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
       {view === "members" && <MembersView money={money} balances={balances} admin={admin} memberFilter={memberFilter} setMemberFilter={setMemberFilter} />}
       {view === "vehicles" && <VehiclePLView data={data} balances={balances} />}
       {view === "transactions" && <TransactionsView ledger={money.ledger} accounts={money.accounts} members={money.members} />}
-      {view === "audit" && <AuditTrailView ledger={money.ledger} accounts={money.accounts} members={money.members} />}
+      {view === "audit" && <AuditTrailView ledger={money.ledger} accounts={money.accounts} members={money.members} admin={admin} onReverse={(entry) => {
+        if (!confirm(`Reverse this entry?\n"${entry.memo}"\n\nA new journal entry will post with debits and credits flipped. The original stays in the ledger (immutable audit trail).`)) return;
+        try {
+          setData(d => {
+            const rev = buildReversingEntry(entry, { user: username, ip: "", memo: `Reversed by ${username}: ${entry.memo || ""}`.trim() });
+            return {
+              ...d,
+              money: { ...d.money, ledger: postJournalEntry(d.money?.ledger || [], rev, d.money?.closedPeriods || []) },
+            };
+          });
+          logActivity(username, "ledger_entry_reversed", `Reversed entry ${entry.id}: ${entry.memo}`, { entryId: entry.id });
+        } catch (err) { alert(err.message || String(err)); }
+      }} />}
       {view === "reconciliation" && <BankReconciliationView data={data} setData={setData} admin={admin} username={username} />}
       {view === "reports" && <TaxExportsView data={data} money={money} />}
       {view === "yearend" && <YearEndCloseView data={data} setData={setData} money={money} admin={admin} username={username} />}
@@ -4932,7 +5097,80 @@ function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
       {showEditRules && admin && (
         <RulesEditor rules={data.rules || { content: DEFAULT_RULES_CONTENT, version: 1 }} onSave={saveRules} onCancel={() => setShowEditRules(false)} />
       )}
+
+      {/* Manage Members modal — super-admin only */}
+      {showManageMembers && isSuper && (
+        <ManageMembersModal
+          members={money.members}
+          onAssign={assignMember}
+          onClose={() => setShowManageMembers(false)}
+        />
+      )}
     </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MANAGE MEMBERS MODAL — super-admin assigns real Users from the
+// app's user pool to each of the three Member Capital slots. The
+// slot ids (m1/m2/m3) never change; only the user linked to them.
+// Historical ledger entries use slot ids too, so reassigning never
+// breaks past data — only the displayed name changes.
+// ═══════════════════════════════════════════════════════════════
+function ManageMembersModal({ members, onAssign, onClose }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    getAllUsers().then(list => { if (alive) { setUsers(list || []); setLoading(false); } }).catch(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
+  return (
+    <Modal title="Manage Member Capital Accounts" onClose={onClose} wide>
+      <div style={{ fontSize: 11, color: BRAND.gray, marginBottom: 12, lineHeight: 1.5 }}>
+        Link each of the three Atlantic Fund member slots to a real User. The slot id (<code>m1</code>, <code>m2</code>, <code>m3</code>) is permanent — past ledger entries stay valid when you reassign. Only the displayed name + email change.
+      </div>
+      {loading ? (
+        <div style={{ padding: 16, textAlign: "center", color: BRAND.gray }}>Loading users…</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {members.map(m => (
+            <div key={m.id} style={{ border: `1px solid ${BRAND.grayLight}`, borderRadius: 8, padding: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontSize: 10, color: BRAND.gray, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em" }}>Slot {m.id}</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: BRAND.black }}>{m.name}</div>
+                  {m.email && <div style={{ fontSize: 10, color: BRAND.gray }}>{m.email}</div>}
+                </div>
+                {m.userId && (
+                  <button onClick={() => onAssign(m.id, null)} style={{ fontSize: 10, border: `1px solid ${BRAND.grayLight}`, background: "transparent", color: BRAND.gray, padding: "4px 8px", borderRadius: 4, cursor: "pointer", fontFamily: "inherit" }}>Unassign</button>
+                )}
+              </div>
+              <select
+                value={m.userId || ""}
+                onChange={e => {
+                  const userId = e.target.value;
+                  const u = users.find(x => (x.id || x.uid) === userId);
+                  onAssign(m.id, u || null);
+                }}
+                style={{ width: "100%", padding: "6px 8px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, fontSize: 12, fontFamily: "inherit" }}
+              >
+                <option value="">— Pick a user —</option>
+                {users.map(u => {
+                  const id = u.id || u.uid;
+                  const label = (u.firstName && u.lastName) ? `${u.firstName} ${u.lastName} (${u.email})` : (u.displayName ? `${u.displayName} (${u.email})` : u.email);
+                  return <option key={id} value={id}>{label}</option>;
+                })}
+              </select>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 16 }}>
+        <Btn variant="secondary" size="sm" onClick={onClose}>Done</Btn>
+      </div>
+    </Modal>
   );
 }
 
@@ -5472,10 +5710,19 @@ ${bodyHtml}
     </table>`;
 
   const maTaxHtml = `
-    <table><tbody>
-      <tr><td>MA Sales Tax Collected (period)</td><td class="amt">${fmt$2(maTax.collected)}</td></tr>
+    <table>
+      <thead><tr><th>Destination</th><th class="amt">Gross Sales</th><th>Taxable?</th></tr></thead>
+      <tbody>
+        <tr><td>In-state (MA)</td><td class="amt">${fmt$2(maTax.byDestination?.in_state_ma || 0)}</td><td>Yes — 6.25%</td></tr>
+        <tr><td>Out-of-state (US)</td><td class="amt">${fmt$2(maTax.byDestination?.out_of_state_us || 0)}</td><td>No — exempt (buyer owes use tax in their state)</td></tr>
+        <tr><td>International export</td><td class="amt">${fmt$2(maTax.byDestination?.international || 0)}</td><td>No — export exempt</td></tr>
+        ${(maTax.byDestination?.unspecified || 0) > 0 ? `<tr><td>Unspecified</td><td class="amt">${fmt$2(maTax.byDestination.unspecified)}</td><td>Legacy sales — verify destination</td></tr>` : ""}
+      </tbody>
+    </table>
+    <table style="margin-top:16px"><tbody>
+      <tr><td><b>MA Sales Tax Collected (period)</b></td><td class="amt"><b>${fmt$2(maTax.collected)}</b></td></tr>
     </tbody></table>
-    <div class="meta">Sourced from the MA Sales Tax Payable liability account. Register sales that include MA sales tax by posting to account <code>${SYSTEM_ACCOUNTS.SALES_TAX_PAYABLE}</code>.</div>`;
+    <div class="meta">MA Sales Tax is 6.25%, collected only on in-state deliveries. Out-of-state US buyers owe use tax in their home state. International exports are exempt from US sales tax; keep the bill of lading / export declaration on file for audit.</div>`;
 
   const form1120SHtml = `
     <h2>Profit & Loss</h2>${plHtml}
@@ -5503,7 +5750,7 @@ ${bodyHtml}
         <ExportCard title="Balance Sheet" summary={`Assets ${fmt$2(bs.totals.assets)} · Equity ${fmt$2(bs.totals.equity)} · as of ${endDate}`} onPrint={() => print(`Balance Sheet (as of ${endDate})`, bsHtml)} onCsv={() => exportCSV(`bs_${endDate}.csv`, ["Section", "Account", "Balance"], [...Object.entries(bs.assets).map(([, a]) => ["Asset", a.name, a.balance.toFixed(2)]), ...Object.entries(bs.liabilities).map(([, a]) => ["Liability", a.name, a.balance.toFixed(2)]), ...Object.entries(bs.equity).map(([, a]) => ["Equity", a.name, a.balance.toFixed(2)])])} />
         <ExportCard title="Member K-1 Preparation" summary={`${k1.length} members · Net share ${fmt$2(k1[0]?.shareOfIncome || 0)}`} onPrint={() => print("Member Capital / K-1 Preparation", k1Html)} onCsv={() => exportCSV(`k1_${startDate}_to_${endDate}.csv`, ["Member", "Ending Capital", "Share of Net Income"], k1.map(m => [m.name, m.endingCapital.toFixed(2), m.shareOfIncome.toFixed(2)]))} />
         <ExportCard title="1099 Tracking" summary={`${t1099.length} vendor${t1099.length === 1 ? "" : "s"} over $600`} onPrint={() => print("Vendor / 1099 Tracking", t1099Html)} onCsv={() => exportCSV(`1099_${startDate}_to_${endDate}.csv`, ["Vendor", "Total Paid", "1099-NEC Required"], t1099.map(v => [v.name, v.amount.toFixed(2), v.amount >= 600 ? "Yes" : "No"]))} />
-        <ExportCard title="MA Sales Tax" summary={`${fmt$2(maTax.collected)} collected in period`} onPrint={() => print("MA Sales Tax", maTaxHtml)} onCsv={() => exportCSV(`ma_sales_tax_${startDate}_to_${endDate}.csv`, ["Period Start", "Period End", "Collected"], [[startDate, endDate, maTax.collected.toFixed(2)]])} />
+        <ExportCard title="MA Sales Tax" summary={`${fmt$2(maTax.collected)} collected · ${fmt$2(maTax.byDestination?.in_state_ma || 0)} taxable in-state`} onPrint={() => print("MA Sales Tax", maTaxHtml)} onCsv={() => exportCSV(`ma_sales_tax_${startDate}_to_${endDate}.csv`, ["Period Start", "Period End", "In-State Gross", "Out-of-State Gross", "International Gross", "Tax Collected"], [[startDate, endDate, (maTax.byDestination?.in_state_ma || 0).toFixed(2), (maTax.byDestination?.out_of_state_us || 0).toFixed(2), (maTax.byDestination?.international || 0).toFixed(2), maTax.collected.toFixed(2)]])} />
         <ExportCard title="Form 1120-S Package" summary="Combined P&L + Balance Sheet + K-1 + 1099 + MA tax" onPrint={() => print("Form 1120-S Preparation Package", form1120SHtml)} />
       </div>
     </Card>
@@ -5513,7 +5760,7 @@ ${bodyHtml}
 // ═══════════════════════════════════════════════════════════════
 // AUDIT TRAIL — filterable view over the entire ledger
 // ═══════════════════════════════════════════════════════════════
-function AuditTrailView({ ledger, accounts, members }) {
+function AuditTrailView({ ledger, accounts, members, admin = false, onReverse = null }) {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [userFilter, setUserFilter] = useState("");
@@ -5632,6 +5879,11 @@ function AuditTrailView({ ledger, accounts, members }) {
                       </tbody>
                     </table>
                     {e.ref && <div style={{ fontSize: 9, color: BRAND.gray, marginTop: 6, fontFamily: "ui-monospace, monospace" }}>ref: {JSON.stringify(e.ref)}</div>}
+                    {admin && onReverse && e.ref?.type !== "reversal" && (
+                      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+                        <Btn size="sm" variant="secondary" onClick={() => onReverse(e)} style={{ background: "#FEF3C7", color: "#92400E", border: "1px solid #FCD34D", fontSize: 10 }}>Reverse / Undo</Btn>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

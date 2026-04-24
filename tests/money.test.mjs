@@ -644,3 +644,51 @@ test("calcClosingEntries: no-activity year returns empty entries + zero net", ()
   assert.equal(r.entries.length, 0);
   assert.equal(r.netIncome, 0);
 });
+
+// ─── MA sales tax: destination-aware ─────────────────────────
+import {
+  MA_SALES_TAX_RATE,
+  SALE_DESTINATIONS,
+  calcMaSalesTaxOnSale,
+  salesTaxOnSaleEntry,
+} from "../apps/auction/src/money.js";
+
+test("MA_SALES_TAX_RATE is 6.25%", () => {
+  assert.equal(MA_SALES_TAX_RATE, 0.0625);
+});
+
+test("SALE_DESTINATIONS: only in-state taxable", () => {
+  assert.equal(SALE_DESTINATIONS.in_state_ma.taxable, true);
+  assert.equal(SALE_DESTINATIONS.out_of_state_us.taxable, false);
+  assert.equal(SALE_DESTINATIONS.international.taxable, false);
+});
+
+test("calcMaSalesTaxOnSale: in-state → 6.25% of gross", () => {
+  assert.equal(calcMaSalesTaxOnSale(10000, "in_state_ma"), 625);
+  assert.equal(calcMaSalesTaxOnSale(12345.67, "in_state_ma"), 771.6); // rounded to cents
+});
+
+test("calcMaSalesTaxOnSale: out-of-state US → zero (exempt)", () => {
+  assert.equal(calcMaSalesTaxOnSale(10000, "out_of_state_us"), 0);
+});
+
+test("calcMaSalesTaxOnSale: international → zero (export exempt)", () => {
+  assert.equal(calcMaSalesTaxOnSale(10000, "international"), 0);
+});
+
+test("calcMaSalesTaxOnSale: unknown destination defaults to exempt (safe default)", () => {
+  assert.equal(calcMaSalesTaxOnSale(10000, "mars"), 0);
+  assert.equal(calcMaSalesTaxOnSale(10000, ""), 0);
+});
+
+test("salesTaxOnSaleEntry: in-state posts a balanced entry; exempt returns null", () => {
+  const e = salesTaxOnSaleEntry({ stockNum: "007", grossPrice: 20000, destination: "in_state_ma", date: "2025-05-10", user: "u" });
+  assert.equal(validateJournalEntry(e), null);
+  const bankLine = e.lines.find((l) => l.accountId === SYSTEM_ACCOUNTS.SAYARAH_BANK);
+  assert.equal(bankLine.debit, 1250);
+  const liability = e.lines.find((l) => l.accountId === SYSTEM_ACCOUNTS.SALES_TAX_PAYABLE);
+  assert.equal(liability.credit, 1250);
+
+  assert.equal(salesTaxOnSaleEntry({ stockNum: "008", grossPrice: 20000, destination: "out_of_state_us", date: "2025-05-10", user: "u" }), null);
+  assert.equal(salesTaxOnSaleEntry({ stockNum: "009", grossPrice: 20000, destination: "international", date: "2025-05-10", user: "u" }), null);
+});
