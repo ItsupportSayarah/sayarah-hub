@@ -1148,6 +1148,60 @@ export function useTaxOnPurchaseEntry({ stockNum, purchasePrice, date, user, ip 
 }
 
 // ═══════════════════════════════════════════════════════════════
+// TRACKED EXPENSES → GENERAL LEDGER
+//
+// Every row added in the Expenses tab becomes a journal entry:
+//   Dr  (matching expense sub-account)
+//       Cr  Cash (Chase operating bank)
+//
+// Vehicle-specific expenses (Transport, Repair, Detailing) are still
+// capitalized into the vehicle's Total Cost for display/P&L purposes
+// — the ledger-posting maps them to operating-expense sub-accounts
+// for CPA-facing statements. An optional override per-category
+// (`data.money.expenseCategoryMap`) lets admins remap any category
+// to a different CoA account without a code change.
+// ═══════════════════════════════════════════════════════════════
+export const DEFAULT_EXPENSE_CATEGORY_MAP = {
+  "Transport/Towing": SYSTEM_ACCOUNTS.EXPENSE_OTHER,
+  "Storage/Parking": SYSTEM_ACCOUNTS.EXPENSE_RENT_UTILITIES,
+  "Repair/Recon": SYSTEM_ACCOUNTS.EXPENSE_OTHER,
+  "DMV/Title/Registration": SYSTEM_ACCOUNTS.EXPENSE_OFFICE_ADMIN,
+  "Inspection": SYSTEM_ACCOUNTS.EXPENSE_OFFICE_ADMIN,
+  "Detailing": SYSTEM_ACCOUNTS.EXPENSE_OTHER,
+  "Marketing/Listing": SYSTEM_ACCOUNTS.EXPENSE_ADVERTISING,
+  "Office/Admin": SYSTEM_ACCOUNTS.EXPENSE_OFFICE_ADMIN,
+  "Selling Costs (post-sale)": SYSTEM_ACCOUNTS.EXPENSE_OTHER,
+  "Auction Fees": SYSTEM_ACCOUNTS.EXPENSE_OTHER,
+  "Other": SYSTEM_ACCOUNTS.EXPENSE_OTHER,
+};
+
+// Resolve a category name to a CoA account id. Unknown categories
+// fall back to Other Expenses so nothing silently drops off the ledger.
+export function resolveExpenseAccount(category, customMap) {
+  const map = { ...DEFAULT_EXPENSE_CATEGORY_MAP, ...(customMap || {}) };
+  return map[category] || SYSTEM_ACCOUNTS.EXPENSE_OTHER;
+}
+
+// Build a journal entry for a single tracked expense. Cash-basis by
+// default (credits Chase bank). If `vendor` is provided it's stored
+// in `ref.vendor` so the 1099 report can pick it up.
+export function expenseEntry({ expenseId, category, amount, vendor, description, stockNum, date, user, ip, categoryMap }) {
+  const amt = p(amount);
+  if (amt <= 0) return null;
+  const accountId = resolveExpenseAccount(category, categoryMap);
+  return buildJournalEntry({
+    date,
+    memo: `Expense — ${category || "Other"}${stockNum ? ` — #${stockNum}` : ""}${description ? ` — ${description}` : ""}`,
+    user, ip,
+    ref: { type: "expense", expenseId, category, vendor: vendor || null, stockNum: stockNum || null },
+    lines: [
+      { accountId, debit: amt, credit: 0 },
+      { accountId: SYSTEM_ACCOUNTS.SAYARAH_BANK, debit: 0, credit: amt },
+    ],
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
 // YEAR-END CLOSE
 //
 // Closes temporary accounts (revenue + expense) to Income Summary,

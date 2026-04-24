@@ -423,7 +423,55 @@ import {
   parseBankCsv,
   suggestMatches,
   entriesInRange,
+  // Expense auto-posting
+  DEFAULT_EXPENSE_CATEGORY_MAP,
+  resolveExpenseAccount,
+  expenseEntry,
 } from "../apps/auction/src/money.js";
+
+test("resolveExpenseAccount: maps every default category to a CoA expense account", () => {
+  for (const [category, accountId] of Object.entries(DEFAULT_EXPENSE_CATEGORY_MAP)) {
+    const resolved = resolveExpenseAccount(category);
+    assert.equal(resolved, accountId, `default map mismatch for ${category}`);
+    assert.ok(resolved.startsWith("expense:"), `resolved id must be an expense account, got ${resolved}`);
+  }
+});
+
+test("resolveExpenseAccount: unknown category falls back to Other Expenses", () => {
+  assert.equal(resolveExpenseAccount("Not A Real Category"), SYSTEM_ACCOUNTS.EXPENSE_OTHER);
+  assert.equal(resolveExpenseAccount(undefined), SYSTEM_ACCOUNTS.EXPENSE_OTHER);
+  assert.equal(resolveExpenseAccount(""), SYSTEM_ACCOUNTS.EXPENSE_OTHER);
+});
+
+test("resolveExpenseAccount: customMap overrides default mapping", () => {
+  const custom = { "Transport/Towing": SYSTEM_ACCOUNTS.EXPENSE_OFFICE_ADMIN };
+  assert.equal(resolveExpenseAccount("Transport/Towing", custom), SYSTEM_ACCOUNTS.EXPENSE_OFFICE_ADMIN);
+  // Unaffected categories still use defaults
+  assert.equal(resolveExpenseAccount("Marketing/Listing", custom), SYSTEM_ACCOUNTS.EXPENSE_ADVERTISING);
+});
+
+test("expenseEntry: builds a balanced JE (Dr expense, Cr Cash)", () => {
+  const entry = expenseEntry({
+    expenseId: "e1", category: "Marketing/Listing", amount: 150,
+    vendor: "Facebook", description: "Boosted post", stockNum: "001",
+    date: "2025-03-15", user: "admin",
+  });
+  assert.equal(validateJournalEntry(entry), null);
+  assert.equal(entry.lines.length, 2);
+  const debit = entry.lines.find(l => l.debit > 0);
+  const credit = entry.lines.find(l => l.credit > 0);
+  assert.equal(debit.accountId, SYSTEM_ACCOUNTS.EXPENSE_ADVERTISING);
+  assert.equal(debit.debit, 150);
+  assert.equal(credit.accountId, SYSTEM_ACCOUNTS.SAYARAH_BANK);
+  assert.equal(credit.credit, 150);
+  assert.equal(entry.ref.type, "expense");
+  assert.equal(entry.ref.vendor, "Facebook");
+});
+
+test("expenseEntry: zero-amount returns null (no silent $0 ledger post)", () => {
+  assert.equal(expenseEntry({ expenseId: "x", category: "Other", amount: 0, date: "2025-01-01", user: "admin" }), null);
+  assert.equal(expenseEntry({ expenseId: "x", category: "Other", amount: "", date: "2025-01-01", user: "admin" }), null);
+});
 
 test("calcProfitLoss sums revenue minus expenses in the date range", () => {
   const accounts = [

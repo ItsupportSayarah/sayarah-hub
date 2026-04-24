@@ -79,6 +79,10 @@ import {
   canClosePeriod,
   calcOutOfStateSalesReport,
   calcVehicleProfitabilityReport,
+  // Expense auto-posting
+  DEFAULT_EXPENSE_CATEGORY_MAP,
+  resolveExpenseAccount,
+  expenseEntry,
 } from "./src/money.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
@@ -1756,7 +1760,59 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
       const desc = `Edited vehicle #${form.stockNum} ${form.year} ${form.make} ${form.model}` + (diff.summary ? ` — ${diff.summary}` : "");
       logActivity(currentUser, "edited_vehicle", desc, { stockNum: form.stockNum, changes: diff.changes });
     } else {
-      setData(d => ({ ...d, vehicles: [...d.vehicles, form], nextStockNum: d.nextStockNum + 1 }));
+      // Auto-post the purchase to the Money Management ledger when
+      // funding sources are set and the fund outflow is within the
+      // safe-threshold ($10K). Larger fund outflows still require the
+      // manual "Post to Ledger" button so the second-member approval
+      // flow fires. Any posting failure is silent — vehicle still
+      // saves with postedToLedger=false so it can be retried later.
+      const deposit = p(form.depositAmount);
+      const balance = p(form.balanceAmount);
+      const hasDeposit = deposit > 0 && !!form.depositSource;
+      const hasBalance = balance > 0 && !!form.balanceSource;
+      const fundOutflow = (form.depositSource === "fund" ? deposit : 0) + (form.balanceSource === "fund" ? balance : 0);
+      const eligibleForAutoPost = isAdmin(role) && (hasDeposit || hasBalance) && (deposit === 0 || hasDeposit) && (balance === 0 || hasBalance) && fundOutflow <= LARGE_OUTFLOW_THRESHOLD;
+      setData(d => {
+        let ledger = d.money?.ledger || [];
+        let accounts = d.money?.accounts || DEFAULT_ACCOUNTS;
+        const closed = d.money?.closedPeriods || [];
+        let posted = false;
+        if (eligibleForAutoPost && d.money) {
+          try {
+            const fundBalance = calcAllBalances(ledger, accounts)[SYSTEM_ACCOUNTS.ATLANTIC_FUND] || 0;
+            if (fundOutflow <= fundBalance) {
+              const entries = [];
+              const date = form.purchaseDate || new Date().toISOString().slice(0, 10);
+              if (hasDeposit) {
+                entries.push(form.depositSource === "fund"
+                  ? vehiclePurchaseFromFundEntry({ stockNum: form.stockNum, amount: deposit, date, memo: `Deposit — #${form.stockNum}`, user: currentUser })
+                  : vehiclePurchaseFromMemberEntry({ stockNum: form.stockNum, memberId: form.depositSource.slice(7), amount: deposit, date, memo: `Deposit — #${form.stockNum}`, user: currentUser }));
+              }
+              if (hasBalance) {
+                entries.push(form.balanceSource === "fund"
+                  ? vehiclePurchaseFromFundEntry({ stockNum: form.stockNum, amount: balance, date, memo: `Balance — #${form.stockNum}`, user: currentUser })
+                  : vehiclePurchaseFromMemberEntry({ stockNum: form.stockNum, memberId: form.balanceSource.slice(7), amount: balance, date, memo: `Balance — #${form.stockNum}`, user: currentUser }));
+              }
+              if (form.outOfStatePurchase && !form.maSalesTaxPaidAtPurchase) {
+                const ut = useTaxOnPurchaseEntry({ stockNum: form.stockNum, purchasePrice: p(form.purchasePrice), date, user: currentUser });
+                if (ut) entries.push(ut);
+              }
+              for (const e of entries) ledger = postJournalEntry(ledger, e, closed);
+              if (!accounts.some(a => a.id === vehicleAccountId(form.stockNum))) {
+                accounts = [...accounts, buildVehicleAccount(form.stockNum, `${form.year} ${form.make} ${form.model}`)];
+              }
+              posted = entries.length > 0;
+            }
+          } catch (err) { console.warn("Auto-post purchase skipped:", err.message); }
+        }
+        const newVehicle = posted ? { ...form, postedToLedger: true } : form;
+        return {
+          ...d,
+          vehicles: [...d.vehicles, newVehicle],
+          nextStockNum: d.nextStockNum + 1,
+          money: d.money ? { ...d.money, ledger, accounts } : d.money,
+        };
+      });
       logActivity(currentUser, "added_vehicle", `Added vehicle #${form.stockNum} ${form.year} ${form.make} ${form.model}`);
     }
     setShowForm(false);
@@ -2462,14 +2518,60 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
       setShowExpForm(false);
       return;
     }
+    // Auto-post to the Money Management ledger so every expense hits
+    // the CoA (via resolveExpenseAccount) immediately. Failures are
+    // non-blocking — expense saves succeed even if the ledger post
+    // fails (e.g. closed period).
+    const buildExpJE = (exp) => expenseEntry({
+      expenseId: exp.id, category: exp.category, amount: exp.amount,
+      vendor: exp.vendor, description: exp.description, stockNum: exp.stockNum,
+      date: exp.date, user: currentUser, categoryMap: data.money?.expenseCategoryMap,
+    });
     if (editingExp) {
       const before = data.expenses.find(e => e.id === editingExp);
       const diff = auditDiff(before, expForm, ["category", "amount", "vendor", "description", "date", "paymentMethod", "receipt"]);
-      setData(d => ({ ...d, expenses: d.expenses.map(e => e.id === editingExp ? expForm : e) }));
+      setData(d => {
+        const money = d.money;
+        let ledger = money?.ledger || [];
+        const closed = money?.closedPeriods || [];
+        const updatedExp = { ...expForm };
+        try {
+          if (money) {
+            if (before?.journalEntryId) {
+              const original = ledger.find(x => x.id === before.journalEntryId);
+              if (original) ledger = postJournalEntry(ledger, buildReversingEntry(original, { user: currentUser, memo: "Reverse prior expense entry (edit)" }), closed);
+            }
+            const entry = buildExpJE(updatedExp);
+            if (entry) { ledger = postJournalEntry(ledger, entry, closed); updatedExp.journalEntryId = entry.id; }
+            else updatedExp.journalEntryId = null;
+          }
+        } catch (err) { console.warn("Expense ledger edit skipped:", err.message); }
+        return {
+          ...d,
+          expenses: d.expenses.map(e => e.id === editingExp ? updatedExp : e),
+          money: money ? { ...money, ledger } : money,
+        };
+      });
       const desc = `Edited expense on #${v.stockNum} ${v.year} ${v.make} ${v.model}` + (diff.summary ? ` — ${diff.summary}` : `: ${expForm.category || "—"}`);
       logActivity(currentUser, "edited_expense", desc, { stockNum: v.stockNum, expenseId: editingExp, changes: diff.changes });
     } else {
-      setData(d => ({ ...d, expenses: [...d.expenses, expForm] }));
+      setData(d => {
+        const money = d.money;
+        let ledger = money?.ledger || [];
+        const closed = money?.closedPeriods || [];
+        const newExp = { ...expForm };
+        try {
+          if (money) {
+            const entry = buildExpJE(newExp);
+            if (entry) { ledger = postJournalEntry(ledger, entry, closed); newExp.journalEntryId = entry.id; }
+          }
+        } catch (err) { console.warn("Expense ledger post skipped:", err.message); }
+        return {
+          ...d,
+          expenses: [...d.expenses, newExp],
+          money: money ? { ...money, ledger } : money,
+        };
+      });
       logActivity(currentUser, "added_expense", `Added expense on #${v.stockNum} ${v.year} ${v.make} ${v.model}: ${expForm.category || "—"} (${fmt$2(p(expForm.amount))})`);
     }
     setShowExpForm(false);
@@ -2485,10 +2587,21 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
     }
     setData(d => {
       const exp = d.expenses.find(e => e.id === id);
+      const money = d.money;
+      let ledger = money?.ledger || [];
+      if (exp?.journalEntryId && money) {
+        const original = ledger.find(x => x.id === exp.journalEntryId);
+        if (original) {
+          try {
+            ledger = postJournalEntry(ledger, buildReversingEntry(original, { user: currentUser, memo: "Reverse expense entry (delete)" }), money.closedPeriods || []);
+          } catch (err) { console.warn("Expense reversal skipped:", err.message); }
+        }
+      }
       return {
         ...d,
         expenses: d.expenses.filter(e => e.id !== id),
         trash: exp ? [...(d.trash || []), toTrash(exp, "expense", currentUser)] : (d.trash || []),
+        money: money ? { ...money, ledger } : money,
       };
     });
     const gone = data.expenses.find(e => e.id === id);
@@ -3214,22 +3327,91 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
 // ═══════════════════════════════════════════════════════════════
 // EXPENSES TAB
 // ═══════════════════════════════════════════════════════════════
-function ExpensesTab({ data, setData }) {
+function ExpensesTab({ data, setData, username }) {
   const [showForm, setShowForm] = useState(false); const [editing, setEditing] = useState(null); const [confirm, setConfirm] = useState(null); const [catFilter, setCatFilter] = useState("All");
   const empty = () => ({ id: genId(), date: new Date().toISOString().slice(0, 10), stockNum: "", vehicle: "", category: "", description: "", vendor: "", paymentMethod: "", amount: "", receipt: "" });
   const [form, setForm] = useState(empty());
   const upd = (k, v) => { setForm(prev => { const n = { ...prev, [k]: v }; if (k === "stockNum" && v) { const vh = data.vehicles.find(x => x.stockNum === v); if (vh) n.vehicle = `${vh.year} ${vh.make} ${vh.model}`; } return n; }); };
   const openNew = () => { setForm(empty()); setEditing(null); setShowForm(true); };
   const openEdit = e => { setForm({ ...e }); setEditing(e.id); setShowForm(true); };
+  // Auto-post to the Money Management ledger. New/edited expenses post
+  // a fresh JE; edits first reverse the prior entry so the ledger
+  // stays in sync without manual re-posting. Safe to call on every
+  // save — if the money module isn't set up yet (no bank account), we
+  // skip posting silently.
   const save = () => {
     if (form.stockNum && !form.vehicle) { const v = data.vehicles.find(x => x.stockNum === form.stockNum); if (v) form.vehicle = `${v.year} ${v.make} ${v.model}`; }
     const err = validateExpenseEntry(form);
     if (err) { alert(err); return; }
-    if (editing) setData(d => ({ ...d, expenses: d.expenses.map(e => e.id === editing ? form : e) }));
-    else setData(d => ({ ...d, expenses: [...d.expenses, form] }));
+    const buildEntry = () => expenseEntry({
+      expenseId: form.id,
+      category: form.category,
+      amount: form.amount,
+      vendor: form.vendor,
+      description: form.description,
+      stockNum: form.stockNum,
+      date: form.date,
+      user: username || "system",
+      categoryMap: data.money?.expenseCategoryMap,
+    });
+    setData(d => {
+      const money = d.money;
+      const ledger = money?.ledger || [];
+      const closed = money?.closedPeriods || [];
+      let newLedger = ledger;
+      try {
+        if (editing) {
+          const prev = d.expenses.find(e => e.id === editing);
+          // Reverse the old JE if one was posted
+          if (prev?.journalEntryId) {
+            const original = ledger.find(x => x.id === prev.journalEntryId);
+            if (original) newLedger = postJournalEntry(newLedger, buildReversingEntry(original, { user: username || "system", memo: "Reverse prior expense entry (edit)" }), closed);
+          }
+          const entry = buildEntry();
+          if (entry) {
+            newLedger = postJournalEntry(newLedger, entry, closed);
+            form.journalEntryId = entry.id;
+          } else {
+            form.journalEntryId = null;
+          }
+        } else {
+          const entry = buildEntry();
+          if (entry) {
+            newLedger = postJournalEntry(newLedger, entry, closed);
+            form.journalEntryId = entry.id;
+          }
+        }
+      } catch (err) {
+        // Closed-period or validation error — fall back to saving the
+        // expense without a ledger posting so the user isn't blocked.
+        console.warn("Expense ledger-post skipped:", err.message);
+      }
+      const nextExpenses = editing
+        ? d.expenses.map(e => e.id === editing ? form : e)
+        : [...d.expenses, form];
+      return { ...d, expenses: nextExpenses, money: money ? { ...money, ledger: newLedger } : money };
+    });
+    logActivity(username || "system", editing ? "expense_edited" : "expense_added",
+      `${editing ? "Edited" : "Added"} ${form.category} expense — ${fmt$2(p(form.amount))}${form.stockNum ? ` (#${form.stockNum})` : ""}`);
     setShowForm(false);
   };
-  const del = id => { setData(d => ({ ...d, expenses: d.expenses.filter(e => e.id !== id) })); setConfirm(null); setShowForm(false); };
+  const del = id => {
+    setData(d => {
+      const exp = d.expenses.find(e => e.id === id);
+      const money = d.money;
+      let newLedger = money?.ledger || [];
+      if (exp?.journalEntryId && money) {
+        const original = newLedger.find(x => x.id === exp.journalEntryId);
+        if (original) {
+          try {
+            newLedger = postJournalEntry(newLedger, buildReversingEntry(original, { user: username || "system", memo: "Reverse expense entry (delete)" }), money.closedPeriods || []);
+          } catch (err) { console.warn("Expense reversal skipped:", err.message); }
+        }
+      }
+      return { ...d, expenses: d.expenses.filter(e => e.id !== id), money: money ? { ...money, ledger: newLedger } : money };
+    });
+    setConfirm(null); setShowForm(false);
+  };
 
   let sorted = [...data.expenses].sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   if (catFilter !== "All") sorted = sorted.filter(e => e.category === catFilter);
@@ -5087,6 +5269,11 @@ function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
               <LedgerTable entries={[...money.ledger].slice(-20).reverse()} accounts={money.accounts} members={money.members} />
             )}
           </Card>
+
+          {/* Backfill: scan vehicles/expenses for unposted rows and
+              post them retroactively. Safe to run repeatedly — skips
+              anything already on the ledger. Admin-only. */}
+          {admin && <BackfillLedgerCard data={data} setData={setData} currentUser={username} />}
         </div>
       )}
 
@@ -5130,6 +5317,137 @@ function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
         />
       )}
     </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BACKFILL LEDGER CARD — one-click posts every unposted historical
+// vehicle purchase + expense into the Money Management ledger.
+// Vehicles need a valid funding source + funded amount to qualify.
+// Expenses auto-resolve to a CoA account via DEFAULT_EXPENSE_CATEGORY_MAP.
+// Safe to run repeatedly — skips anything already posted.
+// ═══════════════════════════════════════════════════════════════
+function BackfillLedgerCard({ data, setData, currentUser }) {
+  const money = data.money || {};
+  const vehicles = data.vehicles || [];
+  const expenses = data.expenses || [];
+
+  const unpostedVehicles = useMemo(() => vehicles.filter(v => {
+    if (v.postedToLedger) return false;
+    const deposit = p(v.depositAmount);
+    const balance = p(v.balanceAmount);
+    const hasDeposit = deposit > 0 && !!v.depositSource;
+    const hasBalance = balance > 0 && !!v.balanceSource;
+    return hasDeposit || hasBalance;
+  }), [vehicles]);
+
+  const unpostedExpenses = useMemo(() =>
+    expenses.filter(e => !e.journalEntryId && p(e.amount) > 0),
+    [expenses]
+  );
+
+  const nothingToDo = unpostedVehicles.length === 0 && unpostedExpenses.length === 0;
+
+  const runBackfill = () => {
+    if (!confirm(`Backfill ${unpostedVehicles.length} vehicle purchase${unpostedVehicles.length === 1 ? "" : "s"} + ${unpostedExpenses.length} expense${unpostedExpenses.length === 1 ? "" : "s"} into the ledger? This posts journal entries retroactively and cannot be undone (you'd have to post reversals by hand).`)) return;
+
+    setData(d => {
+      const closed = d.money?.closedPeriods || [];
+      let ledger = d.money?.ledger || [];
+      let accounts = d.money?.accounts || DEFAULT_ACCOUNTS;
+      let postedVehicles = 0;
+      let postedExpenses = 0;
+      let skipped = 0;
+
+      const updatedVehicles = d.vehicles.map(v => {
+        if (v.postedToLedger) return v;
+        const deposit = p(v.depositAmount);
+        const balance = p(v.balanceAmount);
+        const hasDeposit = deposit > 0 && !!v.depositSource;
+        const hasBalance = balance > 0 && !!v.balanceSource;
+        if (!hasDeposit && !hasBalance) return v;
+        try {
+          const entries = [];
+          const date = v.purchaseDate || new Date().toISOString().slice(0, 10);
+          if (hasDeposit) {
+            entries.push(v.depositSource === "fund"
+              ? vehiclePurchaseFromFundEntry({ stockNum: v.stockNum, amount: deposit, date, memo: `Backfill deposit — #${v.stockNum}`, user: currentUser })
+              : vehiclePurchaseFromMemberEntry({ stockNum: v.stockNum, memberId: v.depositSource.slice(7), amount: deposit, date, memo: `Backfill deposit — #${v.stockNum}`, user: currentUser }));
+          }
+          if (hasBalance) {
+            entries.push(v.balanceSource === "fund"
+              ? vehiclePurchaseFromFundEntry({ stockNum: v.stockNum, amount: balance, date, memo: `Backfill balance — #${v.stockNum}`, user: currentUser })
+              : vehiclePurchaseFromMemberEntry({ stockNum: v.stockNum, memberId: v.balanceSource.slice(7), amount: balance, date, memo: `Backfill balance — #${v.stockNum}`, user: currentUser }));
+          }
+          if (v.outOfStatePurchase && !v.maSalesTaxPaidAtPurchase) {
+            const ut = useTaxOnPurchaseEntry({ stockNum: v.stockNum, purchasePrice: p(v.purchasePrice), date, user: currentUser });
+            if (ut) entries.push(ut);
+          }
+          for (const e of entries) ledger = postJournalEntry(ledger, e, closed);
+          if (!accounts.some(a => a.id === vehicleAccountId(v.stockNum))) {
+            accounts = [...accounts, buildVehicleAccount(v.stockNum, `${v.year} ${v.make} ${v.model}`)];
+          }
+          postedVehicles++;
+          return { ...v, postedToLedger: true };
+        } catch (err) {
+          console.warn(`Backfill skipped #${v.stockNum}:`, err.message);
+          skipped++;
+          return v;
+        }
+      });
+
+      const updatedExpenses = d.expenses.map(exp => {
+        if (exp.journalEntryId) return exp;
+        if (p(exp.amount) <= 0) return exp;
+        try {
+          const entry = expenseEntry({
+            expenseId: exp.id, category: exp.category, amount: exp.amount,
+            vendor: exp.vendor, description: exp.description, stockNum: exp.stockNum,
+            date: exp.date, user: currentUser, categoryMap: d.money?.expenseCategoryMap,
+          });
+          if (entry) {
+            ledger = postJournalEntry(ledger, entry, closed);
+            postedExpenses++;
+            return { ...exp, journalEntryId: entry.id };
+          }
+        } catch (err) {
+          console.warn(`Backfill expense skipped ${exp.id}:`, err.message);
+          skipped++;
+        }
+        return exp;
+      });
+
+      logActivity(currentUser, "ledger_backfill", `Backfilled ${postedVehicles} vehicle${postedVehicles === 1 ? "" : "s"} + ${postedExpenses} expense${postedExpenses === 1 ? "" : "s"} into the ledger (${skipped} skipped).`);
+
+      return {
+        ...d,
+        vehicles: updatedVehicles,
+        expenses: updatedExpenses,
+        money: d.money ? { ...d.money, ledger, accounts } : d.money,
+      };
+    });
+  };
+
+  if (nothingToDo) return null;
+
+  return (
+    <Card style={{ marginTop: 14, background: "#FEF3C7", borderColor: "#FCD34D" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 260 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: "#92400E", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 4 }}>
+            Unposted in ledger
+          </div>
+          <div style={{ fontSize: 12, color: "#78350F", lineHeight: 1.5 }}>
+            {unpostedVehicles.length > 0 && <div>· <b>{unpostedVehicles.length}</b> vehicle purchase{unpostedVehicles.length === 1 ? "" : "s"} with a funding source but no ledger entry</div>}
+            {unpostedExpenses.length > 0 && <div>· <b>{unpostedExpenses.length}</b> tracked expense{unpostedExpenses.length === 1 ? "" : "s"} without a journal entry</div>}
+            <div style={{ marginTop: 6, fontSize: 11, color: "#92400E", fontStyle: "italic" }}>
+              These rows exist in Inventory/Expenses but are invisible to the CoA, Trial Balance, P&L, and every external statement. Click Backfill to post them retroactively.
+            </div>
+          </div>
+        </div>
+        <Btn onClick={runBackfill} style={{ background: "#92400E" }}>Backfill {unpostedVehicles.length + unpostedExpenses.length} row{(unpostedVehicles.length + unpostedExpenses.length) === 1 ? "" : "s"}</Btn>
+      </div>
+    </Card>
   );
 }
 
