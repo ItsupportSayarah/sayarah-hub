@@ -2110,6 +2110,7 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
               {form.useCustomPremium && <div><span style={{ color: BRAND.gray }}>Custom Premium:</span> <span style={{ fontWeight: 600, ...S.mono }}>{fmt$(formAuctFees.total)}</span></div>}
               <div><span style={{ color: BRAND.gray }}>Transport:</span> <span style={{ fontWeight: 600, ...S.mono }}>{fmt$(p(form.transportCost))}</span></div>
               <div><span style={{ color: BRAND.gray }}>Recon:</span> <span style={{ fontWeight: 600, ...S.mono }}>{fmt$(p(form.repairCost))}</span></div>
+              {formPP > 0 && <div><span style={{ color: BRAND.gray }}>Tax Reserve:</span> <span style={{ fontWeight: 600, ...S.mono }}>$295</span></div>}
               <div style={{ gridColumn: "1 / -1", borderTop: `1px solid ${BRAND.redBg2}`, paddingTop: 6, marginTop: 4 }}>
                 <span style={{ color: BRAND.gray }}>Total Acquisition:</span> <span style={{ fontWeight: 700, color: BRAND.red, ...S.mono }}>{fmt$(formTotalAcq)}</span>
                 <span style={{ marginLeft: 16, color: BRAND.gray }}>Total Cost:</span> <span style={{ fontWeight: 800, color: BRAND.red, ...S.mono }}>{fmt$(formTotalInv)}</span>
@@ -2184,6 +2185,9 @@ function generateInvoicePDF(vehicle, expenses, sale, metrics, currentUserInfo) {
   [...expenses].sort((a, b) => (a.date || "").localeCompare(b.date || "")).forEach(e => {
     costRows.push({ date: e.date || "—", category: e.category || "Uncategorized", description: e.description || "—", vendor: e.vendor || "—", amount: p(e.amount) });
   });
+  // Flat $295 tax reserve — baked into every vehicle's cost basis.
+  // Posts to the Accrued Tax Liability account on sale via vehicleSaleEntries.
+  if (pp > 0) costRows.push({ date: v.purchaseDate || "—", category: "Tax Reserve", description: "$295 per-vehicle reserve — posts to Accrued Tax Liability on sale", vendor: "—", amount: 295 });
   const totalCost = costRows.reduce((s, r) => s + r.amount, 0);
 
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Internal Deal Report · ${esc(v.stockNum)}</title>
@@ -2783,7 +2787,9 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
                 const c = e.category || "Uncategorized";
                 byCat[c] = (byCat[c] || 0) + p(e.amount);
               });
-              const visibleSum = pp + auctFees + tCost + rCost + oCost + Object.values(byCat).reduce((s, x) => s + x, 0);
+              // $295 tax reserve is baked into every real vehicle's Total Cost.
+              const taxReserve = pp > 0 ? 295 : 0;
+              const visibleSum = pp + auctFees + tCost + rCost + oCost + Object.values(byCat).reduce((s, x) => s + x, 0) + taxReserve;
               const drift = Math.abs(visibleSum - (m.totalCost || 0));
               const line = (label, amount, sub, subtle) => (
                 <tr style={{ borderBottom: `1px dashed ${BRAND.grayLight}` }}>
@@ -2811,6 +2817,7 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
                         <td style={{ padding: "6px 0", textAlign: "right", fontWeight: 700, color: BRAND.black, ...S.mono }}>{fmt$2(amt)}</td>
                       </tr>
                     ))}
+                    {taxReserve > 0 && line("Tax Reserve", taxReserve, "$295 per-vehicle · posts to Accrued Tax Liability on sale", true)}
                     <tr style={{ borderTop: `2px solid ${BRAND.red}` }}>
                       <td style={{ padding: "10px 0 4px", fontWeight: 900, textTransform: "uppercase", fontSize: 12, color: BRAND.red, letterSpacing: "0.05em" }}>Total Cost</td>
                       <td style={{ padding: "10px 0 4px", textAlign: "right", fontWeight: 900, fontSize: 16, color: BRAND.black, ...S.mono }}>{fmt$2(m.totalCost)}</td>

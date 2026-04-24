@@ -31,7 +31,7 @@ import {
 //
 // These tests lock the correct values in so the specific symptom
 // can't ship again.
-test("stock #001 regression — Total Cost is $9,679", () => {
+test("stock #001 regression — Total Cost is $9,974 (includes $295 tax reserve)", () => {
   const vehicle = {
     stockNum: "001",
     year: 2007,
@@ -52,7 +52,8 @@ test("stock #001 regression — Total Cost is $9,679", () => {
 
   const total = calcTotalCost(vehicle, expenses);
 
-  assert.equal(total, 9679, `expected $9,679, got ${total}`);
+  // 9000 purchase + 0 auction + 679 expenses + 295 tax reserve = 9974
+  assert.equal(total, 9974, `expected $9,974, got ${total}`);
   assert.ok(Number.isFinite(total), "Total Cost must be a finite number, never NaN");
 });
 
@@ -134,7 +135,8 @@ test("calcTotalCost: includes legacy acquisition fields when present", () => {
     repairCost: 200,
     otherExpenses: 50,
   };
-  assert.equal(calcTotalCost(v, []), 1000 + 0 + 100 + 200 + 50);
+  // +295 tax reserve baked in on every real vehicle
+  assert.equal(calcTotalCost(v, []), 1000 + 0 + 100 + 200 + 50 + 295);
 });
 
 test("calcTotalCost: tracked expenses filtered by stockNum", () => {
@@ -144,7 +146,7 @@ test("calcTotalCost: tracked expenses filtered by stockNum", () => {
     { stockNum: "B", amount: 999 }, // not this vehicle
     { stockNum: "A", amount: 50 },
   ];
-  assert.equal(calcTotalCost(v, expenses), 5000 + 100 + 50);
+  assert.equal(calcTotalCost(v, expenses), 5000 + 100 + 50 + 295);
 });
 
 test("calcTotalCost: useCustomPremium overrides source-based fees", () => {
@@ -155,13 +157,13 @@ test("calcTotalCost: useCustomPremium overrides source-based fees", () => {
     useCustomPremium: true,
     buyerPremiumPct: 3, // 3% custom
   };
-  assert.equal(calcTotalCost(v, []), 10000 + 300);
+  assert.equal(calcTotalCost(v, []), 10000 + 300 + 295);
 });
 
 test("calcTotalCost: silently accepts non-array expenses (defensive)", () => {
   const v = { stockNum: "x", purchasePrice: 100, auctionSource: "other" };
-  assert.equal(calcTotalCost(v, null), 100);
-  assert.equal(calcTotalCost(v, undefined), 100);
+  assert.equal(calcTotalCost(v, null), 100 + 295);
+  assert.equal(calcTotalCost(v, undefined), 100 + 295);
 });
 
 test("calcTotalCost: parseFloat-unfriendly values collapse to 0 (no NaN leaks)", () => {
@@ -174,8 +176,18 @@ test("calcTotalCost: parseFloat-unfriendly values collapse to 0 (no NaN leaks)",
     otherExpenses: null,
   };
   const total = calcTotalCost(v, [{ stockNum: "x", amount: "forty" }]);
-  assert.equal(total, 1000);
+  assert.equal(total, 1000 + 295);
   assert.ok(Number.isFinite(total));
+});
+
+// Regression guard: the $295 baked into Total Cost must match
+// TAX_PER_SALE in money.js so the post-sale JE accrual and the
+// upfront inventory cost stay in sync.
+test("calcTotalCost: $295 tax reserve matches money.js TAX_PER_SALE", async () => {
+  const { TAX_PER_SALE } = await import("../apps/auction/src/money.js");
+  const { TAX_RESERVE_PER_VEHICLE } = await import("../apps/auction/src/calc.js");
+  assert.equal(TAX_RESERVE_PER_VEHICLE, TAX_PER_SALE,
+    "calc.js TAX_RESERVE_PER_VEHICLE must equal money.js TAX_PER_SALE");
 });
 
 // ─── p() helper ─────────────────────────────────────────────────

@@ -128,12 +128,19 @@ export function calcAuctionFees(price, source) {
   return { premium, gate, env, title, vbid, total: premium + gate + env + title + vbid };
 }
 
+// Flat $295 tax reserve per vehicle. Baked into Total Cost so every
+// inventory view, profitability calc, and P&L accounts for it upfront.
+// On sale, the same $295 posts to the Accrued Tax Liability account
+// via vehicleSaleEntries in src/money.js — keep the two values in sync.
+export const TAX_RESERVE_PER_VEHICLE = 295;
+
 // ─── Total Cost — the single source of truth for cost basis ───
 // Total Cost = Purchase Price + computed Auction Fees + every cost
 // attached to this vehicle (legacy acquisition fields + every tracked
-// expense, every category, matched by stockNum). Displays everywhere —
-// the stat card, the Cost Breakdown total row, the P&L subtraction line,
-// reports, exports — all read this single function.
+// expense, every category, matched by stockNum) + flat $295 tax reserve.
+// Displays everywhere — the stat card, the Cost Breakdown total row,
+// the P&L subtraction line, reports, exports — all read this single
+// function.
 export function calcTotalCost(v, expenses = []) {
   const pp = p(v.purchasePrice);
   let auctCost;
@@ -146,7 +153,11 @@ export function calcTotalCost(v, expenses = []) {
   const tracked = Array.isArray(expenses)
     ? expenses.filter((e) => e.stockNum === v.stockNum).reduce((s, e) => s + p(e.amount), 0)
     : 0;
-  return pp + auctCost + legacy + tracked;
+  // Only charge the tax reserve on real vehicles (pp > 0). Empty/seed
+  // records should still return 0 to keep the "empty vehicle returns 0"
+  // contract for downstream guards.
+  const taxReserve = pp > 0 ? TAX_RESERVE_PER_VEHICLE : 0;
+  return pp + auctCost + legacy + tracked + taxReserve;
 }
 
 // Sum of tracked expenses for a vehicle (no purchase price, no auction
