@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext, Component } from "react";
-import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData, onUsersChange, addUserByEmail, getUserProfile, changePassword, resetPassword } from "./src/firebase.js";
+import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData, onUsersChange, addUserByEmail, deleteUserDoc, ensureUserDoc, getUserProfile, changePassword, resetPassword } from "./src/firebase.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
 class ErrorBoundary extends Component {
@@ -343,6 +343,45 @@ function UsersView({ users, onRefresh }) {
   const [newLastName, setNewLastName] = useState("");
   const [newRole, setNewRole] = useState("user");
   const [adding, setAdding] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(null);
+
+  // Current signed-in admin's Firestore role — drives whether + Add
+  // User and Remove will actually succeed. Firestore rules ignore the
+  // client's notion of "admin" and only trust the role field on the
+  // caller's own users doc.
+  const currentEmail = (auth && auth.currentUser && auth.currentUser.email) || "";
+  const currentUid = (auth && auth.currentUser && auth.currentUser.uid) || "";
+  const isSuper = currentEmail.toLowerCase() === "support@sayarah.io";
+  const [myRole, setMyRole] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+
+  const loadMyRole = async () => {
+    try { const p = await getUserProfile(currentUid); setMyRole(p?.role || "(no Firestore doc)"); }
+    catch (e) { setMyRole("(error: " + e.message + ")"); }
+  };
+  useEffect(() => { if (currentUid) loadMyRole(); }, [currentUid]);
+
+  const syncMyRole = async () => {
+    setSyncing(true); setMsg("");
+    try {
+      await ensureUserDoc(auth.currentUser);
+      await loadMyRole();
+      setMsg("Role synced. Retry Add User.");
+      setTimeout(() => setMsg(""), 3000);
+    } catch (e) { setMsg("Error: " + e.message); }
+    setSyncing(false);
+  };
+
+  const handleRemove = async (id, email) => {
+    setSaving(true); setMsg("");
+    try {
+      await deleteUserDoc(id);
+      setMsg(`Removed ${email}. Firebase Auth account (if any) still exists — delete separately in Firebase console.`);
+      await onRefresh();
+      setTimeout(() => setMsg(""), 5000);
+    } catch (e) { setMsg("Error: " + e.message); }
+    setConfirmDel(null); setSaving(false);
+  };
 
   const savePerms = async (uid, updates) => {
     setSaving(true); setMsg("");
@@ -367,7 +406,13 @@ function UsersView({ users, onRefresh }) {
       setNewEmail(""); setNewFirstName(""); setNewLastName(""); setNewRole("user"); setShowAddUser(false);
       await onRefresh();
       setTimeout(() => setMsg(""), 3000);
-    } catch (e) { setMsg("Error: " + e.message); }
+    } catch (e) {
+      const base = e?.message || String(e);
+      const hint = (e?.code === "permission-denied" || /permission|PERMISSION/.test(base))
+        ? " — Firestore rules blocked the write. Your Firestore role must be \"admin\" (see banner above). If you're the super admin, click Sync my role."
+        : "";
+      setMsg("Error: " + base + hint);
+    }
     setAdding(false);
   };
 
@@ -421,6 +466,31 @@ function UsersView({ users, onRefresh }) {
           <div style={{ fontSize: 10, color: B.gray, marginTop: 8 }}>Add users who exist in Firebase Auth but haven't signed in to any app yet. They will appear in the admin panel immediately.</div>
         </Card>
       )}
+
+      {/* Firestore role diagnostic — shows what rules actually see for
+          the signed-in admin. If this isn't "admin", every rule-gated
+          write (add/remove) silently fails. */}
+      <div style={{
+        background: myRole === "admin" ? "#F0FDF4" : "#FEF2F2",
+        borderLeft: `3px solid ${myRole === "admin" ? "#16A34A" : "#DC2626"}`,
+        padding: "10px 14px", borderRadius: 6, marginBottom: 10, fontSize: 11, lineHeight: 1.5,
+        color: myRole === "admin" ? "#166534" : "#991B1B",
+        display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+      }}>
+        <div>
+          <b>Signed in:</b> {currentEmail || "—"} · <b>Firestore role:</b> <code>{myRole ?? "(loading)"}</code>
+          {myRole && myRole !== "admin" && (
+            <div style={{ marginTop: 4 }}>
+              {isSuper
+                ? "You're the super admin but Firestore still shows a non-admin role. Click Sync my role to fix."
+                : "Your Firestore role is not \"admin\", so Add User will be rejected by rules. Ask the super admin (support@sayarah.io) to promote you."}
+            </div>
+          )}
+        </div>
+        {isSuper && myRole !== "admin" && (
+          <Btn onClick={syncMyRole} disabled={syncing} style={{ fontSize: 11 }}>{syncing ? "Syncing..." : "Sync my role"}</Btn>
+        )}
+      </div>
 
       {msg && <div style={{ background: msg.startsWith("Error") ? B.redBg : B.greenBg, color: msg.startsWith("Error") ? B.red : "#166534", padding: "10px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginBottom: 14 }}>{msg}</div>}
 
@@ -588,7 +658,12 @@ function UsersView({ users, onRefresh }) {
                         <Btn variant="ghost" onClick={() => setEditUser(null)} style={{ padding: "6px 12px", fontSize: 11 }}>Cancel</Btn>
                       </div>
                     ) : (
-                      <Btn variant="ghost" onClick={() => setEditUser({ ...u })} style={{ padding: "6px 12px", fontSize: 11 }}>Edit</Btn>
+                      <div style={{ display: "flex", gap: 4 }}>
+                        <Btn variant="ghost" onClick={() => setEditUser({ ...u })} style={{ padding: "6px 12px", fontSize: 11 }}>Edit</Btn>
+                        {u.email !== SUPER_ADMIN && (
+                          <Btn variant="danger" onClick={() => setConfirmDel(u)} style={{ padding: "6px 12px", fontSize: 11 }}>Remove</Btn>
+                        )}
+                      </div>
                     )}
                   </td>
                 </tr>
@@ -599,6 +674,21 @@ function UsersView({ users, onRefresh }) {
         </div>
         {filtered.length === 0 && <div style={{ padding: 32, textAlign: "center", color: B.gray, fontSize: 12 }}>No users found</div>}
       </Card>
+
+      {confirmDel && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+          <Card style={{ maxWidth: 420 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 8 }}>Remove user?</div>
+            <div style={{ fontSize: 12, color: B.grayDark, lineHeight: 1.5, marginBottom: 14 }}>
+              Remove <b>{confirmDel.email}</b> from the Users list? This deletes the Firestore record but NOT the Firebase Auth account — they can still sign in and will recreate a default "user" record.
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
+              <Btn variant="ghost" onClick={() => setConfirmDel(null)}>Cancel</Btn>
+              <Btn variant="danger" onClick={() => handleRemove(confirmDel.id, confirmDel.email)} disabled={saving}>{saving ? "Removing..." : "Remove"}</Btn>
+            </div>
+          </Card>
+        </div>
+      )}
 
       {/* Permissions Guide */}
       <div className="admin-2col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 16 }}>
@@ -1011,6 +1101,10 @@ function AppInner() {
       try {
         if (fbUser) {
           const isSuperAdmin = fbUser.email === SUPER_ADMIN;
+          // Sync the super admin's Firestore role to "admin" so rule-
+          // gated writes (addUserByEmail, deleteUserDoc) don't silently
+          // fail at the Firestore rules layer.
+          try { await ensureUserDoc(fbUser); } catch (e) { console.warn("ensureUserDoc skipped:", e?.message); }
           if (!isSuperAdmin) {
             const role = await getUserRole(fbUser.uid);
             if (role !== "admin") { await firebaseSignOut(); clearTimeout(timeout); setLoaded(true); return; }

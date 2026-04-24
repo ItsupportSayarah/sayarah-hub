@@ -46,28 +46,70 @@ export async function firebaseSignUp(email, password, displayName) {
   return cred.user;
 }
 
-// Sign in existing user (ensures Firestore user doc exists)
+// Super admin email — Firestore rules check this email directly so
+// admin powers work even before the user's Firestore doc has role=admin.
+// Must stay in sync with firestore.rules and the auction app's value.
+export const SUPER_ADMIN_EMAIL = (import.meta.env.VITE_SUPER_ADMIN_EMAIL || "support@sayarah.io").toLowerCase();
+
+// Sign in existing user (ensures Firestore user doc exists AND the
+// super-admin email has role=admin — client treats super admin as
+// admin by email, Firestore rules check the role field. They must
+// agree or every rule-gated write fails silently).
 export async function firebaseSignIn(email, password) {
   const cred = await signInWithEmailAndPassword(auth, email, password);
-  // Ensure user doc exists in Firestore
-  const snap = await getDoc(doc(db, "users", cred.user.uid));
+  const isSuper = (cred.user.email || "").toLowerCase() === SUPER_ADMIN_EMAIL;
+  const ref = doc(db, "users", cred.user.uid);
+  const snap = await getDoc(ref);
   if (!snap.exists()) {
     const name = cred.user.displayName || email.split("@")[0];
-    await setDoc(doc(db, "users", cred.user.uid), {
+    await setDoc(ref, {
       uid: cred.user.uid,
       email: cred.user.email,
       displayName: name,
       firstName: name.split(" ")[0] || "",
       lastName: name.split(" ").slice(1).join(" ") || "",
-      role: "user",
+      role: isSuper ? "admin" : "user",
       logisticsAccess: true,
-      auctionAccess: false,
+      auctionAccess: isSuper ? true : false,
       createdAt: serverTimestamp(),
     });
+  } else if (isSuper && snap.data().role !== "admin") {
+    await setDoc(ref, { role: "admin", auctionAccess: true }, { merge: true });
   }
   // Record login event
   await recordLoginEvent(cred.user.uid);
   return cred.user;
+}
+
+// Ensure the signed-in user has a Firestore doc AND that the super
+// admin has role=admin. Idempotent — safe to call on every auth-state
+// change. Self-writes are always allowed by the rules, so this fires
+// even before the super admin has been promoted.
+export async function ensureUserDoc(fbUser) {
+  if (!fbUser) return null;
+  const isSuper = (fbUser.email || "").toLowerCase() === SUPER_ADMIN_EMAIL;
+  const ref = doc(db, "users", fbUser.uid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    const name = fbUser.displayName || (fbUser.email || "").split("@")[0] || "User";
+    await setDoc(ref, {
+      uid: fbUser.uid,
+      email: fbUser.email,
+      displayName: name,
+      firstName: name.split(" ")[0] || "",
+      lastName: name.split(" ").slice(1).join(" ") || "",
+      role: isSuper ? "admin" : "user",
+      logisticsAccess: true,
+      auctionAccess: isSuper,
+      createdAt: serverTimestamp(),
+    });
+    return { role: isSuper ? "admin" : "user", created: true };
+  }
+  if (isSuper && snap.data().role !== "admin") {
+    await setDoc(ref, { role: "admin", auctionAccess: true }, { merge: true });
+    return { role: "admin", promoted: true };
+  }
+  return snap.data();
 }
 
 // Send password reset email
@@ -246,12 +288,12 @@ export async function createUserDoc(uid, email, displayName, role = "user") {
 }
 
 // ─── Add user by email (creates Firestore doc using email-based ID) ───
-export async function addUserByEmail(email, displayName, role = "user", { firstName, lastName } = {}) {
-  // Check if user already exists by email
+// Deduplicates by email case-insensitively. Returns the created id
+// so the caller can refresh its list / show a success message.
+export async function addUserByEmail(email, displayName, role = "user", { firstName, lastName, allowedTabs, auctionAccess } = {}) {
   const existing = await getDocs(collection(db, "users"));
-  const dup = existing.docs.find(d => d.data().email === email);
+  const dup = existing.docs.find(d => (d.data().email || "").toLowerCase() === email.toLowerCase());
   if (dup) throw new Error("User with this email already exists");
-  // Use lowercase email as deterministic ID (preserves uniqueness)
   const id = email.toLowerCase().replace(/[^a-z0-9@._-]/g, "").replace(/[@.]/g, "_");
   const fn = firstName || displayName?.split(" ")[0] || email.split("@")[0];
   const ln = lastName || displayName?.split(" ").slice(1).join(" ") || "";
@@ -262,10 +304,19 @@ export async function addUserByEmail(email, displayName, role = "user", { firstN
     firstName: fn,
     lastName: ln,
     role,
+    auctionAccess: auctionAccess !== undefined ? auctionAccess : true,
     logisticsAccess: true,
-    auctionAccess: false,
+    allowedTabs: Array.isArray(allowedTabs) ? allowedTabs : null,
+    addedByAdmin: true,
     createdAt: serverTimestamp(),
   });
+  return { id, email };
+}
+
+// Delete a user's Firestore doc. Admin-only. Does not delete the
+// Firebase Auth account — that requires the Admin SDK server-side.
+export async function deleteUserDoc(id) {
+  await deleteDoc(doc(db, "users", id));
 }
 
 // ─── Users list for admin management ───
