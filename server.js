@@ -18,12 +18,16 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "https://apis.google.com", "https://*.firebaseapp.com", "https://*.googleapis.com", "https://unpkg.com", "https://cdn.jsdelivr.net"],
+      // Google reCAPTCHA v2/Enterprise for Phone Auth MFA loads scripts
+      // from www.google.com/recaptcha and www.gstatic.com; the widget
+      // iframes live at www.google.com/recaptcha. Both must be allowed
+      // or MFA enrollment hangs with auth/internal-error.
+      scriptSrc: ["'self'", "'unsafe-inline'", "https://apis.google.com", "https://*.firebaseapp.com", "https://*.googleapis.com", "https://www.google.com", "https://www.gstatic.com", "https://www.recaptcha.net", "https://unpkg.com", "https://cdn.jsdelivr.net"],
       styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      imgSrc: ["'self'", "data:", "blob:", "https://*.googleapis.com", "https://*.googleusercontent.com", "https://firebasestorage.googleapis.com"],
-      connectSrc: ["'self'", "blob:", "https://*.firebaseio.com", "https://*.googleapis.com", "https://*.firebaseapp.com", "wss://*.firebaseio.com", "https://firebasestorage.googleapis.com", "https://identitytoolkit.googleapis.com", "https://securetoken.googleapis.com", "https://ipapi.co", "https://api.ipify.org", "http://ip-api.com", "https://api.anthropic.com", "https://unpkg.com", "https://cdn.jsdelivr.net"],
-      frameSrc: ["'self'", "https://*.firebaseapp.com"],
+      imgSrc: ["'self'", "data:", "blob:", "https://*.googleapis.com", "https://*.googleusercontent.com", "https://firebasestorage.googleapis.com", "https://www.gstatic.com", "https://www.google.com"],
+      connectSrc: ["'self'", "blob:", "https://*.firebaseio.com", "https://*.googleapis.com", "https://*.firebaseapp.com", "wss://*.firebaseio.com", "https://firebasestorage.googleapis.com", "https://identitytoolkit.googleapis.com", "https://securetoken.googleapis.com", "https://www.google.com", "https://www.gstatic.com", "https://www.recaptcha.net", "https://ipapi.co", "https://api.ipify.org", "http://ip-api.com", "https://api.anthropic.com", "https://unpkg.com", "https://cdn.jsdelivr.net"],
+      frameSrc: ["'self'", "https://*.firebaseapp.com", "https://www.google.com", "https://www.recaptcha.net"],
       workerSrc: ["'self'", "blob:"],
       scriptSrcAttr: ["'unsafe-inline'"],
     },
