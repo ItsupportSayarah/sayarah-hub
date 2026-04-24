@@ -7,18 +7,29 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    // ─── Helper: Super admin — hardcoded email, rules can't read env ─
+    // Must stay in sync with SUPER_ADMIN_EMAIL in apps/auction/src/firebase.js
+    // and VITE_SUPER_ADMIN_EMAIL. Super admin is recognized by token
+    // email directly so admin powers work even before a Firestore doc
+    // with role=admin has been created for them.
+    function isSuperAdmin() {
+      return isAuth() && request.auth.token.email == "support@sayarah.io";
+    }
+
     // ─── Helper: Check if user is admin by reading their user doc ───
+    // Super admin bypass first so an initial write (before the
+    // sync-on-signin fires) isn't blocked by a stale role field.
     function isAdmin() {
-      return isAuth() &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+      return isSuperAdmin() || (isAuth() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin");
     }
 
     // ─── Helper: Check if user is admin or manager ───
     function isAdminOrManager() {
-      return isAuth() && (
+      return isSuperAdmin() || (isAuth() && (
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin" ||
         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "manager"
-      );
+      ));
     }
 
     // ─── Users collection ───

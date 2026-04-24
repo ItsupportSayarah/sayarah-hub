@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback, createContext, useContext, Component } from "react";
-import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserProfile, updateUserRole, getAllUsers, addUserByEmail, deleteUserDoc, updateUserPermissions, getUserData, saveAppData, loadAppData, saveSharedData, saveSharedDataTxn, loadSharedData, onSharedDataChange, saveApprovalsFB, loadApprovalsFB, addActivityLogEntryFB, loadActivityLogFB, changePassword, resetPassword, uploadFile, deleteFile } from "./src/firebase.js";
+import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserProfile, updateUserRole, getAllUsers, addUserByEmail, deleteUserDoc, ensureUserDoc, updateUserPermissions, getUserData, saveAppData, loadAppData, saveSharedData, saveSharedDataTxn, loadSharedData, onSharedDataChange, saveApprovalsFB, loadApprovalsFB, addActivityLogEntryFB, loadActivityLogFB, changePassword, resetPassword, uploadFile, deleteFile } from "./src/firebase.js";
 // Pure calculation functions live in src/calc.js so they can be
 // unit-tested (see tests/calc.test.mjs). Every display of Total Cost,
 // Net Profit, Gross Margin, etc. funnels through these — no parallel
@@ -7178,7 +7178,16 @@ function UsersTab() {
       setAddForm({ email: "", firstName: "", lastName: "", role: "user" });
       await load();
       setTimeout(() => setMsg(""), 4000);
-    } catch (e) { setMsg("Error: " + e.message); }
+    } catch (e) {
+      // Firestore "permission-denied" happens when the signed-in user's
+      // Firestore role isn't "admin". Spell this out so the admin can
+      // fix it (sign out + in to trigger the role-sync, or deploy rules).
+      const base = e?.message || String(e);
+      const hint = (e?.code === "permission-denied" || /permission|PERMISSION/.test(base))
+        ? " — Firestore rules blocked the write. Sign out and sign back in as support@sayarah.io, or ask the super-admin to deploy the latest firestore.rules so the super-admin email is recognized."
+        : "";
+      setMsg("Error: " + base + hint);
+    }
     setSaving(false);
   };
 
@@ -7970,6 +7979,11 @@ function AppInner() {
         try {
           if (fbUser) {
             const isSuperAdmin = fbUser.email === (import.meta.env.VITE_SUPER_ADMIN_EMAIL || "support@sayarah.io");
+            // Keep the Firestore user doc in sync BEFORE loading the
+            // profile — ensures the super-admin email has role=admin
+            // stored in Firestore so rule-gated writes (like Add User)
+            // resolve the right role.
+            try { await ensureUserDoc(fbUser); } catch (e) { console.warn("ensureUserDoc skipped:", e?.message); }
             const profile = await getUserProfile(fbUser.uid);
             const role = isSuperAdmin ? "admin" : (profile?.role || "user");
             // Check auction access — same logic as firebaseLogin

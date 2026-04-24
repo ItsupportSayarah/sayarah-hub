@@ -71,23 +71,40 @@ export async function firebaseSignUp(email, password, displayName, { firstName, 
   return cred.user;
 }
 
-// Sign in existing user (ensures Firestore user doc exists)
+// Super admin email is stored in env (build-time) and hardcoded here
+// as a fallback so the client always knows who has auto-admin rights.
+// Firestore rules can't read env vars, so we also have to mirror this
+// email in the rules file (see firestore.rules).
+const SUPER_ADMIN_EMAIL = (import.meta.env.VITE_SUPER_ADMIN_EMAIL || "support@sayarah.io").toLowerCase();
+
+// Sign in existing user (ensures Firestore user doc exists AND that
+// the super-admin email has role=admin on the Firestore doc — the
+// client-side app treats the super-admin email as admin via a simple
+// email check, but Firestore rules check the `role` field. If the two
+// drift (e.g. signup created a "user" role doc for the super admin),
+// every rule-gated write fails silently. We reconcile on every sign-in.
 export async function firebaseSignIn(email, password) {
   const cred = await signInWithEmailAndPassword(auth, email, password);
-  const snap = await getDoc(doc(db, "users", cred.user.uid));
+  const isSuper = (cred.user.email || "").toLowerCase() === SUPER_ADMIN_EMAIL;
+  const ref = doc(db, "users", cred.user.uid);
+  const snap = await getDoc(ref);
   if (!snap.exists()) {
     const name = cred.user.displayName || email.split("@")[0];
-    await setDoc(doc(db, "users", cred.user.uid), {
+    await setDoc(ref, {
       uid: cred.user.uid,
       email: cred.user.email,
       displayName: name,
       firstName: name.split(" ")[0] || "",
       lastName: name.split(" ").slice(1).join(" ") || "",
-      role: "user",
+      role: isSuper ? "admin" : "user",
       logisticsAccess: true,
-      auctionAccess: false,
+      auctionAccess: isSuper ? true : false,
       createdAt: serverTimestamp(),
     });
+  } else if (isSuper && snap.data().role !== "admin") {
+    // Doc exists but role is stale — promote to admin. Self-write is
+    // always allowed by the rules (request.auth.uid == uid).
+    await setDoc(ref, { role: "admin", auctionAccess: true }, { merge: true });
   }
   // Record login event
   await recordLoginEvent(cred.user.uid);
@@ -164,6 +181,39 @@ export async function recordLoginEvent(uid) {
 // Sign out
 export async function firebaseSignOut() {
   await signOut(auth);
+}
+
+// Ensure the signed-in user has a Firestore doc AND that the
+// super-admin email has role="admin" on that doc. Safe to call on
+// every sign-in / every auth-state change — it's idempotent.
+// Matters for every rule-gated write: Firestore rules check the role
+// field, so if the client treats super admin as admin but Firestore
+// still shows "user", writes (like addUserByEmail) silently fail.
+export async function ensureUserDoc(fbUser) {
+  if (!fbUser) return null;
+  const isSuper = (fbUser.email || "").toLowerCase() === SUPER_ADMIN_EMAIL;
+  const ref = doc(db, "users", fbUser.uid);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    const name = fbUser.displayName || (fbUser.email || "").split("@")[0] || "User";
+    await setDoc(ref, {
+      uid: fbUser.uid,
+      email: fbUser.email,
+      displayName: name,
+      firstName: name.split(" ")[0] || "",
+      lastName: name.split(" ").slice(1).join(" ") || "",
+      role: isSuper ? "admin" : "user",
+      logisticsAccess: true,
+      auctionAccess: isSuper,
+      createdAt: serverTimestamp(),
+    });
+    return { role: isSuper ? "admin" : "user", created: true };
+  }
+  if (isSuper && snap.data().role !== "admin") {
+    await setDoc(ref, { role: "admin", auctionAccess: true }, { merge: true });
+    return { role: "admin", promoted: true };
+  }
+  return snap.data();
 }
 
 // Listen for auth state changes
