@@ -7154,8 +7154,38 @@ function UsersTab() {
   const [addForm, setAddForm] = useState({ email: "", firstName: "", lastName: "", role: "user" });
   const [confirmDel, setConfirmDel] = useState(null);
 
+  // Current user's own Firestore role — drives whether + Add User will
+  // succeed. Firestore rules check this role on the calling user's own
+  // doc, not the email. If this shows anything other than "admin", the
+  // write will be rejected silently by rules.
+  const currentEmail = (auth && auth.currentUser && auth.currentUser.email) || "";
+  const currentUid = (auth && auth.currentUser && auth.currentUser.uid) || "";
+  const [myRole, setMyRole] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const isSuper = currentEmail.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
+
+  const loadMyRole = async () => {
+    try {
+      const profile = await getUserProfile(currentUid);
+      setMyRole(profile?.role || "(no Firestore doc)");
+    } catch (e) {
+      setMyRole("(error: " + e.message + ")");
+    }
+  };
+
+  const syncMyRole = async () => {
+    setSyncing(true); setMsg("");
+    try {
+      await ensureUserDoc(auth.currentUser);
+      await loadMyRole();
+      setMsg("Role synced. You can now try + Add User.");
+      setTimeout(() => setMsg(""), 3500);
+    } catch (e) { setMsg("Error syncing role: " + e.message); }
+    setSyncing(false);
+  };
+
   const load = async () => { setLoading(true); try { const u = await getAllUsers(); setUsers(u); } catch (e) { setMsg("Failed to load users: " + e.message); } setLoading(false); };
-  useEffect(() => { if (FIREBASE_ENABLED) load(); }, []);
+  useEffect(() => { if (FIREBASE_ENABLED) { load(); loadMyRole(); } }, []);
 
   const savePerms = async (uid, updates) => {
     setSaving(true); setMsg("");
@@ -7216,6 +7246,31 @@ function UsersTab() {
           <Btn variant="secondary" onClick={load}>↻ Refresh</Btn>
           <Btn onClick={() => setShowAdd(true)}>+ Add User</Btn>
         </div>
+      </div>
+
+      {/* Your own Firestore role — this is what Firestore rules read
+          to decide whether your writes are allowed. If it's not "admin"
+          the + Add User button will silently fail at the rules layer. */}
+      <div style={{
+        background: myRole === "admin" ? "#F0FDF4" : "#FEF2F2",
+        borderLeft: `3px solid ${myRole === "admin" ? "#16A34A" : "#DC2626"}`,
+        padding: "10px 14px", borderRadius: 6, marginBottom: 10, fontSize: 11, lineHeight: 1.5,
+        color: myRole === "admin" ? "#166534" : "#991B1B",
+        display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10,
+      }}>
+        <div>
+          <b>Your signed-in account:</b> {currentEmail || "—"} · <b>Firestore role:</b> <code>{myRole ?? "(loading)"}</code>
+          {myRole && myRole !== "admin" && (
+            <div style={{ marginTop: 4 }}>
+              {isSuper
+                ? "You're the super admin but Firestore still shows you as a non-admin. Click \"Sync my role\" to promote yourself."
+                : "Your Firestore role is not \"admin\", so + Add User writes will be blocked by Firestore rules. Ask the super admin (support@sayarah.io) to promote you."}
+            </div>
+          )}
+        </div>
+        {isSuper && myRole !== "admin" && (
+          <Btn size="sm" onClick={syncMyRole} disabled={syncing}>{syncing ? "Syncing..." : "Sync my role"}</Btn>
+        )}
       </div>
 
       <div style={{ background: "#EFF6FF", borderLeft: `3px solid #3B82F6`, padding: "10px 14px", borderRadius: 6, marginBottom: 14, fontSize: 11, color: "#1E3A8A", lineHeight: 1.5 }}>
