@@ -203,71 +203,61 @@ test("vehiclePurchaseFromMemberEntry: member capital up, inventory up", () => {
   assert.equal(capLine.credit, 5000);
 });
 
-// ─── Vehicle sale allocation — the core Atlantic Fund flow ───
-test("vehicleSaleEntries: profitable sale → principal back, $295 tax, rest to distribution", () => {
-  const [saleEntry, allocEntry] = vehicleSaleEntries({
+// ─── Vehicle sale (new CPA-approved three-entry pattern) ───
+// Per the Accounting spec: one entry for cash+revenue+sales-tax,
+// one for COGS+inventory relief, one for tax-reserve accrual.
+// Principal return to fund is an INTERNAL sub-ledger event, not
+// a journal entry — it doesn't appear on external statements.
+test("vehicleSaleEntries: profitable sale posts 3 clean entries (revenue, COGS, tax reserve)", () => {
+  const entries = vehicleSaleEntries({
     stockNum: "001",
     totalCost: 9000,
     grossSale: 12000,
-    principalDestination: { type: "fund" },
     date: "2025-02-20",
     user: "u",
+    destination: "out_of_state_us",
   });
-  assert.equal(validateJournalEntry(saleEntry), null);
-  assert.equal(validateJournalEntry(allocEntry), null);
+  assert.equal(entries.length, 3);
+  for (const e of entries) assert.equal(validateJournalEntry(e), null);
 
-  const fundLine = allocEntry.lines.find((l) => l.accountId === SYSTEM_ACCOUNTS.ATLANTIC_FUND);
-  assert.equal(fundLine.debit, 9000, "principal returns to fund");
+  const saleEntry = entries.find((e) => e.ref?.type === "vehicle_sale");
+  assert.ok(saleEntry, "sale entry present");
+  const bankLine = saleEntry.lines.find((l) => l.accountId === SYSTEM_ACCOUNTS.SAYARAH_BANK);
+  assert.equal(bankLine.debit, 12000, "bank +12K on out-of-state sale (no sales tax)");
+  const revLine = saleEntry.lines.find((l) => l.accountId === SYSTEM_ACCOUNTS.REVENUE_VEHICLE_SALES);
+  assert.equal(revLine.credit, 12000);
 
-  const taxLine = allocEntry.lines.find((l) => l.accountId === SYSTEM_ACCOUNTS.TAX);
-  assert.equal(taxLine.credit, TAX_PER_SALE);
+  const cogsEntry = entries.find((e) => e.ref?.type === "vehicle_cogs");
+  assert.ok(cogsEntry, "COGS entry present");
 
-  const distLine = allocEntry.lines.find((l) => l.accountId === SYSTEM_ACCOUNTS.PROFIT_DISTRIBUTION);
-  // Profit = 12000 − 9000 = 3000. Tax skim = 295. Distributable = 2705.
-  assert.equal(distLine.credit, 3000 - TAX_PER_SALE);
+  const taxEntry = entries.find((e) => e.ref?.type === "tax_reserve");
+  assert.ok(taxEntry, "tax reserve entry present");
+  const taxExp = taxEntry.lines.find((l) => l.accountId === SYSTEM_ACCOUNTS.TAX_RESERVE_EXPENSE);
+  assert.equal(taxExp.debit, TAX_PER_SALE);
+  const taxLiab = taxEntry.lines.find((l) => l.accountId === SYSTEM_ACCOUNTS.ACCRUED_TAX_LIABILITY);
+  assert.equal(taxLiab.credit, TAX_PER_SALE);
 });
 
-test("vehicleSaleEntries: break-even sale → no distribution, no tax skim beyond profit", () => {
-  const [saleEntry, allocEntry] = vehicleSaleEntries({
-    stockNum: "003",
-    totalCost: 10000,
-    grossSale: 10000,
-    principalDestination: { type: "fund" },
-    date: "2025-02-20",
-    user: "u",
-  });
-  assert.equal(validateJournalEntry(saleEntry), null);
-  assert.equal(validateJournalEntry(allocEntry), null);
-  const taxLine = allocEntry.lines.find((l) => l.accountId === SYSTEM_ACCOUNTS.TAX);
-  assert.ok(!taxLine, "no tax skim on a break-even deal");
-});
-
-test("vehicleSaleEntries: loss sale → principal back, no distribution, no tax", () => {
-  const [saleEntry, allocEntry] = vehicleSaleEntries({
+test("vehicleSaleEntries: loss sale still accrues full $295 tax reserve per CPA pattern", () => {
+  const entries = vehicleSaleEntries({
     stockNum: "004",
     totalCost: 10000,
-    grossSale: 9000, // $1,000 loss
-    principalDestination: { type: "fund" },
+    grossSale: 9000,
     date: "2025-02-20",
     user: "u",
+    destination: "out_of_state_us",
   });
-  assert.equal(validateJournalEntry(saleEntry), null);
-  assert.equal(validateJournalEntry(allocEntry), null);
-  const taxLine = allocEntry.lines.find((l) => l.accountId === SYSTEM_ACCOUNTS.TAX);
-  assert.ok(!taxLine, "no tax skim on a loss");
+  const taxEntry = entries.find((e) => e.ref?.type === "tax_reserve");
+  assert.ok(taxEntry, "tax reserve still accrues on loss — CPA flat $295 policy");
+  const liab = taxEntry.lines.find((l) => l.accountId === SYSTEM_ACCOUNTS.ACCRUED_TAX_LIABILITY);
+  assert.equal(liab.credit, TAX_PER_SALE);
 });
 
-test("vehicleSaleEntries: member-funded vehicle → principal returns to member capital", () => {
-  const [, allocEntry] = vehicleSaleEntries({
-    stockNum: "005",
-    totalCost: 8000,
-    grossSale: 10000,
-    principalDestination: { type: "member", memberId: "m2" },
-    date: "2025-02-20",
-    user: "u",
-  });
-  const principalLine = allocEntry.lines.find((l) => l.accountId === memberAccountId("m2"));
-  assert.equal(principalLine.debit, 8000);
+test("fundPrincipalReturnEvent: internal sub-ledger event, not a JE", () => {
+  const ev = fundPrincipalReturnEvent({ stockNum: "001", amount: 9000, destination: { type: "fund" }, date: "2025-02-20", user: "u" });
+  assert.equal(ev.type, "principal_return");
+  assert.equal(ev.amount, 9000);
+  assert.ok(!ev.lines, "sub-ledger event has no journal lines");
 });
 
 // ─── Month-end distribution ──────────────────────────────────
@@ -327,6 +317,12 @@ test("buildReversingEntry flips debits and credits and references the original",
 });
 
 // ─── End-to-end scenario: one month, one vehicle, full flow ──
+// Exercises the CPA-approved three-entry sale pattern. Principal is
+// not "returned to the fund" as a JE anymore — that's an internal
+// sub-ledger event. The profit sits in Revenue / COGS / Tax Reserve
+// until month-end, when a closing-style entry moves net income into
+// the PROFIT_DISTRIBUTION clearing account so distributeMonthEndEntry
+// can split it to members.
 test("end-to-end: 3 members contribute $25K, fund buys & sells a vehicle, month-end distributes", () => {
   const members = [{ id: "m1" }, { id: "m2" }, { id: "m3" }];
   let ledger = [];
@@ -336,7 +332,7 @@ test("end-to-end: 3 members contribute $25K, fund buys & sells a vehicle, month-
     vehicleAccount("001", "2020 Test Vehicle"),
   ];
 
-  // 1. Three contributions of $25K paid.
+  // 1. Three contributions of $25K paid, each allocated to the fund.
   for (const m of members) {
     ledger = postJournalEntry(ledger, contributionPaidEntryBalanced({ memberId: m.id, month: "2025-01", amount: 25000, user: "u" }));
     ledger = postJournalEntry(ledger, allocateToFundEntry({ amount: 25000, user: "u" }));
@@ -351,39 +347,63 @@ test("end-to-end: 3 members contribute $25K, fund buys & sells a vehicle, month-
   assert.equal(balances[SYSTEM_ACCOUNTS.ATLANTIC_FUND], 15000);
   assert.equal(balances[vehicleAccountId("001")], 60000);
 
-  // 3. Vehicle sells for $72K.
-  const [sale, alloc] = vehicleSaleEntries({
+  // 3. Vehicle sells for $72K out-of-state → new 3-entry pattern:
+  //    sale (cash/revenue), COGS/inventory, tax reserve.
+  const saleEntries = vehicleSaleEntries({
     stockNum: "001",
     totalCost: 60000,
     grossSale: 72000,
-    principalDestination: { type: "fund" },
+    destination: "out_of_state_us",
     date: "2025-01-25",
     user: "u",
   });
-  ledger = postJournalEntry(ledger, sale);
-  ledger = postJournalEntry(ledger, alloc);
+  assert.equal(saleEntries.length, 3, "new pattern posts three entries");
+  for (const e of saleEntries) ledger = postJournalEntry(ledger, e);
   balances = calcAllBalances(ledger, accounts);
 
-  // Fund restored to 75K (had 15K, +60K principal back).
-  assert.equal(balances[SYSTEM_ACCOUNTS.ATLANTIC_FUND], 75000);
-  // Tax: $295.
-  assert.equal(balances[SYSTEM_ACCOUNTS.TAX], TAX_PER_SALE);
-  // Profit distribution: 12000 − 295 = 11705.
-  assert.equal(balances[SYSTEM_ACCOUNTS.PROFIT_DISTRIBUTION], 12000 - TAX_PER_SALE);
+  // Inventory cleared, bank received gross (no in-state tax), accrued tax reserve + tax reserve expense recognized.
+  assert.equal(balances[vehicleAccountId("001")], 0, "inventory cleared after sale");
+  assert.equal(balances[SYSTEM_ACCOUNTS.ACCRUED_TAX_LIABILITY], TAX_PER_SALE);
+  assert.equal(balances["revenue:vehicle-sales"], 72000);
+  assert.equal(balances["expense:cogs-vehicles"], 60000);
+  assert.equal(balances["expense:tax-reserve"], TAX_PER_SALE);
 
-  // 4. Month-end: distribute 11705 equally across 3 members.
+  // Principal-return is NOT a JE — record the internal sub-ledger event instead.
+  // Atlantic Fund balance stays at 15K (cash sits in bank, not the fund).
+  assert.equal(balances[SYSTEM_ACCOUNTS.ATLANTIC_FUND], 15000, "fund untouched by sale JE (principal return is sub-ledger)");
+
+  // 4. Month-end: post a closing-style entry to move net income
+  //    (revenue - cogs - tax reserve expense) into the profit
+  //    distribution clearing account, then allocate to members.
+  const netIncome = 72000 - 60000 - TAX_PER_SALE; // 11705
+  const closeToDistribution = buildJournalEntry({
+    date: "2025-01-31",
+    memo: "Month-end: close net income to distribution clearing",
+    user: "admin",
+    ref: { type: "month_end_close", month: "2025-01" },
+    lines: [
+      { accountId: "revenue:vehicle-sales", debit: 72000, credit: 0 },
+      { accountId: "expense:cogs-vehicles", debit: 0, credit: 60000 },
+      { accountId: "expense:tax-reserve", debit: 0, credit: TAX_PER_SALE },
+      { accountId: SYSTEM_ACCOUNTS.PROFIT_DISTRIBUTION, debit: 0, credit: netIncome },
+    ],
+  });
+  ledger = postJournalEntry(ledger, closeToDistribution);
+
   const distEntry = distributeMonthEndEntry({
     month: "2025-01",
     members,
-    profitBalance: balances[SYSTEM_ACCOUNTS.PROFIT_DISTRIBUTION],
+    profitBalance: netIncome,
     user: "admin",
   });
   ledger = postJournalEntry(ledger, distEntry);
   balances = calcAllBalances(ledger, accounts);
-  assert.ok(Math.abs(balances[SYSTEM_ACCOUNTS.PROFIT_DISTRIBUTION]) < 0.01, "distribution account zeroed");
+
+  assert.ok(Math.abs(balances[SYSTEM_ACCOUNTS.PROFIT_DISTRIBUTION]) < 0.01, "distribution clearing zeroed");
+
   // Each member's capital should now be 25000 + share of 11705.
   const totalMemberCapital = members.reduce((s, m) => s + balances[memberAccountId(m.id)], 0);
-  const expectedTotal = 75000 + (12000 - TAX_PER_SALE);
+  const expectedTotal = 75000 + netIncome;
   assert.ok(Math.abs(totalMemberCapital - expectedTotal) < 0.01,
     `total member capital should be ${expectedTotal}, got ${totalMemberCapital}`);
 });
@@ -691,4 +711,239 @@ test("salesTaxOnSaleEntry: in-state posts a balanced entry; exempt returns null"
 
   assert.equal(salesTaxOnSaleEntry({ stockNum: "008", grossPrice: 20000, destination: "out_of_state_us", date: "2025-05-10", user: "u" }), null);
   assert.equal(salesTaxOnSaleEntry({ stockNum: "009", grossPrice: 20000, destination: "international", date: "2025-05-10", user: "u" }), null);
+});
+
+// ═══════════════════════════════════════════════════════════════
+// CPA-SIGNED-OFF SCENARIOS (8–15) — regression tests for the
+// exact journal entries approved before coding. If any of these
+// break, statements are wrong — flag CPA before merging.
+// ═══════════════════════════════════════════════════════════════
+import {
+  INTERNAL_ONLY_ACCOUNTS,
+  isExternalAccount,
+  memberDistributionsId,
+  memberDistributionsAccount,
+  distributionCashPayoutEntry,
+  closeMemberDistributionsEntry,
+  calcTrialBalance,
+  calcCashFlow,
+  calcStatementOfMemberEquity,
+  calcVehicleProfitabilityReport,
+  calcOutOfStateSalesReport,
+  generateSalesTaxFilingsForMonth,
+  canClosePeriod,
+  fundPrincipalReturnEvent,
+} from "../apps/auction/src/money.js";
+
+test("Atlantic Fund is internal-only (never on external statements)", () => {
+  assert.ok(INTERNAL_ONLY_ACCOUNTS.has(SYSTEM_ACCOUNTS.ATLANTIC_FUND));
+  assert.equal(isExternalAccount(SYSTEM_ACCOUNTS.ATLANTIC_FUND), false);
+  assert.equal(isExternalAccount(SYSTEM_ACCOUNTS.SAYARAH_BANK), true);
+});
+
+test("Scenario 9 — Sale $30K, cost $25K: revenue, COGS, tax reserve post cleanly", () => {
+  const accounts = [
+    ...DEFAULT_ACCOUNTS,
+    vehicleAccount("1", "2020 Test"),
+  ];
+  // Pre-seed: vehicle inventory at $25K cost from a prior purchase
+  let ledger = postJournalEntry([], buildJournalEntry({
+    date: "2024-12-15",
+    lines: [
+      { accountId: vehicleAccountId("1"), debit: 25000, credit: 0 },
+      { accountId: SYSTEM_ACCOUNTS.SAYARAH_BANK, debit: 0, credit: 25000 },
+    ],
+  }));
+  // Sale at $30K out-of-state (no sales tax)
+  const entries = vehicleSaleEntries({
+    stockNum: "1", totalCost: 25000, grossSale: 30000,
+    principalDestination: { type: "fund" },
+    date: "2025-01-20", user: "u", destination: "out_of_state_us",
+  });
+  assert.equal(entries.length, 3, "three clean entries: sale, COGS, tax reserve");
+  for (const e of entries) ledger = postJournalEntry(ledger, e);
+
+  const pl = calcProfitLoss(ledger, accounts, "2025-01-01", "2025-01-31");
+  assert.equal(pl.revenue, 30000);
+  assert.equal(pl.cogs, 25000);
+  assert.equal(pl.grossProfit, 5000);
+  assert.equal(pl.netIncome, 5000 - 295, "net income = gross profit − tax reserve");
+
+  const bs = calcBalanceSheet(ledger, accounts, "2025-01-31");
+  assert.ok(bs.liabilities[SYSTEM_ACCOUNTS.ACCRUED_TAX_LIABILITY], "accrued tax liability on balance sheet");
+  assert.equal(bs.liabilities[SYSTEM_ACCOUNTS.ACCRUED_TAX_LIABILITY].balance, 295);
+});
+
+test("Scenario 13 — In-state MA sale posts sales tax; bank = gross + tax", () => {
+  const accounts = [...DEFAULT_ACCOUNTS, vehicleAccount("1", "Test")];
+  let ledger = postJournalEntry([], buildJournalEntry({
+    date: "2024-12-15",
+    lines: [
+      { accountId: vehicleAccountId("1"), debit: 25000, credit: 0 },
+      { accountId: SYSTEM_ACCOUNTS.SAYARAH_BANK, debit: 0, credit: 25000 },
+    ],
+  }));
+  const entries = vehicleSaleEntries({
+    stockNum: "1", totalCost: 25000, grossSale: 30000,
+    date: "2025-01-20", user: "u", destination: "in_state_ma",
+  });
+  for (const e of entries) ledger = postJournalEntry(ledger, e);
+
+  const bs = calcBalanceSheet(ledger, accounts, "2025-01-31");
+  assert.ok(bs.liabilities[SYSTEM_ACCOUNTS.SALES_TAX_PAYABLE], "sales tax payable on BS");
+  assert.equal(bs.liabilities[SYSTEM_ACCOUNTS.SALES_TAX_PAYABLE].balance, 1875, "6.25% of $30K");
+});
+
+test("Scenario 14 — Out-of-state sale: no MA sales tax; bank = gross only", () => {
+  const accounts = [...DEFAULT_ACCOUNTS, vehicleAccount("1", "Test")];
+  let ledger = postJournalEntry([], buildJournalEntry({
+    date: "2024-12-15",
+    lines: [
+      { accountId: vehicleAccountId("1"), debit: 25000, credit: 0 },
+      { accountId: SYSTEM_ACCOUNTS.SAYARAH_BANK, debit: 0, credit: 25000 },
+    ],
+  }));
+  const entries = vehicleSaleEntries({
+    stockNum: "1", totalCost: 25000, grossSale: 30000,
+    date: "2025-01-20", user: "u", destination: "out_of_state_us",
+  });
+  for (const e of entries) ledger = postJournalEntry(ledger, e);
+
+  const bs = calcBalanceSheet(ledger, accounts, "2025-01-31");
+  assert.ok(!bs.liabilities[SYSTEM_ACCOUNTS.SALES_TAX_PAYABLE], "no sales tax liability on out-of-state sale");
+});
+
+test("Scenario 15 — International export: no US sales tax", () => {
+  const accounts = [...DEFAULT_ACCOUNTS, vehicleAccount("1", "Test")];
+  let ledger = postJournalEntry([], buildJournalEntry({
+    date: "2024-12-15",
+    lines: [
+      { accountId: vehicleAccountId("1"), debit: 25000, credit: 0 },
+      { accountId: SYSTEM_ACCOUNTS.SAYARAH_BANK, debit: 0, credit: 25000 },
+    ],
+  }));
+  const entries = vehicleSaleEntries({
+    stockNum: "1", totalCost: 25000, grossSale: 30000,
+    date: "2025-01-20", user: "u", destination: "international",
+  });
+  for (const e of entries) ledger = postJournalEntry(ledger, e);
+  const bs = calcBalanceSheet(ledger, accounts, "2025-01-31");
+  assert.ok(!bs.liabilities[SYSTEM_ACCOUNTS.SALES_TAX_PAYABLE], "no sales tax on export");
+});
+
+test("Trial Balance: total debits == total credits when ledger is healthy", () => {
+  const accounts = [...DEFAULT_ACCOUNTS, memberAccount("m1", "Alice")];
+  let ledger = [];
+  ledger = postJournalEntry(ledger, contributionPaidEntryBalanced({ memberId: "m1", month: "2025-01", amount: 50000, user: "u" }));
+  const tb = calcTrialBalance(ledger, accounts, "2025-01-31");
+  assert.equal(tb.balanced, true, `TB must balance: ${tb.totalDebit} debit vs ${tb.totalCredit} credit`);
+});
+
+test("Cash Flow reconciles: opening + net change = closing", () => {
+  const accounts = [...DEFAULT_ACCOUNTS, memberAccount("m1", "Alice")];
+  let ledger = [];
+  ledger = postJournalEntry(ledger, contributionPaidEntryBalanced({ memberId: "m1", month: "2025-01", amount: 50000, user: "u" }));
+  const cf = calcCashFlow(ledger, accounts, "2025-01-01", "2025-01-31");
+  assert.equal(cf.reconciles, true);
+  assert.equal(cf.financing, 50000, "member contribution is a financing inflow");
+  assert.equal(cf.opening, 0);
+  assert.equal(cf.closing, 50000);
+});
+
+test("Contra-equity member distributions: cash payout reduces net equity", () => {
+  const accounts = [
+    ...DEFAULT_ACCOUNTS,
+    memberAccount("m1", "Alice"),
+    memberDistributionsAccount("m1", "Alice"),
+  ];
+  let ledger = [];
+  // Seed $10K member capital
+  ledger = postJournalEntry(ledger, contributionPaidEntryBalanced({ memberId: "m1", month: "2025-01", amount: 10000, user: "u" }));
+  // $2K cash distribution
+  const payout = distributionCashPayoutEntry({ memberId: "m1", memberName: "Alice", amount: 2000, date: "2025-01-25", user: "admin", month: "2025-01" });
+  ledger = postJournalEntry(ledger, payout);
+
+  const bs = calcBalanceSheet(ledger, accounts, "2025-01-31");
+  // Net equity after payout = $10K capital − $2K distributions contra = $8K
+  assert.equal(bs.totals.equity, 8000, "contra-equity properly reduces net equity");
+  // Bank: $10K in − $2K out = $8K
+  assert.equal(bs.totals.assets, 8000);
+});
+
+test("Year-end close-distributions: zeros contras and reduces capital", () => {
+  const accounts = [
+    ...DEFAULT_ACCOUNTS,
+    memberAccount("m1", "Alice"),
+    memberDistributionsAccount("m1", "Alice"),
+  ];
+  let ledger = [];
+  ledger = postJournalEntry(ledger, contributionPaidEntryBalanced({ memberId: "m1", month: "2025-01", amount: 10000, user: "u" }));
+  ledger = postJournalEntry(ledger, distributionCashPayoutEntry({ memberId: "m1", memberName: "Alice", amount: 2000, date: "2025-06-30", user: "admin", month: "2025-06" }));
+  // Year-end close
+  const balances = calcAllBalances(ledger, accounts);
+  const closeEntry = closeMemberDistributionsEntry({ members: [{ id: "m1" }], balances, date: "2025-12-31", user: "admin" });
+  ledger = postJournalEntry(ledger, closeEntry);
+
+  const bsAfter = calcAllBalances(ledger, accounts);
+  assert.equal(bsAfter[memberDistributionsId("m1")], 0, "distributions contra zeroed");
+  assert.equal(bsAfter[memberAccountId("m1")], 8000, "capital reduced by distributions");
+});
+
+test("MA sales tax filings: idempotent, zero-amount records generated", () => {
+  const first = generateSalesTaxFilingsForMonth([], "2025-03");
+  assert.equal(first.length, 1);
+  assert.equal(first[0].status, "pending");
+  assert.equal(first[0].amount, null, "amount null until filed");
+  const second = generateSalesTaxFilingsForMonth(first, "2025-03");
+  assert.equal(second.length, 1, "idempotent — no duplicate for same month");
+});
+
+test("canClosePeriod: blocks on unreconciled bank rows", () => {
+  const err = canClosePeriod({
+    month: "2025-03",
+    bankImports: [{ date: "2025-03-15", matchedEntryId: null, ignored: false }],
+    salesTaxFilings: [{ month: "2025-03", status: "filed" }],
+  });
+  assert.match(err, /unreconciled/i);
+});
+
+test("canClosePeriod: blocks on unfiled sales tax return", () => {
+  const err = canClosePeriod({
+    month: "2025-03",
+    bankImports: [],
+    salesTaxFilings: [{ month: "2025-03", status: "pending" }],
+  });
+  assert.match(err, /sales tax filing/i);
+});
+
+test("canClosePeriod: allows close when both gates pass", () => {
+  const err = canClosePeriod({
+    month: "2025-03",
+    bankImports: [{ date: "2025-03-15", matchedEntryId: "je_1", ignored: false }],
+    salesTaxFilings: [{ month: "2025-03", status: "filed" }],
+  });
+  assert.equal(err, null);
+});
+
+test("Out-of-state sales report: excludes in-state, includes OOS + export", () => {
+  const accounts = [...DEFAULT_ACCOUNTS, vehicleAccount("1", "T"), vehicleAccount("2", "T2"), vehicleAccount("3", "T3")];
+  let ledger = [];
+  // Pre-seed inventory for all three
+  for (const stock of ["1", "2", "3"]) {
+    ledger = postJournalEntry(ledger, buildJournalEntry({
+      date: "2024-12-15",
+      lines: [
+        { accountId: vehicleAccountId(stock), debit: 20000, credit: 0 },
+        { accountId: SYSTEM_ACCOUNTS.SAYARAH_BANK, debit: 0, credit: 20000 },
+      ],
+    }));
+  }
+  for (const [stock, dest] of [["1", "in_state_ma"], ["2", "out_of_state_us"], ["3", "international"]]) {
+    const entries = vehicleSaleEntries({ stockNum: stock, totalCost: 20000, grossSale: 25000, date: "2025-01-15", user: "u", destination: dest });
+    for (const e of entries) ledger = postJournalEntry(ledger, e);
+  }
+  const rows = calcOutOfStateSalesReport(ledger, "2025-01-01", "2025-01-31");
+  assert.equal(rows.length, 2, "excludes in-state");
+  const destinations = rows.map((r) => r.destination).sort();
+  assert.deepEqual(destinations, ["international", "out_of_state_us"]);
 });

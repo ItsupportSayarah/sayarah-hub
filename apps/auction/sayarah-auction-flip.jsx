@@ -63,6 +63,22 @@ import {
   SALE_DESTINATIONS,
   calcMaSalesTaxOnSale,
   salesTaxOnSaleEntry,
+  // Accounting tab helpers
+  INTERNAL_ONLY_ACCOUNTS,
+  isExternalAccount,
+  memberDistributionsId,
+  memberDistributionsAccount,
+  distributionCashPayoutEntry,
+  closeMemberDistributionsEntry,
+  fundPrincipalReturnEvent,
+  calcTrialBalance,
+  calcCashFlow,
+  calcStatementOfMemberEquity,
+  generateSalesTaxFilingsForMonth,
+  calcSalesTaxFilingAmount,
+  canClosePeriod,
+  calcOutOfStateSalesReport,
+  calcVehicleProfitabilityReport,
 } from "./src/money.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
@@ -4496,7 +4512,7 @@ function ActivityTab() {
 // USERS MANAGEMENT — Firebase Admin Panel
 // ═══════════════════════════════════════════════════════════════
 const SUPER_ADMIN_EMAIL = import.meta.env.VITE_SUPER_ADMIN_EMAIL || "support@sayarah.io";
-const ALL_AUCTION_TABS = ["Dashboard", "Pipeline", "Inventory", "Mileage", "Analytics", "Calendar", "Reports", "Approvals", "Activity", "Settings"];
+const ALL_AUCTION_TABS = ["Dashboard", "Pipeline", "Inventory", "Mileage", "Analytics", "Calendar", "Reports", "Accounting", "Approvals", "Activity", "Settings"];
 const USER_ROLES = [
   { key: "admin", label: "Admin", color: "#D97706", bg: "#FEF3C7" },
   { key: "manager", label: "Manager", color: "#2563EB", bg: "#DBEAFE" },
@@ -5107,6 +5123,698 @@ function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
         />
       )}
     </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ACCOUNTING TAB — external, CPA-facing view. Separate from Money
+// Management (which is management-only). The Atlantic Fund is
+// filtered out of every external statement via isExternalAccount().
+// Four core statements + supporting reports + period-close gate.
+// ═══════════════════════════════════════════════════════════════
+function AccountingTab({ data, setData, username, userRole, darkMode }) {
+  const money = data.money || { accounts: DEFAULT_ACCOUNTS, members: [], ledger: [], contributions: [], approvals: [], bankImports: [], salesTaxFilings: [] };
+  const admin = isAdmin(userRole);
+  const ledger = money.ledger || [];
+  const accounts = money.accounts || DEFAULT_ACCOUNTS;
+  const members = money.members || [];
+  const today = new Date().toISOString().slice(0, 10);
+  const startOfYear = today.slice(0, 4) + "-01-01";
+
+  const [view, setView] = useState("statements");
+  const [statementView, setStatementView] = useState("pl");
+  const [reportView, setReportView] = useState("trial_balance");
+  const [startDate, setStartDate] = useState(startOfYear);
+  const [endDate, setEndDate] = useState(today);
+  const [compare, setCompare] = useState(false);
+
+  // Previous-period window (same length, immediately before current).
+  const { prevStart, prevEnd } = useMemo(() => {
+    const s = new Date(startDate); const e = new Date(endDate);
+    const days = Math.max(1, Math.round((e - s) / 86400000));
+    const pe = new Date(s); pe.setDate(pe.getDate() - 1);
+    const ps = new Date(pe); ps.setDate(ps.getDate() - days);
+    return { prevStart: ps.toISOString().slice(0, 10), prevEnd: pe.toISOString().slice(0, 10) };
+  }, [startDate, endDate]);
+
+  const balances = useMemo(() => calcAllBalances(ledger, accounts), [ledger, accounts]);
+  const pl = useMemo(() => calcProfitLoss(ledger, accounts, startDate, endDate), [ledger, accounts, startDate, endDate]);
+  const plPrev = useMemo(() => compare ? calcProfitLoss(ledger, accounts, prevStart, prevEnd) : null, [compare, ledger, accounts, prevStart, prevEnd]);
+  const bs = useMemo(() => calcBalanceSheet(ledger, accounts, endDate), [ledger, accounts, endDate]);
+  const bsPrev = useMemo(() => compare ? calcBalanceSheet(ledger, accounts, prevEnd) : null, [compare, ledger, accounts, prevEnd]);
+  const cf = useMemo(() => calcCashFlow(ledger, accounts, startDate, endDate), [ledger, accounts, startDate, endDate]);
+  const sme = useMemo(() => calcStatementOfMemberEquity(ledger, accounts, members, startDate, endDate), [ledger, accounts, members, startDate, endDate]);
+  const tb = useMemo(() => calcTrialBalance(ledger, accounts, endDate), [ledger, accounts, endDate]);
+  const oosReport = useMemo(() => calcOutOfStateSalesReport(ledger, startDate, endDate), [ledger, startDate, endDate]);
+  // calcVehicleProfitabilityReport reads v.__totalCost (so money.js
+  // stays decoupled from calc.js). Enrich each vehicle with its full
+  // Total Cost — including tracked expenses — before calling through.
+  const vehicleProfit = useMemo(() => {
+    const expenses = data.expenses || [];
+    const enriched = (data.vehicles || []).map(v => ({
+      ...v,
+      __totalCost: calcTotalCost(v, expenses),
+    }));
+    return calcVehicleProfitabilityReport({
+      vehicles: enriched, sales: data.sales || [], expenses,
+      holdCosts: data.holdCosts, ledger, startDate, endDate,
+    });
+  }, [data.vehicles, data.sales, data.expenses, data.holdCosts, ledger, startDate, endDate]);
+
+  // Expense-only slice of the P&L account breakdown — used by the
+  // P&L statement view and the CSV export.
+  const plExpenseRows = useMemo(() => {
+    const rows = [];
+    for (const [id, amount] of Object.entries(pl.byAccount || {})) {
+      const acc = accounts.find(a => a.id === id);
+      if (!acc || acc.type !== "expense") continue;
+      if (id === SYSTEM_ACCOUNTS.COGS_VEHICLES || acc.isCogs) continue;
+      rows.push({ id, name: acc.name, amount });
+    }
+    return rows.sort((a, b) => b.amount - a.amount);
+  }, [pl, accounts]);
+
+  // Dashboard tiles — computed once from the P&L + Balance Sheet.
+  const dash = useMemo(() => {
+    const revenue = pl.revenue || 0;
+    const cogs = pl.cogs || 0;
+    const grossProfit = pl.grossProfit != null ? pl.grossProfit : (revenue - cogs);
+    const netIncome = pl.netIncome || 0;
+    const grossMargin = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
+    const cashOnHand = balances[SYSTEM_ACCOUNTS.SAYARAH_BANK] || 0;
+    const inventoryValue = Object.keys(balances).filter(id => id.startsWith("asset:vehicle:")).reduce((s, id) => s + (balances[id] || 0), 0);
+    const accruedTax = balances[SYSTEM_ACCOUNTS.ACCRUED_TAX_LIABILITY] || 0;
+    const salesTaxDue = balances[SYSTEM_ACCOUNTS.SALES_TAX_PAYABLE] || 0;
+    const useTaxDue = balances[SYSTEM_ACCOUNTS.USE_TAX_PAYABLE] || 0;
+    const totalEquity = (bs.totals && bs.totals.equity) || 0;
+    return { revenue, grossProfit, netIncome, grossMargin, cashOnHand, inventoryValue, accruedTax, salesTaxDue, useTaxDue, totalEquity };
+  }, [pl, balances, bs]);
+
+  // ── Shared render helpers ──
+  const headerStyle = { fontSize: 11, fontWeight: 800, color: BRAND.red, textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 12 };
+  const rowStyle = { display: "flex", justifyContent: "space-between", padding: "8px 0", borderBottom: `1px solid ${BRAND.grayLight}`, fontSize: 13 };
+  const labelStyle = { color: BRAND.black };
+  const valStyle = { ...S.mono, fontWeight: 700, color: BRAND.black };
+  const delta = (cur, prev) => {
+    if (!compare || prev == null || prev === 0) return null;
+    const pct = ((cur - prev) / Math.abs(prev)) * 100;
+    const up = pct >= 0;
+    return <span style={{ ...S.mono, fontSize: 10, color: up ? "#047857" : "#B91C1C", marginLeft: 8, fontWeight: 700 }}>{up ? "▲" : "▼"} {Math.abs(pct).toFixed(1)}%</span>;
+  };
+
+  // ── CSV export helpers ──
+  const exportPL = () => {
+    const rows = [];
+    rows.push(["Revenue", pl.revenue || 0]);
+    rows.push(["Cost of Goods Sold", -(pl.cogs || 0)]);
+    rows.push(["Gross Profit", pl.grossProfit || 0]);
+    for (const r of plExpenseRows) rows.push([r.name, -r.amount]);
+    rows.push(["Net Income", pl.netIncome || 0]);
+    exportCSV(`profit-loss_${startDate}_${endDate}.csv`, ["Line", "Amount"], rows);
+  };
+  const exportBS = () => {
+    const rows = [];
+    rows.push(["ASSETS", ""]);
+    for (const [id, a] of Object.entries(bs.assets || {})) rows.push([a.name, a.balance]);
+    rows.push(["Total Assets", bs.totals?.assets || 0]);
+    rows.push(["LIABILITIES", ""]);
+    for (const [id, l] of Object.entries(bs.liabilities || {})) rows.push([l.name, l.balance]);
+    rows.push(["Total Liabilities", bs.totals?.liabilities || 0]);
+    rows.push(["EQUITY", ""]);
+    for (const [id, e] of Object.entries(bs.equity || {})) rows.push([`${e.name}${e.isContra ? " (contra)" : ""}`, e.isContra ? -e.balance : e.balance]);
+    rows.push(["Total Equity", bs.totals?.equity || 0]);
+    exportCSV(`balance-sheet_as-of_${endDate}.csv`, ["Line", "Amount"], rows);
+  };
+  const exportTB = () => {
+    const rows = (tb.rows || []).map(r => [r.name, r.type, r.debit || 0, r.credit || 0]);
+    rows.push(["TOTAL", "", tb.totalDebit || 0, tb.totalCredit || 0]);
+    exportCSV(`trial-balance_${endDate}.csv`, ["Account", "Type", "Debit", "Credit"], rows);
+  };
+  const exportGL = () => {
+    const rows = entriesInRange(ledger, startDate, endDate)
+      .flatMap(e => e.lines
+        .filter(l => isExternalAccount(l.accountId))
+        .map(l => {
+          const acc = accounts.find(a => a.id === l.accountId);
+          return [e.date, e.id, acc?.name || l.accountId, e.memo || "", l.debit || 0, l.credit || 0];
+        })
+      );
+    exportCSV(`general-ledger_${startDate}_${endDate}.csv`, ["Date", "Entry ID", "Account", "Memo", "Debit", "Credit"], rows);
+  };
+  const printStatement = () => window.print();
+
+  // ── Period close gate ──
+  // canClosePeriod returns null (all clear) or a string describing what's
+  // blocking. We re-derive the individual check results for display.
+  const closeMonth = endDate.slice(0, 7);
+  const closeBlocker = useMemo(() => canClosePeriod({
+    month: closeMonth,
+    bankImports: money.bankImports || [],
+    salesTaxFilings: money.salesTaxFilings || [],
+  }), [closeMonth, money.bankImports, money.salesTaxFilings]);
+  const closeChecks = useMemo(() => {
+    const rows = (money.bankImports || []).filter(r => {
+      const d = r.date || r.Date || "";
+      return d.startsWith(closeMonth);
+    });
+    const unreconciled = rows.filter(r => !r.matchedEntryId && !r.ignored).length;
+    const filing = (money.salesTaxFilings || []).find(f => f.month === closeMonth);
+    return {
+      bankRows: rows.length,
+      unreconciled,
+      bankReconciled: unreconciled === 0,
+      salesTaxGenerated: !!filing,
+      salesTaxFiled: filing?.status === "filed",
+    };
+  }, [closeMonth, money.bankImports, money.salesTaxFilings]);
+  const canCloseNow = closeBlocker === null;
+
+  return (
+    <div className="auction-content" style={{ maxWidth: 1280, margin: "0 auto", padding: 24 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 900, color: BRAND.black }}>Accounting</div>
+          <div style={{ fontSize: 11, color: BRAND.gray, marginTop: 4 }}>
+            External, CPA-facing view · Atlantic Fund is a management sub-ledger and is filtered out of every statement here
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <Input label="From" type="date" value={startDate} onChange={setStartDate} />
+          <Input label="To" type="date" value={endDate} onChange={setEndDate} />
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.06em", cursor: "pointer" }}>
+            <input type="checkbox" checked={compare} onChange={e => setCompare(e.target.checked)} />
+            Compare prev
+          </label>
+        </div>
+      </div>
+
+      {/* Sub-nav */}
+      <div style={{ display: "flex", gap: 4, borderBottom: `1px solid ${BRAND.grayLight}`, marginBottom: 20 }}>
+        {[["statements", "Statements"], ["reports", "Reports"], ["close", "Period Close"]].map(([id, label]) => (
+          <button key={id} onClick={() => setView(id)} style={{
+            background: "transparent", border: "none",
+            padding: "10px 16px", fontSize: 11, fontWeight: view === id ? 800 : 600,
+            color: view === id ? BRAND.red : BRAND.gray,
+            textTransform: "uppercase", letterSpacing: "0.06em", cursor: "pointer",
+            borderBottom: view === id ? `2px solid ${BRAND.red}` : "2px solid transparent",
+          }}>{label}</button>
+        ))}
+      </div>
+
+      {view === "statements" && (
+        <>
+          {/* Dashboard strip */}
+          <div className="stat-cards-row" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 20 }}>
+            <StatCard label="Revenue" value={fmt$(dash.revenue)} color={BRAND.red} />
+            <StatCard label="Gross Profit" value={fmt$(dash.grossProfit)} sub={`${dash.grossMargin.toFixed(1)}% margin`} color={BRAND.red} />
+            <StatCard label="Net Income" value={fmt$(dash.netIncome)} color={BRAND.red} />
+            <StatCard label="Cash on Hand" value={fmt$(dash.cashOnHand)} color={BRAND.red} />
+            <StatCard label="Inventory Value" value={fmt$(dash.inventoryValue)} color={BRAND.red} />
+            <StatCard label="Total Equity" value={fmt$(dash.totalEquity)} color={BRAND.red} />
+            <StatCard label="Accrued Tax" value={fmt$(dash.accruedTax)} sub="Tax reserve + excise" color={BRAND.red} />
+            <StatCard label="Sales Tax Due" value={fmt$(dash.salesTaxDue + dash.useTaxDue)} sub="MA Sales + Use" color={BRAND.red} />
+          </div>
+
+          {/* Statement tabs */}
+          <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
+            {[["pl", "P & L"], ["bs", "Balance Sheet"], ["cf", "Cash Flow"], ["sme", "Member Equity"]].map(([id, label]) => (
+              <button key={id} onClick={() => setStatementView(id)} style={{
+                background: statementView === id ? BRAND.red : "transparent",
+                color: statementView === id ? "#fff" : BRAND.gray,
+                border: `1px solid ${statementView === id ? BRAND.red : BRAND.grayLight}`,
+                padding: "8px 14px", fontSize: 11, fontWeight: 700, borderRadius: 8,
+                textTransform: "uppercase", letterSpacing: "0.05em", cursor: "pointer",
+              }}>{label}</button>
+            ))}
+            <div style={{ flex: 1 }} />
+            <Btn variant="secondary" size="sm" onClick={printStatement}>Print</Btn>
+            <Btn variant="secondary" size="sm" onClick={
+              statementView === "pl" ? exportPL :
+              statementView === "bs" ? exportBS :
+              statementView === "cf" ? () => {
+                const rows = [];
+                rows.push(["Operating", cf.operating || 0]);
+                rows.push(["Investing", cf.investing || 0]);
+                rows.push(["Financing", cf.financing || 0]);
+                rows.push(["Net Change", cf.netChange || 0]);
+                rows.push(["Opening Cash", cf.opening || 0]);
+                rows.push(["Closing Cash", cf.closing || 0]);
+                exportCSV(`cash-flow_${startDate}_${endDate}.csv`, ["Section", "Amount"], rows);
+              } :
+              () => {
+                const rows = (sme || []).flatMap(r => [
+                  [r.name, "Opening Capital", r.opening || 0],
+                  [r.name, "Contributions", r.contributions || 0],
+                  [r.name, "Income Allocation", r.shareOfNetIncome || 0],
+                  [r.name, "Distributions", -(r.distributions || 0)],
+                  [r.name, "Closing Capital", r.closing || 0],
+                ]);
+                exportCSV(`member-equity_${startDate}_${endDate}.csv`, ["Member", "Line", "Amount"], rows);
+              }
+            }>Export CSV</Btn>
+          </div>
+
+          <Card>
+            {statementView === "pl" && (
+              <div>
+                <div style={headerStyle}>Profit & Loss · {startDate} → {endDate}</div>
+                <div style={rowStyle}>
+                  <span style={labelStyle}>Revenue</span>
+                  <span style={valStyle}>{fmt$(pl.revenue)} {plPrev && delta(pl.revenue, plPrev.revenue)}</span>
+                </div>
+                <div style={rowStyle}>
+                  <span style={{ ...labelStyle, paddingLeft: 16 }}>Cost of Goods Sold</span>
+                  <span style={valStyle}>({fmt$(pl.cogs)})</span>
+                </div>
+                <div style={{ ...rowStyle, fontWeight: 800, borderBottom: `2px solid ${BRAND.black}` }}>
+                  <span style={labelStyle}>Gross Profit</span>
+                  <span style={valStyle}>{fmt$(pl.grossProfit)} {plPrev && delta(pl.grossProfit, plPrev.grossProfit)}</span>
+                </div>
+                <div style={{ ...headerStyle, marginTop: 16 }}>Operating Expenses</div>
+                {plExpenseRows.length === 0 ? (
+                  <div style={{ fontSize: 11, color: BRAND.gray, fontStyle: "italic", padding: "8px 0" }}>No operating expenses in range.</div>
+                ) : plExpenseRows.map(r => (
+                  <div key={r.id} style={rowStyle}>
+                    <span style={{ ...labelStyle, paddingLeft: 16 }}>{r.name}</span>
+                    <span style={valStyle}>({fmt$(r.amount)})</span>
+                  </div>
+                ))}
+                <div style={{ ...rowStyle, fontWeight: 900, borderTop: `2px solid ${BRAND.black}`, borderBottom: "none", marginTop: 8, fontSize: 15 }}>
+                  <span style={labelStyle}>Net Income</span>
+                  <span style={valStyle}>{fmt$(pl.netIncome)} {plPrev && delta(pl.netIncome, plPrev.netIncome)}</span>
+                </div>
+              </div>
+            )}
+
+            {statementView === "bs" && (() => {
+              const assetEntries = Object.entries(bs.assets || {});
+              const liabEntries = Object.entries(bs.liabilities || {});
+              const equityEntries = Object.entries(bs.equity || {});
+              const totalAssets = bs.totals?.assets || 0;
+              const totalLiab = bs.totals?.liabilities || 0;
+              const totalEquity = bs.totals?.equity || 0;
+              const prevTotalAssets = bsPrev?.totals?.assets || 0;
+              const prevTotalEquity = bsPrev?.totals?.equity || 0;
+              return (
+                <div>
+                  <div style={headerStyle}>Balance Sheet · As of {endDate}</div>
+                  <div style={{ ...headerStyle, marginTop: 8 }}>Assets</div>
+                  {assetEntries.map(([id, a]) => (
+                    <div key={id} style={rowStyle}>
+                      <span style={{ ...labelStyle, paddingLeft: 16 }}>{a.name}</span>
+                      <span style={valStyle}>{fmt$(a.balance)}</span>
+                    </div>
+                  ))}
+                  <div style={{ ...rowStyle, fontWeight: 800 }}>
+                    <span style={labelStyle}>Total Assets</span>
+                    <span style={valStyle}>{fmt$(totalAssets)} {bsPrev && delta(totalAssets, prevTotalAssets)}</span>
+                  </div>
+                  <div style={{ ...headerStyle, marginTop: 16 }}>Liabilities</div>
+                  {liabEntries.map(([id, l]) => (
+                    <div key={id} style={rowStyle}>
+                      <span style={{ ...labelStyle, paddingLeft: 16 }}>{l.name}</span>
+                      <span style={valStyle}>{fmt$(l.balance)}</span>
+                    </div>
+                  ))}
+                  <div style={{ ...rowStyle, fontWeight: 800 }}>
+                    <span style={labelStyle}>Total Liabilities</span>
+                    <span style={valStyle}>{fmt$(totalLiab)}</span>
+                  </div>
+                  <div style={{ ...headerStyle, marginTop: 16 }}>Equity</div>
+                  {equityEntries.map(([id, e]) => (
+                    <div key={id} style={rowStyle}>
+                      <span style={{ ...labelStyle, paddingLeft: 16 }}>{e.name}{e.isContra ? " (contra)" : ""}</span>
+                      <span style={valStyle}>{e.isContra ? `(${fmt$(e.balance)})` : fmt$(e.balance)}</span>
+                    </div>
+                  ))}
+                  <div style={{ ...rowStyle, fontWeight: 800, borderBottom: `2px solid ${BRAND.black}` }}>
+                    <span style={labelStyle}>Total Equity</span>
+                    <span style={valStyle}>{fmt$(totalEquity)} {bsPrev && delta(totalEquity, prevTotalEquity)}</span>
+                  </div>
+                  <div style={{ ...rowStyle, fontWeight: 900, fontSize: 13, marginTop: 8 }}>
+                    <span style={labelStyle}>Liabilities + Equity</span>
+                    <span style={valStyle}>{fmt$(totalLiab + totalEquity)}</span>
+                  </div>
+                  {Math.abs((totalLiab + totalEquity) - totalAssets) > 0.01 && (
+                    <div style={{ fontSize: 11, color: "#B91C1C", marginTop: 8, fontWeight: 700 }}>
+                      ⚠ Balance sheet out of balance — see Trial Balance
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {statementView === "cf" && (
+              <div>
+                <div style={headerStyle}>Cash Flow · {startDate} → {endDate}</div>
+                <div style={rowStyle}><span style={labelStyle}>Opening Cash</span><span style={valStyle}>{fmt$(cf.opening)}</span></div>
+                <div style={{ ...headerStyle, marginTop: 16 }}>Operating</div>
+                <div style={rowStyle}><span style={{ ...labelStyle, paddingLeft: 16 }}>Net operating cash flow</span><span style={valStyle}>{fmt$(cf.operating)}</span></div>
+                <div style={{ ...headerStyle, marginTop: 16 }}>Investing</div>
+                <div style={rowStyle}><span style={{ ...labelStyle, paddingLeft: 16 }}>Net investing cash flow</span><span style={valStyle}>{fmt$(cf.investing)}</span></div>
+                <div style={{ ...headerStyle, marginTop: 16 }}>Financing</div>
+                <div style={rowStyle}><span style={{ ...labelStyle, paddingLeft: 16 }}>Net financing cash flow</span><span style={valStyle}>{fmt$(cf.financing)}</span></div>
+                <div style={{ ...rowStyle, fontWeight: 800, borderTop: `2px solid ${BRAND.black}`, marginTop: 8 }}>
+                  <span style={labelStyle}>Net change in cash</span><span style={valStyle}>{fmt$(cf.netChange)}</span>
+                </div>
+                <div style={{ ...rowStyle, fontWeight: 900, fontSize: 13 }}>
+                  <span style={labelStyle}>Closing Cash</span><span style={valStyle}>{fmt$(cf.closing)}</span>
+                </div>
+                {!cf.reconciles && (
+                  <div style={{ fontSize: 11, color: "#B91C1C", marginTop: 8, fontWeight: 700 }}>
+                    ⚠ Cash flow does not reconcile ({fmt$(Math.abs((cf.closing - cf.opening) - cf.netChange))} off)
+                  </div>
+                )}
+              </div>
+            )}
+
+            {statementView === "sme" && (() => {
+              const smeRows = sme || [];
+              const totals = smeRows.reduce((t, r) => ({
+                opening: t.opening + (r.opening || 0),
+                contributions: t.contributions + (r.contributions || 0),
+                shareOfNetIncome: t.shareOfNetIncome + (r.shareOfNetIncome || 0),
+                distributions: t.distributions + (r.distributions || 0),
+                closing: t.closing + (r.closing || 0),
+              }), { opening: 0, contributions: 0, shareOfNetIncome: 0, distributions: 0, closing: 0 });
+              return (
+                <div>
+                  <div style={headerStyle}>Statement of Member Equity · {startDate} → {endDate}</div>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead>
+                        <tr>
+                          <TH>Member</TH>
+                          <TH>Opening Capital</TH>
+                          <TH>Contributions</TH>
+                          <TH>Income Allocation</TH>
+                          <TH>Distributions</TH>
+                          <TH>Closing Capital</TH>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {smeRows.map(r => (
+                          <tr key={r.memberId} style={{ borderTop: `1px solid ${BRAND.grayLight}` }}>
+                            <TD>{r.name}</TD>
+                            <TD style={{ ...S.mono, textAlign: "right" }}>{fmt$(r.opening)}</TD>
+                            <TD style={{ ...S.mono, textAlign: "right", color: "#047857" }}>{fmt$(r.contributions)}</TD>
+                            <TD style={{ ...S.mono, textAlign: "right", color: "#047857" }}>{fmt$(r.shareOfNetIncome)}</TD>
+                            <TD style={{ ...S.mono, textAlign: "right", color: "#B91C1C" }}>({fmt$(r.distributions)})</TD>
+                            <TD style={{ ...S.mono, textAlign: "right", fontWeight: 800 }}>{fmt$(r.closing)}</TD>
+                          </tr>
+                        ))}
+                        <tr style={{ borderTop: `2px solid ${BRAND.black}`, fontWeight: 800 }}>
+                          <TD>Total</TD>
+                          <TD style={{ ...S.mono, textAlign: "right" }}>{fmt$(totals.opening)}</TD>
+                          <TD style={{ ...S.mono, textAlign: "right" }}>{fmt$(totals.contributions)}</TD>
+                          <TD style={{ ...S.mono, textAlign: "right" }}>{fmt$(totals.shareOfNetIncome)}</TD>
+                          <TD style={{ ...S.mono, textAlign: "right" }}>({fmt$(totals.distributions)})</TD>
+                          <TD style={{ ...S.mono, textAlign: "right" }}>{fmt$(totals.closing)}</TD>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  {smeRows.length === 0 && <Empty title="No members" sub="Assign member slots in Money Management first." />}
+                </div>
+              );
+            })()}
+          </Card>
+        </>
+      )}
+
+      {view === "reports" && (
+        <>
+          <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+            {[
+              ["trial_balance", "Trial Balance"],
+              ["gl", "General Ledger"],
+              ["vehicle_profit", "Vehicle Profitability"],
+              ["out_of_state", "Out-of-State Sales"],
+              ["sales_tax", "MA Sales Tax"],
+              ["tax_reserve", "Tax Reserve"],
+              ["atlantic_fund", "Atlantic Fund (INTERNAL)"],
+              ["1099", "1099 / Vendor"],
+            ].map(([id, label]) => (
+              <button key={id} onClick={() => setReportView(id)} style={{
+                background: reportView === id ? BRAND.red : "transparent",
+                color: reportView === id ? "#fff" : BRAND.gray,
+                border: `1px solid ${reportView === id ? BRAND.red : BRAND.grayLight}`,
+                padding: "6px 12px", fontSize: 10, fontWeight: 700, borderRadius: 6,
+                textTransform: "uppercase", letterSpacing: "0.05em", cursor: "pointer",
+              }}>{label}</button>
+            ))}
+          </div>
+
+          <Card>
+            {reportView === "trial_balance" && (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <div style={headerStyle}>Trial Balance · As of {endDate}</div>
+                  <Btn variant="secondary" size="sm" onClick={exportTB}>Export CSV</Btn>
+                </div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead><tr><TH>Account</TH><TH>Type</TH><TH>Debit</TH><TH>Credit</TH></tr></thead>
+                    <tbody>
+                      {(tb.rows || []).map(r => (
+                        <tr key={r.id} style={{ borderTop: `1px solid ${BRAND.grayLight}` }}>
+                          <TD>{r.name}</TD>
+                          <TD style={{ textTransform: "capitalize", color: BRAND.gray }}>{r.type}</TD>
+                          <TD style={{ ...S.mono, textAlign: "right" }}>{r.debit ? fmt$(r.debit) : "—"}</TD>
+                          <TD style={{ ...S.mono, textAlign: "right" }}>{r.credit ? fmt$(r.credit) : "—"}</TD>
+                        </tr>
+                      ))}
+                      <tr style={{ borderTop: `2px solid ${BRAND.black}`, fontWeight: 800 }}>
+                        <TD>Total</TD><TD></TD>
+                        <TD style={{ ...S.mono, textAlign: "right" }}>{fmt$(tb.totalDebit)}</TD>
+                        <TD style={{ ...S.mono, textAlign: "right" }}>{fmt$(tb.totalCredit)}</TD>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+                {!tb.balanced && (
+                  <div style={{ fontSize: 11, color: "#B91C1C", marginTop: 8, fontWeight: 700 }}>
+                    ⚠ Out of balance by {fmt$(Math.abs((tb.totalDebit || 0) - (tb.totalCredit || 0)))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {reportView === "gl" && (
+              <div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <div style={headerStyle}>General Ledger · {startDate} → {endDate}</div>
+                  <Btn variant="secondary" size="sm" onClick={exportGL}>Export CSV</Btn>
+                </div>
+                <div style={{ fontSize: 11, color: BRAND.gray, marginBottom: 8 }}>Internal-only accounts (Atlantic Fund) filtered out.</div>
+                <LedgerTable
+                  entries={entriesInRange(ledger, startDate, endDate).filter(e => e.lines.some(l => isExternalAccount(l.accountId)))}
+                  accounts={accounts}
+                  members={members}
+                />
+              </div>
+            )}
+
+            {reportView === "vehicle_profit" && (
+              <div>
+                <div style={headerStyle}>Vehicle Profitability · {startDate} → {endDate}</div>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead><tr><TH>Stock</TH><TH>Vehicle</TH><TH>Sold</TH><TH>Days</TH><TH>Total Cost</TH><TH>Gross Sale</TH><TH>Profit</TH><TH>ROI</TH></tr></thead>
+                    <tbody>
+                      {(vehicleProfit || []).map(r => (
+                        <tr key={r.stockNum} style={{ borderTop: `1px solid ${BRAND.grayLight}` }}>
+                          <TD>#{r.stockNum}</TD>
+                          <TD>{r.year} {r.make} {r.model}</TD>
+                          <TD>{r.saleDate || "—"}</TD>
+                          <TD style={{ ...S.mono, textAlign: "right" }}>{r.daysInInventory != null ? r.daysInInventory : "—"}</TD>
+                          <TD style={{ ...S.mono, textAlign: "right" }}>{fmt$(r.totalCost)}</TD>
+                          <TD style={{ ...S.mono, textAlign: "right" }}>{fmt$(r.grossSale)}</TD>
+                          <TD style={{ ...S.mono, textAlign: "right", color: r.profit >= 0 ? "#047857" : "#B91C1C", fontWeight: 700 }}>{fmt$(r.profit)}</TD>
+                          <TD style={{ ...S.mono, textAlign: "right" }}>{r.roi != null ? `${(r.roi * 100).toFixed(1)}%` : "—"}</TD>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {(vehicleProfit || []).length === 0 && <Empty title="No sold vehicles in range" />}
+              </div>
+            )}
+
+            {reportView === "out_of_state" && (() => {
+              const oosTotal = (oosReport || []).reduce((s, r) => s + (r.grossSale || 0), 0);
+              return (
+                <div>
+                  <div style={headerStyle}>Out-of-State & Export Sales · {startDate} → {endDate}</div>
+                  <div style={{ fontSize: 11, color: BRAND.gray, marginBottom: 8 }}>
+                    Excludes in-state MA sales (those are on the MA Sales Tax tab).
+                  </div>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                      <thead><tr><TH>Date</TH><TH>Stock</TH><TH>Destination</TH><TH>Gross Sale</TH></tr></thead>
+                      <tbody>
+                        {(oosReport || []).map((r, i) => (
+                          <tr key={i} style={{ borderTop: `1px solid ${BRAND.grayLight}` }}>
+                            <TD>{r.date}</TD>
+                            <TD>#{r.stockNum}</TD>
+                            <TD>{SALE_DESTINATIONS[r.destination]?.label || r.destination}</TD>
+                            <TD style={{ ...S.mono, textAlign: "right" }}>{fmt$(r.grossSale)}</TD>
+                          </tr>
+                        ))}
+                        <tr style={{ borderTop: `2px solid ${BRAND.black}`, fontWeight: 800 }}>
+                          <TD>Total</TD><TD></TD><TD></TD>
+                          <TD style={{ ...S.mono, textAlign: "right" }}>{fmt$(oosTotal)}</TD>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  {(oosReport || []).length === 0 && <Empty title="No out-of-state or export sales in range" />}
+                </div>
+              );
+            })()}
+
+            {reportView === "sales_tax" && (
+              <div>
+                <div style={headerStyle}>MA Sales Tax · {startDate} → {endDate}</div>
+                <div style={rowStyle}><span style={labelStyle}>Accrued MA Sales Tax (liability balance)</span><span style={valStyle}>{fmt$(balances[SYSTEM_ACCOUNTS.SALES_TAX_PAYABLE] || 0)}</span></div>
+                <div style={rowStyle}><span style={labelStyle}>Accrued MA Use Tax</span><span style={valStyle}>{fmt$(balances[SYSTEM_ACCOUNTS.USE_TAX_PAYABLE] || 0)}</span></div>
+                <div style={{ ...headerStyle, marginTop: 16 }}>Filings</div>
+                {(money.salesTaxFilings || []).length === 0 ? (
+                  <Empty title="No filings yet" sub="Use Money Management → Tax Exports to generate monthly ST-9 filings." />
+                ) : (
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead><tr><TH>Month</TH><TH>Amount</TH><TH>Status</TH><TH>Filed Date</TH></tr></thead>
+                    <tbody>
+                      {(money.salesTaxFilings || []).map(f => (
+                        <tr key={f.id || f.month} style={{ borderTop: `1px solid ${BRAND.grayLight}` }}>
+                          <TD>{f.month}</TD>
+                          <TD style={{ ...S.mono, textAlign: "right" }}>{f.amount == null ? "—" : fmt$(f.amount)}</TD>
+                          <TD>{f.status}</TD>
+                          <TD>{f.filedAt ? f.filedAt.slice(0, 10) : "—"}</TD>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+
+            {reportView === "tax_reserve" && (
+              <div>
+                <div style={headerStyle}>Tax Reserve · {startDate} → {endDate}</div>
+                <div style={rowStyle}><span style={labelStyle}>Accrued Tax Liability (running balance)</span><span style={valStyle}>{fmt$(balances[SYSTEM_ACCOUNTS.ACCRUED_TAX_LIABILITY] || 0)}</span></div>
+                <div style={rowStyle}><span style={labelStyle}>Tax Reserve Expense (this period)</span><span style={valStyle}>{fmt$(pl.byAccount?.[SYSTEM_ACCOUNTS.TAX_RESERVE_EXPENSE] || 0)}</span></div>
+                <div style={rowStyle}><span style={labelStyle}>$295 accrued per vehicle sale</span><span style={valStyle}>{fmt$(TAX_PER_SALE)}</span></div>
+              </div>
+            )}
+
+            {reportView === "atlantic_fund" && (
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                  <div style={headerStyle}>Atlantic Fund Activity</div>
+                  <Badge bg="#FEE2E2" color="#B91C1C">INTERNAL ONLY</Badge>
+                </div>
+                <div style={{ fontSize: 11, color: BRAND.gray, marginBottom: 8, fontStyle: "italic" }}>
+                  This report is for internal management only. The Atlantic Fund does not appear on any external financial statement (P&L, Balance Sheet, Cash Flow, Member Equity).
+                </div>
+                <div style={rowStyle}><span style={labelStyle}>Current Atlantic Fund balance</span><span style={valStyle}>{fmt$(balances[SYSTEM_ACCOUNTS.ATLANTIC_FUND] || 0)}</span></div>
+                <LedgerTable
+                  entries={entriesForAccount(ledger, SYSTEM_ACCOUNTS.ATLANTIC_FUND).filter(e => e.date >= startDate && e.date <= endDate)}
+                  accounts={accounts}
+                  members={members}
+                />
+              </div>
+            )}
+
+            {reportView === "1099" && (
+              <div>
+                <div style={headerStyle}>1099 / Vendor · {startDate} → {endDate}</div>
+                <Vendor1099Table ledger={ledger} startDate={startDate} endDate={endDate} accounts={accounts} />
+              </div>
+            )}
+          </Card>
+        </>
+      )}
+
+      {view === "close" && (
+        <Card>
+          <div style={headerStyle}>Period Close — {closeMonth}</div>
+          <div style={{ fontSize: 12, color: BRAND.gray, marginBottom: 16, lineHeight: 1.5 }}>
+            Closing a period locks it against further journal entries. Before you close, every bank row must be reconciled and the MA sales-tax return for this month must be marked filed. These gates protect the CPA-facing statements from being mutated after the books are supposedly "closed".
+          </div>
+          <div style={rowStyle}>
+            <span style={labelStyle}>Bank reconciliation ({closeChecks.bankRows} row{closeChecks.bankRows === 1 ? "" : "s"} this month)</span>
+            <span style={{ ...valStyle, color: closeChecks.bankReconciled ? "#047857" : "#B91C1C" }}>
+              {closeChecks.bankReconciled ? "✓ All rows reconciled" : `⚠ ${closeChecks.unreconciled} unreconciled`}
+            </span>
+          </div>
+          <div style={rowStyle}>
+            <span style={labelStyle}>MA Sales Tax filing</span>
+            <span style={{ ...valStyle, color: closeChecks.salesTaxFiled ? "#047857" : "#B91C1C" }}>
+              {!closeChecks.salesTaxGenerated ? "⚠ Not generated" : closeChecks.salesTaxFiled ? "✓ Filed" : "⚠ Not filed"}
+            </span>
+          </div>
+          {closeBlocker && (
+            <div style={{ fontSize: 11, color: "#B91C1C", marginTop: 12, fontWeight: 700, padding: "8px 12px", background: "#FEE2E2", borderRadius: 6 }}>
+              {closeBlocker}
+            </div>
+          )}
+          <div style={{ marginTop: 20, display: "flex", gap: 8, alignItems: "center" }}>
+            <Btn
+              disabled={!canCloseNow || !admin}
+              onClick={() => {
+                if (!admin) return;
+                if (!confirm(`Close ${closeMonth}? This locks the period and blocks new journal entries with dates inside it.`)) return;
+                setData(d => ({
+                  ...d,
+                  money: {
+                    ...d.money,
+                    closedPeriods: [...(d.money?.closedPeriods || []), { start: `${closeMonth}-01`, end: endDate, closedBy: username, closedAt: new Date().toISOString() }],
+                  },
+                }));
+                logActivity(username, "period_closed", `Closed ${closeMonth}`);
+              }}
+            >Close Period</Btn>
+            {!canCloseNow && <span style={{ fontSize: 11, color: "#B91C1C", fontWeight: 700 }}>Resolve the warnings above before closing.</span>}
+            {!admin && <span style={{ fontSize: 11, color: BRAND.gray, fontWeight: 700 }}>Admins only.</span>}
+          </div>
+          {(money.closedPeriods || []).length > 0 && (
+            <div style={{ marginTop: 20 }}>
+              <div style={headerStyle}>Closed Periods</div>
+              {(money.closedPeriods || []).map((p, i) => (
+                <div key={i} style={rowStyle}>
+                  <span style={labelStyle}>{p.start} → {p.end}</span>
+                  <span style={{ ...S.mono, fontSize: 11, color: BRAND.gray }}>Closed by {p.closedBy} on {(p.closedAt || "").slice(0, 10)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// 1099 vendor report — totals payable-account outflows to vendors whose annual
+// spend exceeds the 1099-NEC threshold ($600 default per IRS). Reads the ledger
+// ref metadata for vendor identity (entries without it are excluded).
+function Vendor1099Table({ ledger, startDate, endDate }) {
+  const rows = useMemo(() => calc1099Report(ledger, startDate, endDate, 600), [ledger, startDate, endDate]);
+  if (!rows || rows.length === 0) {
+    return <Empty title="No reportable vendors" sub="Vendors with <$600 annual spend are excluded per IRS 1099-NEC threshold." />;
+  }
+  return (
+    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+      <thead><tr><TH>Vendor</TH><TH>Total Paid</TH></tr></thead>
+      <tbody>
+        {rows.map(r => (
+          <tr key={r.name} style={{ borderTop: `1px solid ${BRAND.grayLight}` }}>
+            <TD>{r.name}</TD>
+            <TD style={{ ...S.mono, textAlign: "right" }}>{fmt$(r.amount)}</TD>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -6835,7 +7543,7 @@ function AppInner() {
 
   const adminMode = isAdmin(userRole);
   const managerMode = isManager(userRole);
-  const allAdminTabs = [...TABS, "Calendar", "Reports", "Money", "Approvals", "Activity", "Trash", "Users", "Settings"];
+  const allAdminTabs = [...TABS, "Calendar", "Reports", "Money", "Accounting", "Approvals", "Activity", "Trash", "Users", "Settings"];
   const visibleTabs = adminMode ? allAdminTabs : managerMode ? (allowedTabs && allowedTabs.length ? allowedTabs.filter(t => allAdminTabs.includes(t)) : ["Dashboard"]) : [...TABS, "Calendar", "Settings"];
 
   // Navigation — clean flat tabs, Settings accessed via gear icon only
@@ -7251,6 +7959,7 @@ function AppInner() {
         {tab === "Calendar" && <CalendarTab data={data} setData={setData} />}
         {tab === "Reports" && (adminMode || managerMode) && <ReportsTab data={data} />}
         {tab === "Money" && (adminMode || managerMode || userRole === "accountant") && <MoneyManagementTab data={data} setData={setData} username={username} userRole={userRole} darkMode={darkMode} />}
+        {tab === "Accounting" && (adminMode || managerMode || userRole === "accountant") && <AccountingTab data={data} setData={setData} username={username} userRole={userRole} darkMode={darkMode} />}
         {tab === "Approvals" && (adminMode || managerMode) && <ApprovalsTab data={data} setData={setData} />}
         {tab === "Activity" && (adminMode || managerMode) && <ActivityTab />}
         {tab === "Trash" && adminMode && <TrashTab data={data} setData={setData} currentUser={username} />}

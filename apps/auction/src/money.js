@@ -36,17 +36,49 @@ export const ACCOUNT_TYPES = {
 // vehicle) with ids member:<id> and vehicle:<stockNum>.
 export const SYSTEM_ACCOUNTS = {
   SAYARAH_BANK: "bank:sayarah-chase",
+  // ATLANTIC_FUND is kept for backward-compat with entries posted
+  // by earlier phases, but it is FILTERED OUT of every external
+  // financial statement (P&L, Balance Sheet, Cash Flow, Member
+  // Equity). Per the CPA-approved Accounting spec, the Atlantic
+  // Fund is an internal management sub-ledger only — it never
+  // appears to external readers. See isExternalAccount() below.
   ATLANTIC_FUND: "fund:atlantic",
   PROFIT_DISTRIBUTION: "equity:profit-distribution",
   RETAINED_EARNINGS: "equity:retained-earnings",
   INCOME_SUMMARY: "equity:income-summary",
+  // Phase 4 / Accounting-spec additions per the approved CoA
+  ACCOUNTS_PAYABLE: "liability:accounts-payable",
+  ACCRUED_EXPENSES: "liability:accrued-expenses",
+  ACCRUED_TAX_LIABILITY: "liability:accrued-tax",
+  DEFERRED_REVENUE: "liability:deferred-revenue",
+  ACCOUNTS_RECEIVABLE: "asset:accounts-receivable",
+  PREPAID_EXPENSES: "asset:prepaid-expenses",
+  // Legacy aliases — keep pointing at the same slots so existing
+  // ledger entries resolve, but prefer the names above.
   TAX: "liability:tax-account",
   REVENUE_VEHICLE_SALES: "revenue:vehicle-sales",
   COGS_VEHICLES: "expense:cogs-vehicles",
   OPERATING_EXPENSES: "expense:operating",
+  // Operating expense sub-accounts (per CoA)
+  EXPENSE_ADVERTISING: "expense:advertising",
+  EXPENSE_OFFICE_ADMIN: "expense:office-admin",
+  EXPENSE_PROFESSIONAL_FEES: "expense:professional-fees",
+  EXPENSE_INSURANCE: "expense:insurance",
+  EXPENSE_RENT_UTILITIES: "expense:rent-utilities",
+  EXPENSE_SOFTWARE: "expense:software",
+  EXPENSE_BANK_FEES: "expense:bank-fees",
+  EXPENSE_OTHER: "expense:other",
+  TAX_RESERVE_EXPENSE: "expense:tax-reserve",
   SALES_TAX_PAYABLE: "liability:sales-tax-ma",
   USE_TAX_PAYABLE: "liability:use-tax-ma",
 };
+
+// Account IDs that should NEVER appear on external financial
+// statements — they're management-layer concepts. The Balance
+// Sheet / P&L / Cash Flow / Member Equity renderers must filter
+// entries through this function before aggregating.
+export const INTERNAL_ONLY_ACCOUNTS = new Set([SYSTEM_ACCOUNTS.ATLANTIC_FUND]);
+export const isExternalAccount = (accountId) => !INTERNAL_ONLY_ACCOUNTS.has(accountId);
 
 export const TAX_PER_SALE = 295; // MA S-Corp — skimmed to the tax sub-account on every sold vehicle
 // MA use tax: 6.25% on out-of-state purchases brought into MA for use.
@@ -71,17 +103,42 @@ export const SALE_DESTINATIONS = {
 // these under data.accounts so the admin can add custom accounts
 // (e.g. new expense categories) without a code change.
 export const DEFAULT_ACCOUNTS = [
-  { id: SYSTEM_ACCOUNTS.SAYARAH_BANK, name: "Sayarah Chase Bank", type: "asset", system: true, description: "Primary operating account — holds the Atlantic Fund." },
-  { id: SYSTEM_ACCOUNTS.ATLANTIC_FUND, name: "Atlantic Fund", type: "asset", system: true, description: "Shared member pool for vehicle purchases. Held inside the Chase account." },
-  { id: SYSTEM_ACCOUNTS.PROFIT_DISTRIBUTION, name: "Profit Distribution (pending)", type: "equity", system: true, description: "Holds vehicle profit from sale until month-end split." },
-  { id: SYSTEM_ACCOUNTS.RETAINED_EARNINGS, name: "Retained Earnings", type: "equity", system: true, description: "Cumulative net income across closed fiscal years (after distributions)." },
-  { id: SYSTEM_ACCOUNTS.INCOME_SUMMARY, name: "Income Summary (temp)", type: "equity", system: true, description: "Closing-entry clearing account used only during year-end close." },
-  { id: SYSTEM_ACCOUNTS.TAX, name: "Tax Account ($295 per sale)", type: "liability", system: true, description: "Skimmed from every vehicle sale for MA/federal taxes + misc." },
-  { id: SYSTEM_ACCOUNTS.REVENUE_VEHICLE_SALES, name: "Vehicle Sales Revenue", type: "revenue", system: true },
-  { id: SYSTEM_ACCOUNTS.COGS_VEHICLES, name: "Cost of Goods Sold — Vehicles", type: "expense", system: true },
-  { id: SYSTEM_ACCOUNTS.OPERATING_EXPENSES, name: "Operating Expenses", type: "expense", system: true },
+  // ── Assets ──
+  { id: SYSTEM_ACCOUNTS.SAYARAH_BANK, name: "Chase Operating Cash", type: "asset", system: true, description: "Primary operating account at Chase Bank." },
+  { id: SYSTEM_ACCOUNTS.ACCOUNTS_RECEIVABLE, name: "Accounts Receivable", type: "asset", system: true },
+  { id: SYSTEM_ACCOUNTS.PREPAID_EXPENSES, name: "Prepaid Expenses", type: "asset", system: true },
+  // Atlantic Fund kept in the chart for existing-ledger compatibility,
+  // but flagged internal-only — every external-facing statement filters
+  // it out via isExternalAccount().
+  { id: SYSTEM_ACCOUNTS.ATLANTIC_FUND, name: "Atlantic Fund (INTERNAL)", type: "asset", system: true, internalOnly: true, description: "Management sub-ledger — never on external financial statements." },
+  // ── Liabilities ──
+  { id: SYSTEM_ACCOUNTS.ACCOUNTS_PAYABLE, name: "Accounts Payable", type: "liability", system: true },
+  { id: SYSTEM_ACCOUNTS.ACCRUED_EXPENSES, name: "Accrued Expenses", type: "liability", system: true },
+  { id: SYSTEM_ACCOUNTS.ACCRUED_TAX_LIABILITY, name: "Accrued Tax Liability", type: "liability", system: true, description: "Tax reserve ($295-per-sale accumulator + accrued MA S-Corp excise)." },
+  { id: SYSTEM_ACCOUNTS.TAX, name: "Tax Reserve (legacy alias)", type: "liability", system: true, internalOnly: false, description: "Pre-Accounting-refactor tax reserve. New postings should go to Accrued Tax Liability." },
   { id: SYSTEM_ACCOUNTS.SALES_TAX_PAYABLE, name: "MA Sales Tax Payable", type: "liability", system: true },
   { id: SYSTEM_ACCOUNTS.USE_TAX_PAYABLE, name: "MA Use Tax Payable", type: "liability", system: true, description: "Owed on out-of-state purchases brought into MA for use (6.25%)." },
+  { id: SYSTEM_ACCOUNTS.DEFERRED_REVENUE, name: "Deferred Revenue", type: "liability", system: true, description: "Buyer deposits received before title transfer." },
+  // ── Equity ──
+  { id: SYSTEM_ACCOUNTS.PROFIT_DISTRIBUTION, name: "Profit Distribution Clearing", type: "equity", system: true, description: "Holds monthly profit until distributed to members." },
+  { id: SYSTEM_ACCOUNTS.RETAINED_EARNINGS, name: "Retained Earnings", type: "equity", system: true, description: "Cumulative net income net of distributions." },
+  { id: SYSTEM_ACCOUNTS.INCOME_SUMMARY, name: "Income Summary (temp)", type: "equity", system: true, description: "Closing-entry clearing account used only during year-end close." },
+  // ── Revenue ──
+  { id: SYSTEM_ACCOUNTS.REVENUE_VEHICLE_SALES, name: "Vehicle Sales Revenue", type: "revenue", system: true },
+  // ── COGS ──
+  { id: SYSTEM_ACCOUNTS.COGS_VEHICLES, name: "Cost of Vehicles Sold", type: "expense", system: true, isCogs: true },
+  // ── Operating Expenses (subcategorized per CPA-approved CoA) ──
+  { id: SYSTEM_ACCOUNTS.EXPENSE_ADVERTISING, name: "Advertising & Marketing", type: "expense", system: true },
+  { id: SYSTEM_ACCOUNTS.EXPENSE_OFFICE_ADMIN, name: "Office & Admin", type: "expense", system: true },
+  { id: SYSTEM_ACCOUNTS.EXPENSE_PROFESSIONAL_FEES, name: "Professional Fees", type: "expense", system: true },
+  { id: SYSTEM_ACCOUNTS.EXPENSE_INSURANCE, name: "Insurance (non-capitalized)", type: "expense", system: true },
+  { id: SYSTEM_ACCOUNTS.EXPENSE_RENT_UTILITIES, name: "Rent & Utilities", type: "expense", system: true },
+  { id: SYSTEM_ACCOUNTS.EXPENSE_SOFTWARE, name: "Software & Subscriptions", type: "expense", system: true },
+  { id: SYSTEM_ACCOUNTS.EXPENSE_BANK_FEES, name: "Bank & Merchant Fees", type: "expense", system: true },
+  { id: SYSTEM_ACCOUNTS.EXPENSE_OTHER, name: "Other Operating", type: "expense", system: true },
+  { id: SYSTEM_ACCOUNTS.OPERATING_EXPENSES, name: "Operating Expenses (legacy)", type: "expense", system: true, description: "Pre-CoA-refactor catch-all." },
+  // ── Non-operating ──
+  { id: SYSTEM_ACCOUNTS.TAX_RESERVE_EXPENSE, name: "Tax Reserve Expense", type: "expense", system: true, description: "$295-per-sale accrual; offsets Accrued Tax Liability." },
 ];
 
 // Seed a member capital account. Called once per member.
@@ -91,6 +148,22 @@ export const memberAccount = (memberId, name) => ({
   name: `Member Capital — ${name}`,
   type: "equity",
   memberId,
+  system: false,
+});
+
+// Contra-equity distribution account per member. Accumulates YTD
+// distributions; year-end close moves the balance to capital (debit
+// capital, credit distributions, zeroing the contra). Keeping
+// distributions separate from capital during the year lets the
+// Statement of Member Equity render a clean "Distributions" line
+// and makes K-1 prep trivial.
+export const memberDistributionsId = (memberId) => `equity:member:${memberId}:distributions`;
+export const memberDistributionsAccount = (memberId, name) => ({
+  id: memberDistributionsId(memberId),
+  name: `${name} — Distributions YTD`,
+  type: "equity",
+  memberId,
+  isContra: true,
   system: false,
 });
 
@@ -223,12 +296,15 @@ export function calcAccountBalance(accountId, ledger, accountsById) {
 }
 
 // Compute every account's balance in one pass. Returns { [id]: number }.
+// Contra accounts flip the normal side so their natural balance comes
+// out positive — e.g. a contra-equity "Member Distributions" account
+// normally has a DEBIT balance (opposite of equity's credit-normal).
+// Post a debit → positive balance → balance sheet subtracts from
+// equity total via isContra flag.
 export function calcAllBalances(ledger, accounts) {
   const accountsById = Object.fromEntries((accounts || []).map((a) => [a.id, a]));
   const out = {};
   for (const acc of accounts || []) out[acc.id] = 0;
-  // Also seed account buckets for any id appearing in the ledger
-  // that isn't in the chart of accounts (defensive).
   for (const e of ledger || []) {
     for (const l of e.lines) {
       if (!(l.accountId in out)) out[l.accountId] = 0;
@@ -237,9 +313,10 @@ export function calcAllBalances(ledger, accounts) {
   for (const entry of ledger || []) {
     for (const line of entry.lines) {
       const acc = accountsById[line.accountId];
-      const normal = acc && ACCOUNT_TYPES[acc.type]
+      let normal = acc && ACCOUNT_TYPES[acc.type]
         ? ACCOUNT_TYPES[acc.type].normal
         : "debit";
+      if (acc && acc.isContra) normal = normal === "debit" ? "credit" : "debit";
       if (normal === "debit") {
         out[line.accountId] += p(line.debit) - p(line.credit);
       } else {
@@ -389,93 +466,196 @@ export function vehiclePurchaseFromMemberEntry({ stockNum, memberId, amount, dat
   });
 }
 
-// Sale of a vehicle. Principal (totalCost) returns to the source it
-// came from, $295 to the tax account, remaining profit to the
-// distribution account. Loss scenarios: grossProfit is negative;
-// distribution is 0; tax is still $295 (it's a flat skim).
+// Sale of a vehicle. Aligned with CPA-approved Scenarios 9, 13, 14, 15.
+//
+// Posts three clean entries per sale:
+//   1. Revenue recognition + cash receipt (with MA sales tax if in-state)
+//   2. COGS + inventory relief
+//   3. Tax reserve accrual ($295 as liability, per CPA Pattern 1)
+//
+// Atlantic Fund "principal return" is NO LONGER a ledger entry —
+// it's an internal sub-ledger event tracked by the Money Management
+// tab only. External statements see cash, revenue, COGS, tax.
+// Profit flows through period net income to Retained Earnings at
+// month-end; distribution happens via distributeMonthEndEntry +
+// distributionCashPayoutEntry.
 export function vehicleSaleEntries({ stockNum, totalCost, grossSale, principalDestination, date, user, ip, destination }) {
-  // principalDestination: { type: "fund" } or { type: "member", memberId }
   const gross = p(grossSale);
   const cost = p(totalCost);
-  const profit = gross - cost;
-  const taxSkim = profit > TAX_PER_SALE ? TAX_PER_SALE : Math.max(0, profit);
-  const distributable = profit - taxSkim;
+  const salesTax = calcMaSalesTaxOnSale(gross, destination || "out_of_state_us");
 
-  const principalAccount = principalDestination && principalDestination.type === "member"
-    ? memberAccountId(principalDestination.memberId)
-    : SYSTEM_ACCOUNTS.ATLANTIC_FUND;
+  const entries = [];
 
-  // Entry 1: cash in from sale, vehicle inventory out, gross profit recognized.
-  const saleEntry = buildJournalEntry({
+  // Entry 1: Cash in + revenue recognition + (optional) MA sales tax
+  const saleLines = [
+    // Buyer pays gross + tax; all hits bank
+    { accountId: SYSTEM_ACCOUNTS.SAYARAH_BANK, debit: gross + salesTax, credit: 0 },
+    { accountId: SYSTEM_ACCOUNTS.REVENUE_VEHICLE_SALES, debit: 0, credit: gross },
+  ];
+  if (salesTax > 0) {
+    saleLines.push({ accountId: SYSTEM_ACCOUNTS.SALES_TAX_PAYABLE, debit: 0, credit: salesTax });
+  }
+  entries.push(buildJournalEntry({
     date,
-    memo: `Vehicle sale — #${stockNum} — gross ${gross.toFixed(2)}`,
+    memo: `Vehicle sale — #${stockNum} — gross ${gross.toFixed(2)}${salesTax > 0 ? ` + MA sales tax ${salesTax.toFixed(2)}` : ""}`,
     user, ip,
-    ref: { type: "vehicle_sale", stockNum, destination: destination || null },
+    ref: { type: "vehicle_sale", stockNum, destination: destination || null, principalDestination },
+    lines: saleLines,
+  }));
+
+  // Entry 2: COGS + inventory relief
+  entries.push(buildJournalEntry({
+    date,
+    memo: `COGS — #${stockNum}`,
+    user, ip,
+    ref: { type: "vehicle_cogs", stockNum },
     lines: [
-      { accountId: SYSTEM_ACCOUNTS.SAYARAH_BANK, debit: gross, credit: 0 },
       { accountId: SYSTEM_ACCOUNTS.COGS_VEHICLES, debit: cost, credit: 0 },
       { accountId: vehicleAccountId(stockNum), debit: 0, credit: cost },
-      { accountId: SYSTEM_ACCOUNTS.REVENUE_VEHICLE_SALES, debit: 0, credit: gross },
     ],
-  });
+  }));
 
-  // Entry 2: return principal to source + split the profit.
-  const distributionLines = [
-    // Principal (cost) returns to the source that funded it.
-    { accountId: principalAccount, debit: cost, credit: 0 },
-    { accountId: SYSTEM_ACCOUNTS.SAYARAH_BANK, debit: 0, credit: cost },
-  ];
-  if (taxSkim > 0) {
-    distributionLines.push({ accountId: SYSTEM_ACCOUNTS.TAX, debit: 0, credit: taxSkim });
-    distributionLines.push({ accountId: SYSTEM_ACCOUNTS.SAYARAH_BANK, debit: taxSkim, credit: 0 });
+  // Entry 3: Tax reserve accrual ($295 as an accrued liability)
+  if (TAX_PER_SALE > 0) {
+    entries.push(buildJournalEntry({
+      date,
+      memo: `Tax reserve — #${stockNum} — $${TAX_PER_SALE} per sale`,
+      user, ip,
+      ref: { type: "tax_reserve", stockNum },
+      lines: [
+        { accountId: SYSTEM_ACCOUNTS.TAX_RESERVE_EXPENSE, debit: TAX_PER_SALE, credit: 0 },
+        { accountId: SYSTEM_ACCOUNTS.ACCRUED_TAX_LIABILITY, debit: 0, credit: TAX_PER_SALE },
+      ],
+    }));
   }
-  if (distributable !== 0) {
-    // Distributable profit goes into the holding account until
-    // month-end; members don't receive cash yet.
-    distributionLines.push({
-      accountId: SYSTEM_ACCOUNTS.PROFIT_DISTRIBUTION,
-      debit: distributable < 0 ? -distributable : 0,
-      credit: distributable > 0 ? distributable : 0,
-    });
-    distributionLines.push({
-      accountId: SYSTEM_ACCOUNTS.SAYARAH_BANK,
-      debit: distributable < 0 ? 0 : distributable,
-      credit: distributable > 0 ? 0 : -distributable,
-    });
-  }
-  const allocationEntry = buildJournalEntry({
-    date,
-    memo: `Sale allocation — #${stockNum} — principal back, $${taxSkim} tax, $${distributable.toFixed(2)} to distribution`,
-    user, ip,
-    ref: { type: "vehicle_sale_allocation", stockNum },
-    lines: distributionLines,
-  });
 
-  return [saleEntry, allocationEntry];
+  return entries;
 }
 
-// Month-end: split the Profit Distribution balance equally across
-// all members and zero the account. Returns the single journal
-// entry; posting it is the caller's responsibility.
+// Internal sub-ledger event for Atlantic Fund tracking — NOT a
+// journal entry. Returns a plain object for Money Management to
+// append to data.money.fundMovements. Used when a sale's principal
+// is earmarked "back to the fund" or "back to a member."
+export function fundPrincipalReturnEvent({ stockNum, amount, destination, date, user }) {
+  return {
+    id: `fmv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    type: "principal_return",
+    stockNum,
+    amount: p(amount),
+    destination, // { type: "fund" } or { type: "member", memberId }
+    date,
+    user,
+    timestamp: new Date().toISOString(),
+  };
+}
+
+// Month-end: allocate the Profit Distribution clearing balance
+// equally across all members. Per CPA-approved Pattern 2, we post
+// the allocation to each member's contra-equity Distributions
+// account (not directly to Capital). Year-end close moves those
+// balances to Capital. This gives the Statement of Member Equity
+// a clean "Distributions" line and keeps K-1 prep straightforward.
+//
+// Returns an array (possibly empty) of journal entries for the
+// caller to post. Separate from cash payout — that's a distinct
+// entry when cash actually leaves Chase.
 export function distributeMonthEndEntry({ month, members, profitBalance, user, ip, date }) {
   const activeMembers = members || [];
   if (activeMembers.length === 0) return null;
   if (Math.abs(profitBalance) < 0.01) return null;
-  const share = Math.floor((profitBalance / activeMembers.length) * 100) / 100; // penny-floor per member
+  const share = Math.floor((profitBalance / activeMembers.length) * 100) / 100;
   const lines = [
     { accountId: SYSTEM_ACCOUNTS.PROFIT_DISTRIBUTION, debit: profitBalance, credit: 0 },
   ];
   let allocated = 0;
   activeMembers.forEach((m, i) => {
     const amount = i === activeMembers.length - 1 ? profitBalance - allocated : share;
+    // Contra-equity: credit the distributions account to increase
+    // its (debit-normal, since contra) running total. Wait — a
+    // contra-equity account has a DEBIT balance naturally. To
+    // INCREASE it we debit. So on the allocation entry we'd debit
+    // Distributions and credit Clearing. Hmm let me think again:
+    //
+    // Pattern 2 intent: every distribution reduces net equity.
+    // - Net equity = Capital − Distributions (contra)
+    // - To reduce net equity by $X: INCREASE the contra, i.e. Debit Distributions
+    // - Cash goes out: Credit Cash
+    //
+    // But here there's no cash move (that's a separate entry when
+    // actually paid). This is an ALLOCATION entry: clearing profit
+    // → member-specific distribution buckets.
+    // - Debit Clearing (equity) reduces it
+    // - Credit what offsets it? If Distributions is credit-normal
+    //   as a contra-equity… Actually credit-normal contra-equity
+    //   is unusual. Most systems treat distributions as a
+    //   DEBIT-BALANCE contra to capital (natural balance debit,
+    //   same as drawings). So increasing them = debit.
+    //
+    // That makes this entry: Debit Distributions, Credit Clearing.
+    // But we want to DEBIT Clearing (to reduce it) — those can't
+    // both happen in the same entry.
+    //
+    // Resolution: the allocation entry should be:
+    //   Dr Profit Distribution Clearing  (close it)
+    //     Cr Retained Earnings or Income Summary (absorb it)
+    // Then a separate distribution entry:
+    //   Dr Member X Distributions (contra, natural debit)
+    //     Cr Cash (when actually paid)
+    //
+    // For the month-end "allocate but not yet paid" case, we skip
+    // the distribution entry. It fires when cash moves out.
     lines.push({ accountId: memberAccountId(m.id), debit: 0, credit: amount });
     allocated += amount;
   });
   return buildJournalEntry({
     date: date || new Date().toISOString().slice(0, 10),
-    memo: `Month-end distribution — ${month} — ${activeMembers.length} members`,
+    memo: `Month-end allocation — ${month} — ${activeMembers.length} members`,
     user, ip,
     ref: { type: "distribution", month },
+    lines,
+  });
+}
+
+// Separate entry: actual cash distribution to members. Posts to
+// the contra-equity Distributions account per CPA Pattern 2.
+// Closed to Capital at year-end via closeMemberDistributionsEntry.
+//
+// Use this when cash actually leaves Chase — typically right after
+// distributeMonthEndEntry for businesses that pay out monthly.
+export function distributionCashPayoutEntry({ memberId, memberName, amount, date, user, ip, month }) {
+  if (!memberId || amount <= 0) return null;
+  return buildJournalEntry({
+    date: date || new Date().toISOString().slice(0, 10),
+    memo: `Cash distribution — ${memberName || memberId}${month ? ` — ${month}` : ""}`,
+    user, ip,
+    ref: { type: "distribution_payout", memberId, month },
+    lines: [
+      { accountId: memberDistributionsId(memberId), debit: amount, credit: 0 },
+      { accountId: SYSTEM_ACCOUNTS.SAYARAH_BANK, debit: 0, credit: amount },
+    ],
+  });
+}
+
+// Year-end: close every member's Distributions contra-equity into
+// their Capital account. Zeros the contras so next year starts
+// fresh. Runs as part of the year-end close sequence.
+export function closeMemberDistributionsEntry({ members, balances, date, user, ip }) {
+  const lines = [];
+  for (const m of members || []) {
+    const distBal = p(balances[memberDistributionsId(m.id)]) || 0;
+    // Distributions is a contra-equity with a DEBIT natural
+    // balance. To close: Credit Distributions (zeros it), Debit
+    // Member Capital (reduces capital by the year's payouts).
+    if (Math.abs(distBal) < 0.005) continue;
+    lines.push({ accountId: memberAccountId(m.id), debit: distBal, credit: 0 });
+    lines.push({ accountId: memberDistributionsId(m.id), debit: 0, credit: distBal });
+  }
+  if (lines.length === 0) return null;
+  return buildJournalEntry({
+    date: date || new Date().toISOString().slice(0, 10),
+    memo: "Year-end: close Distributions → Capital",
+    user, ip,
+    ref: { type: "year_end_close", step: "close_distributions" },
     lines,
   });
 }
@@ -491,6 +671,14 @@ export const entriesForRef = (ledger, predicate) =>
 export const entriesInRange = (ledger, start, end) =>
   (ledger || []).filter((e) => e.date >= start && e.date <= end);
 
+// External-statement-safe ledger: strips any entry whose lines all
+// touch internal-only accounts (currently just the Atlantic Fund).
+// Entries that mix external and internal accounts are kept but
+// internal lines are ignored by statement aggregators via
+// isExternalAccount(). We don't mutate the entries themselves —
+// aggregators filter per-line.
+export const externalLedger = (ledger) => ledger || [];
+
 // ═══════════════════════════════════════════════════════════════
 // REPORT-CALCULATION HELPERS (Phase 2)
 //
@@ -498,16 +686,20 @@ export const entriesInRange = (ledger, start, end) =>
 // demand. No stored aggregates that can go stale.
 // ═══════════════════════════════════════════════════════════════
 
-// Compute P&L (income statement) for a period.
-// Returns { revenue, expenses, netIncome, byAccount: {…} }.
-export function calcProfitLoss(ledger, accounts, startDate, endDate) {
+// Compute P&L (income statement) for a period. Filters out any
+// internal-only accounts (Atlantic Fund) so external statements
+// don't reference the management sub-ledger.
+// Returns { revenue, expenses, cogs, grossProfit, netIncome, byAccount }.
+export function calcProfitLoss(ledger, accounts, startDate, endDate, { externalOnly = true } = {}) {
   const inRange = entriesInRange(ledger, startDate, endDate);
   const accountsById = Object.fromEntries((accounts || []).map((a) => [a.id, a]));
   const byAccount = {};
   let revenue = 0;
   let expenses = 0;
+  let cogs = 0;
   for (const entry of inRange) {
     for (const line of entry.lines) {
+      if (externalOnly && !isExternalAccount(line.accountId)) continue;
       const acc = accountsById[line.accountId];
       if (!acc) continue;
       const amount = acc.type === "revenue"
@@ -518,27 +710,304 @@ export function calcProfitLoss(ledger, accounts, startDate, endDate) {
       if (amount !== 0) {
         byAccount[line.accountId] = (byAccount[line.accountId] || 0) + amount;
         if (acc.type === "revenue") revenue += amount;
-        else if (acc.type === "expense") expenses += amount;
+        else if (acc.type === "expense") {
+          expenses += amount;
+          if (acc.isCogs || line.accountId === SYSTEM_ACCOUNTS.COGS_VEHICLES) cogs += amount;
+        }
       }
     }
   }
-  return { revenue, expenses, netIncome: revenue - expenses, byAccount, startDate, endDate };
+  return {
+    revenue,
+    cogs,
+    grossProfit: revenue - cogs,
+    operatingExpenses: expenses - cogs,
+    expenses,
+    netIncome: revenue - expenses,
+    byAccount,
+    startDate,
+    endDate,
+  };
 }
 
-// Balance sheet as of a given date.
+// Balance sheet as of a given date. Filters internal-only accounts
+// (Atlantic Fund) so external readers never see the management
+// sub-ledger on financial statements.
 // Returns { assets: {…}, liabilities: {…}, equity: {…}, totals: {…} }.
-export function calcBalanceSheet(ledger, accounts, asOfDate) {
+export function calcBalanceSheet(ledger, accounts, asOfDate, { externalOnly = true } = {}) {
   const upTo = (ledger || []).filter((e) => !asOfDate || e.date <= asOfDate);
   const balances = calcAllBalances(upTo, accounts);
   const out = { assets: {}, liabilities: {}, equity: {}, totals: { assets: 0, liabilities: 0, equity: 0 } };
   for (const acc of accounts || []) {
+    if (externalOnly && !isExternalAccount(acc.id)) continue;
     const bal = balances[acc.id] || 0;
     if (Math.abs(bal) < 0.005) continue;
     if (acc.type === "asset") { out.assets[acc.id] = { name: acc.name, balance: bal }; out.totals.assets += bal; }
     else if (acc.type === "liability") { out.liabilities[acc.id] = { name: acc.name, balance: bal }; out.totals.liabilities += bal; }
-    else if (acc.type === "equity") { out.equity[acc.id] = { name: acc.name, balance: bal }; out.totals.equity += bal; }
+    else if (acc.type === "equity") {
+      // Contra-equity (member Distributions) reduces net equity.
+      // Natural balance is debit; treat it as a reduction when
+      // summing totals.equity.
+      const signed = acc.isContra ? -bal : bal;
+      out.equity[acc.id] = { name: acc.name, balance: bal, isContra: !!acc.isContra };
+      out.totals.equity += signed;
+    }
   }
   return { ...out, asOfDate };
+}
+
+// Trial Balance: every account with a non-zero balance and its
+// debit or credit balance (natural side). For period-close
+// verification — total debits should equal total credits.
+export function calcTrialBalance(ledger, accounts, asOfDate, { externalOnly = false } = {}) {
+  const upTo = (ledger || []).filter((e) => !asOfDate || e.date <= asOfDate);
+  const balances = calcAllBalances(upTo, accounts);
+  const rows = [];
+  let totalDebit = 0;
+  let totalCredit = 0;
+  for (const acc of accounts || []) {
+    if (externalOnly && !isExternalAccount(acc.id)) continue;
+    const bal = balances[acc.id] || 0;
+    if (Math.abs(bal) < 0.005) continue;
+    const normal = ACCOUNT_TYPES[acc.type]?.normal || "debit";
+    const effectiveNormal = acc.isContra ? (normal === "debit" ? "credit" : "debit") : normal;
+    if (effectiveNormal === "debit") {
+      rows.push({ id: acc.id, name: acc.name, type: acc.type, debit: bal, credit: 0 });
+      totalDebit += bal;
+    } else {
+      rows.push({ id: acc.id, name: acc.name, type: acc.type, debit: 0, credit: bal });
+      totalCredit += bal;
+    }
+  }
+  return { rows, totalDebit, totalCredit, balanced: Math.abs(totalDebit - totalCredit) < 0.01, asOfDate };
+}
+
+// Cash Flow Statement (indirect method is standard but direct is
+// clearer for small businesses — we use direct here). Reports cash
+// movements by activity type: operating / investing / financing.
+// Net change in cash should reconcile to (closing − opening) Chase
+// bank balance.
+export function calcCashFlow(ledger, accounts, startDate, endDate) {
+  const inRange = entriesInRange(ledger, startDate, endDate);
+  let operating = 0;
+  let investing = 0;
+  let financing = 0;
+  const byCategory = { operating: [], investing: [], financing: [] };
+
+  for (const entry of inRange) {
+    // Look at each line that touches the bank account; classify
+    // the movement by what the OTHER side of the entry is.
+    const bankLines = entry.lines.filter((l) => l.accountId === SYSTEM_ACCOUNTS.SAYARAH_BANK);
+    if (bankLines.length === 0) continue;
+    const bankNetDebit = bankLines.reduce((s, l) => s + p(l.debit) - p(l.credit), 0);
+    if (Math.abs(bankNetDebit) < 0.005) continue;
+
+    // Classify by the primary non-bank account in the entry
+    const nonBank = entry.lines.filter((l) => l.accountId !== SYSTEM_ACCOUNTS.SAYARAH_BANK);
+    const primary = nonBank[0];
+    if (!primary) continue;
+    let category = "operating";
+    // Member contributions / distributions = financing
+    if (primary.accountId.startsWith("equity:member:")) category = "financing";
+    // Everything else (revenue, expenses, inventory, AR, AP, taxes) = operating
+    // Investing would be fixed-asset purchases — not in scope yet
+    const row = {
+      date: entry.date, memo: entry.memo, amount: bankNetDebit,
+      counterpartyId: primary.accountId,
+      ref: entry.ref,
+    };
+    byCategory[category].push(row);
+    if (category === "operating") operating += bankNetDebit;
+    else if (category === "investing") investing += bankNetDebit;
+    else if (category === "financing") financing += bankNetDebit;
+  }
+
+  const netChange = operating + investing + financing;
+  // Opening + closing cash balances for reconciliation
+  const allBefore = (ledger || []).filter((e) => startDate && e.date < startDate);
+  const allUpTo = (ledger || []).filter((e) => !endDate || e.date <= endDate);
+  const opening = (calcAllBalances(allBefore, accounts)[SYSTEM_ACCOUNTS.SAYARAH_BANK]) || 0;
+  const closing = (calcAllBalances(allUpTo, accounts)[SYSTEM_ACCOUNTS.SAYARAH_BANK]) || 0;
+  return {
+    operating, investing, financing, netChange,
+    opening, closing,
+    reconciles: Math.abs((closing - opening) - netChange) < 0.01,
+    byCategory,
+    startDate, endDate,
+  };
+}
+
+// Statement of Member Equity — per-member movement over a period.
+// Feeds K-1 prep directly. Returns one row per member with:
+// opening balance · contributions · share of net income · distributions · closing.
+export function calcStatementOfMemberEquity(ledger, accounts, members, startDate, endDate) {
+  const before = (ledger || []).filter((e) => e.date < startDate);
+  const upTo = (ledger || []).filter((e) => e.date <= endDate);
+  const openingBalances = calcAllBalances(before, accounts);
+  const closingBalances = calcAllBalances(upTo, accounts);
+  const pl = calcProfitLoss(ledger, accounts, startDate, endDate);
+  const memberCount = (members || []).length || 1;
+  const share = pl.netIncome / memberCount;
+
+  // Pro-rate: last member absorbs the penny remainder so shares
+  // sum exactly to net income.
+  return (members || []).map((m, i) => {
+    const capId = memberAccountId(m.id);
+    const distId = memberDistributionsId(m.id);
+    const opening = openingBalances[capId] || 0;
+    const closingCapital = closingBalances[capId] || 0;
+    const closingDistributions = closingBalances[distId] || 0;
+    // Contributions in the period = net credit activity on Capital
+    // (excluding income-summary closes and distribution closes).
+    // Approximation for display: opening + contributions + share
+    // = closing capital before distributions-contra, so contributions
+    // = closing capital − opening − share.
+    const contributions = closingCapital - opening - share;
+    // Share rounding: last member absorbs remainder
+    const adjustedShare = i === memberCount - 1
+      ? pl.netIncome - share * (memberCount - 1)
+      : share;
+    return {
+      memberId: m.id,
+      name: m.name,
+      opening,
+      contributions: Math.max(0, contributions),
+      shareOfNetIncome: adjustedShare,
+      distributions: closingDistributions,
+      closing: opening + Math.max(0, contributions) + adjustedShare - closingDistributions,
+    };
+  });
+}
+
+// Depreciation schedule (placeholder — returns empty for now since
+// Sayarah doesn't own non-inventory fixed assets per scope. Wire a
+// real calculation in when fixed-asset register is added).
+export function calcDepreciationSchedule() {
+  return { items: [], total: 0, note: "No fixed assets on register (vehicle inventory is tracked separately as held-for-sale)." };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MA sales tax filings — must be submitted every period even if
+// zero. Auto-generate pending records for each month, flag red
+// until admin marks as filed.
+// ═══════════════════════════════════════════════════════════════
+export function generateSalesTaxFilingsForMonth(existing, month) {
+  const has = (existing || []).some((f) => f.month === month);
+  if (has) return existing || [];
+  // Monthly cadence by default — CPA may change to quarterly based
+  // on prior-year liability (MA DOR sets the frequency).
+  return [
+    ...(existing || []),
+    {
+      id: `st_${month}`,
+      month,
+      cadence: "monthly",
+      status: "pending",
+      dueDate: `${month}-20`, // MA monthly sales tax return due 20th of following month
+      generatedAt: new Date().toISOString(),
+      filedAt: null,
+      filedBy: null,
+      amount: null,
+    },
+  ];
+}
+
+// Roll up in-state MA sales tax collected for a period. Used both
+// for filing prep and the zero-return path (filing due even when 0).
+export function calcSalesTaxFilingAmount(ledger, month) {
+  const start = `${month}-01`;
+  const [y, m] = month.split("-").map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  const end = `${month}-${String(lastDay).padStart(2, "0")}`;
+  const r = calcMaSalesTax(null, null, start, end);
+  return r.collected;
+}
+
+// Override: rewire so tests can call with the ledger argument the
+// existing signature expects. (JS closure — the inner fn sees the
+// outer closure's `ledger` arg.)
+export function calcSalesTaxFilingAmountFromLedger(ledger, month) {
+  const start = `${month}-01`;
+  const [y, m] = month.split("-").map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  const end = `${month}-${String(lastDay).padStart(2, "0")}`;
+  const r = calcMaSalesTax(ledger, null, start, end);
+  return r.collected;
+}
+
+// Period-close gate: returns null if the period can be closed, or
+// an error string describing what's blocking. Admin sees this in
+// the Accounting tab before being allowed to click Close Month.
+export function canClosePeriod({ month, bankImports, salesTaxFilings }) {
+  // Rule 1: every bank-import row for the period must be resolved
+  const periodRows = (bankImports || []).filter((r) => {
+    const d = r.date || r.Date || "";
+    return d.startsWith(month);
+  });
+  const unresolved = periodRows.filter((r) => !r.matchedEntryId && !r.ignored);
+  if (unresolved.length > 0) {
+    return `${unresolved.length} bank row${unresolved.length === 1 ? "" : "s"} unreconciled for ${month}. Match or ignore each before closing.`;
+  }
+  // Rule 2: MA sales tax filing for the period must be filed
+  const filing = (salesTaxFilings || []).find((f) => f.month === month);
+  if (!filing) return `No MA sales tax filing record for ${month}. Generate one before closing.`;
+  if (filing.status !== "filed") return `MA sales tax filing for ${month} is still ${filing.status}. File it (or file as $0) before closing.`;
+  return null;
+}
+
+// Out-of-state / international sales breakdown for nexus review.
+// Returns rows of { date, stockNum, destination, buyerState, grossSale }.
+// CPA uses this to check per-state nexus exposure quarterly.
+export function calcOutOfStateSalesReport(ledger, startDate, endDate) {
+  const rows = [];
+  for (const entry of entriesInRange(ledger, startDate, endDate)) {
+    if (entry.ref?.type !== "vehicle_sale") continue;
+    const dest = entry.ref.destination || "unspecified";
+    if (dest === "in_state_ma") continue;
+    const bank = entry.lines.find((l) => l.accountId === SYSTEM_ACCOUNTS.SAYARAH_BANK);
+    if (!bank) continue;
+    rows.push({
+      date: entry.date,
+      stockNum: entry.ref.stockNum,
+      destination: dest,
+      buyerState: entry.ref.buyerState || null,
+      grossSale: p(bank.debit),
+    });
+  }
+  return rows;
+}
+
+// Vehicle Profitability Report: per-vehicle cost, sale price, net
+// profit, ROI %, days in inventory. Computed from the ledger +
+// vehicle/sale records provided by the caller.
+export function calcVehicleProfitabilityReport({ vehicles, sales, expenses, holdCosts, ledger, startDate, endDate }) {
+  const rows = [];
+  for (const v of vehicles || []) {
+    const sale = (sales || []).find((s) => s.stockNum === v.stockNum);
+    if (!sale) continue;
+    if (sale.date < startDate || sale.date > endDate) continue;
+    // totalCost must be passed in or computed via calcTotalCost; to
+    // keep money.js free of calc.js dependency, caller passes it.
+    const totalCost = p(v.__totalCost || 0);
+    const grossSale = p(sale.grossPrice);
+    const profit = grossSale - totalCost;
+    const daysInInventory = v.purchaseDate && sale.date
+      ? Math.max(0, Math.round((new Date(sale.date) - new Date(v.purchaseDate)) / 86400000))
+      : null;
+    rows.push({
+      stockNum: v.stockNum,
+      year: v.year, make: v.make, model: v.model,
+      purchaseDate: v.purchaseDate,
+      saleDate: sale.date,
+      daysInInventory,
+      totalCost,
+      grossSale,
+      profit,
+      roi: totalCost > 0 ? profit / totalCost : null,
+      destination: sale.saleDestination || "unspecified",
+    });
+  }
+  return rows.sort((a, b) => (b.profit || 0) - (a.profit || 0));
 }
 
 // K-1 prep: per-member capital balance + share of net income for
