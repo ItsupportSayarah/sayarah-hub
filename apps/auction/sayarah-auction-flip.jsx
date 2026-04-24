@@ -387,6 +387,111 @@ const STORAGE_KEY = "sayarah-flip-v4";
 const USERS_STORAGE_KEY = "sayarah-users-v2";
 const AUCTION_SOURCES = ["copart", "iaai", "manheim", "autotrader", "private_party", "facebook", "trade_in", "other", "custom"];
 
+// ─── Vehicle make/model/trim presets for the Add Vehicle dropdowns ─
+// Five most-common makes on the lot, seven models each, and common
+// trims per model. Every dropdown has an "Other…" choice that flips
+// the field back into a free-text input so anything off-list is
+// still capturable.
+const VEHICLE_MAKES = ["Toyota", "Honda", "Ford", "Chevrolet", "BMW"];
+const MODELS_BY_MAKE = {
+  Toyota: ["Camry", "Corolla", "RAV4", "Highlander", "Tacoma", "4Runner", "Tundra"],
+  Honda: ["Civic", "Accord", "CR-V", "Pilot", "Odyssey", "Ridgeline", "HR-V"],
+  Ford: ["F-150", "Mustang", "Explorer", "Escape", "Bronco", "Edge", "Ranger"],
+  Chevrolet: ["Silverado", "Tahoe", "Suburban", "Equinox", "Malibu", "Camaro", "Traverse"],
+  BMW: ["3 Series", "5 Series", "X3", "X5", "7 Series", "M4", "X7"],
+};
+const TRIMS_BY_MODEL = {
+  // Toyota
+  "Camry": ["LE", "SE", "XLE", "XSE", "TRD"],
+  "Corolla": ["L", "LE", "SE", "XLE", "XSE", "Hybrid"],
+  "RAV4": ["LE", "XLE", "XLE Premium", "Adventure", "TRD Off-Road", "Limited", "Hybrid"],
+  "Highlander": ["L", "LE", "XLE", "XSE", "Limited", "Platinum", "Hybrid"],
+  "Tacoma": ["SR", "SR5", "TRD Sport", "TRD Off-Road", "Limited", "TRD Pro"],
+  "4Runner": ["SR5", "SR5 Premium", "TRD Sport", "TRD Off-Road", "Limited", "TRD Pro"],
+  "Tundra": ["SR", "SR5", "Limited", "Platinum", "1794 Edition", "TRD Pro"],
+  // Honda
+  "Civic": ["LX", "Sport", "EX", "EX-L", "Touring", "Si", "Type R"],
+  "Accord": ["LX", "Sport", "EX", "EX-L", "Touring", "Hybrid"],
+  "CR-V": ["LX", "EX", "EX-L", "Sport", "Touring", "Hybrid"],
+  "Pilot": ["Sport", "EX-L", "Touring", "TrailSport", "Elite", "Black Edition"],
+  "Odyssey": ["EX", "EX-L", "Touring", "Elite"],
+  "Ridgeline": ["Sport", "RTL", "RTL-E", "Black Edition", "TrailSport"],
+  "HR-V": ["LX", "Sport", "EX-L"],
+  // Ford
+  "F-150": ["XL", "XLT", "Lariat", "King Ranch", "Platinum", "Limited", "Raptor"],
+  "Mustang": ["EcoBoost", "GT", "Mach 1", "Shelby GT500", "Dark Horse"],
+  "Explorer": ["Base", "XLT", "Limited", "ST", "Platinum", "King Ranch"],
+  "Escape": ["S", "SE", "SEL", "ST-Line", "Platinum", "Hybrid"],
+  "Bronco": ["Base", "Big Bend", "Black Diamond", "Outer Banks", "Badlands", "Wildtrak", "Raptor"],
+  "Edge": ["SE", "SEL", "ST-Line", "Titanium", "ST"],
+  "Ranger": ["XL", "XLT", "Lariat", "Raptor"],
+  // Chevrolet
+  "Silverado": ["WT", "Custom", "LT", "RST", "LTZ", "High Country", "ZR2"],
+  "Tahoe": ["LS", "LT", "RST", "Z71", "Premier", "High Country"],
+  "Suburban": ["LS", "LT", "RST", "Z71", "Premier", "High Country"],
+  "Equinox": ["LS", "LT", "RS", "Premier", "ACTIV"],
+  "Malibu": ["LS", "RS", "LT", "Premier"],
+  "Camaro": ["LS", "LT", "SS", "ZL1", "LT1"],
+  "Traverse": ["LS", "LT", "RS", "Premier", "High Country", "Z71"],
+  // BMW
+  "3 Series": ["330i", "330e", "M340i", "M3", "M3 Competition"],
+  "5 Series": ["530i", "540i", "M550i", "M5", "M5 Competition"],
+  "X3": ["sDrive30i", "xDrive30i", "M40i", "X3 M"],
+  "X5": ["xDrive40i", "xDrive45e", "M50i", "X5 M"],
+  "7 Series": ["740i", "750i", "760i", "Alpina B7", "M760i"],
+  "M4": ["Coupe", "Competition", "CSL", "Convertible"],
+  "X7": ["xDrive40i", "M50i", "Alpina XB7"],
+};
+const VEHICLE_COLORS = ["White", "Black", "Silver", "Gray", "Red", "Blue", "Green", "Yellow", "Orange", "Brown", "Beige", "Gold", "Burgundy", "Purple"];
+
+// Small form control — dropdown with an "Other…" fallback that swaps
+// in a text input so custom values outside the preset list still
+// save. Used for Make, Model, Trim, and Color on the Add Vehicle form.
+const OTHER_SENTINEL = "__other__";
+function SelectOrOther({ label, value, onChange, options, placeholder }) {
+  const opts = options || [];
+  const inList = value && opts.includes(value);
+  const [mode, setMode] = useState(() => value && !inList ? "other" : "list");
+  // If the options list changes (e.g. Model changes when Make swaps)
+  // and the current value is no longer in the new list, drop it.
+  useEffect(() => {
+    if (!value) return;
+    if (!opts.includes(value) && mode === "list") onChange("");
+  }, [options]);
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <label style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: BRAND.gray }}>{label}</label>
+      {mode === "other" ? (
+        <div style={{ display: "flex", gap: 4 }}>
+          <input
+            value={value || ""}
+            onChange={e => onChange(e.target.value)}
+            placeholder={placeholder || "Enter custom value"}
+            style={{ flex: 1, border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, padding: "8px 10px", fontSize: 13, fontFamily: "inherit", outline: "none" }}
+          />
+          <button type="button" onClick={() => { onChange(""); setMode("list"); }}
+            style={{ border: `1px solid ${BRAND.grayLight}`, background: "transparent", borderRadius: 6, padding: "0 10px", fontSize: 11, cursor: "pointer", color: BRAND.gray }}>
+            ↩
+          </button>
+        </div>
+      ) : (
+        <select
+          value={value || ""}
+          onChange={e => {
+            if (e.target.value === OTHER_SENTINEL) { setMode("other"); onChange(""); }
+            else onChange(e.target.value);
+          }}
+          style={{ border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, padding: "8px 10px", fontSize: 13, fontFamily: "inherit", background: BRAND.white, outline: "none" }}
+        >
+          <option value="">{placeholder || "Select..."}</option>
+          {opts.map(o => <option key={o} value={o}>{o}</option>)}
+          <option value={OTHER_SENTINEL}>Other…</option>
+        </select>
+      )}
+    </div>
+  );
+}
+
 // ─── User Management ────────────────────────────────────────
 function loadUsers() {
   try {
@@ -893,6 +998,8 @@ function SectionTitle({ children }) { return <div style={{ fontSize: 11, fontWei
 // inventory row never breaks layout if uploads are missing or still pending.
 function VehicleThumb({ photos, width = 160, height = 110 }) {
   const first = Array.isArray(photos) && photos.length > 0 ? photos[0] : null;
+  // Support both numeric (list view) and percentage (grid card) widths.
+  const iconSize = typeof width === "number" ? Math.round(width / 4) : 48;
   if (first && first.url) {
     return (
       <img
@@ -905,7 +1012,7 @@ function VehicleThumb({ photos, width = 160, height = 110 }) {
   }
   return (
     <div style={{ width, height, borderRadius: 8, background: "#F3F4F6", border: `1px solid ${BRAND.grayLight}`, display: "flex", alignItems: "center", justifyContent: "center", color: "#9CA3AF", flexShrink: 0 }}>
-      <svg width={Math.round(width / 4)} height={Math.round(width / 4)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+      <svg width={iconSize} height={iconSize} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9L18 10l-2.7-3.6A1.5 1.5 0 0 0 14.1 6H9.9a1.5 1.5 0 0 0-1.2.6L6 10l-2.5 1.1C2.7 11.3 2 12.1 2 13v3c0 .6.4 1 1 1h2"/>
         <circle cx="7" cy="17" r="2"/>
         <circle cx="17" cy="17" r="2"/>
@@ -1696,6 +1803,11 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
   const [confirm, setConfirm] = useState(null);
   const [filter, setFilter] = useState("All");
   const [sortBy, setSortBy] = useState("recent");
+  // Persisted list/grid toggle so a user's preference survives reloads.
+  const [viewMode, setViewMode] = useState(() => {
+    try { return localStorage.getItem("sayarah-inv-view") || "list"; } catch { return "list"; }
+  });
+  const setView = (m) => { setViewMode(m); try { localStorage.setItem("sayarah-inv-view", m); } catch {} };
   // "Sold" is intentionally not user-selectable here. The status only flips
   // to "Sold" when a sale record is finalized with all required fields
   // (see saveSale). This prevents the "marked Sold but no sale record"
@@ -1886,6 +1998,23 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
           ))}
         </div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          {/* List/Grid view toggle. Preference persists across reloads. */}
+          <div style={{ display: "flex", border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, overflow: "hidden" }}>
+            <button onClick={() => setView("list")} title="List view" style={{
+              background: viewMode === "list" ? BRAND.red : BRAND.white,
+              color: viewMode === "list" ? "#fff" : BRAND.gray,
+              border: "none", padding: "5px 10px", cursor: "pointer", display: "flex", alignItems: "center", fontFamily: "inherit",
+            }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+            </button>
+            <button onClick={() => setView("grid")} title="Grid view" style={{
+              background: viewMode === "grid" ? BRAND.red : BRAND.white,
+              color: viewMode === "grid" ? "#fff" : BRAND.gray,
+              border: "none", padding: "5px 10px", cursor: "pointer", display: "flex", alignItems: "center", fontFamily: "inherit",
+            }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            </button>
+          </div>
           <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, padding: "5px 8px", fontSize: 11, background: BRAND.white }}>
             <option value="recent">Newest First</option>
             <option value="profit">Highest Profit</option>
@@ -1900,7 +2029,67 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
         </div>
       </div>
 
-      {filtered.length === 0 ? <Empty icon={<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9L18 10l-2.7-3.6A1.5 1.5 0 0 0 14.1 6H9.9a1.5 1.5 0 0 0-1.2.6L6 10l-2.5 1.1C2.7 11.3 2 12.1 2 13v3c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/></svg>} title="No vehicles" sub="Add your first car" /> : (
+      {filtered.length === 0 ? <Empty icon={<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9L18 10l-2.7-3.6A1.5 1.5 0 0 0 14.1 6H9.9a1.5 1.5 0 0 0-1.2.6L6 10l-2.5 1.1C2.7 11.3 2 12.1 2 13v3c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/></svg>} title="No vehicles" sub="Add your first car" />
+      : viewMode === "grid" ? (
+        // Card grid: 3-up on wide screens, collapses to fewer columns via
+        // minmax. Each card shows photo + key metrics; full detail is one
+        // click away (opens VehicleDetailModal).
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
+          {filtered.map(v => {
+            const m = calcVehicleFullMetrics(v, data.sales.find(s => s.stockNum === v.stockNum), data.holdCosts, data.expenses);
+            const titleInfo = TITLE_STATUS[v.titleStatus] || TITLE_STATUS.clean;
+            const edgeColor = v.status === "Sold" ? BRAND.green : m.aging ? m.aging.color : BRAND.red;
+            return (
+              <div
+                key={v.id}
+                onClick={() => openDetail(v)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetail(v); } }}
+                style={{
+                  background: BRAND.white, border: `1px solid ${BRAND.grayLight}`, borderTop: `4px solid ${edgeColor}`,
+                  borderRadius: 10, overflow: "hidden", cursor: "pointer", display: "flex", flexDirection: "column",
+                  transition: "transform 0.12s, box-shadow 0.12s",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 4px 18px rgba(0,0,0,0.1)"; e.currentTarget.style.transform = "translateY(-2px)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.transform = "translateY(0)"; }}
+              >
+                <div style={{ width: "100%", aspectRatio: "16/10", background: "#F3F4F6", overflow: "hidden" }}>
+                  <VehicleThumb photos={v.photos} width="100%" height="100%" />
+                </div>
+                <div style={{ padding: 12, flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ color: BRAND.red, fontSize: 11, fontWeight: 800, ...S.mono }}>#{v.stockNum}</span>
+                    <Badge color={titleInfo.color} bg={titleInfo.bg}>{titleInfo.label}</Badge>
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: BRAND.black, lineHeight: 1.2 }}>
+                    {v.year} {v.make} {v.model}
+                  </div>
+                  {v.trim && <div style={{ fontSize: 11, color: BRAND.gray }}>{v.trim}{v.color ? ` · ${v.color}` : ""}</div>}
+                  {(v.location || v.zipCode) && (
+                    <div style={{ fontSize: 11, color: BRAND.grayDark, display: "flex", alignItems: "center", gap: 4 }}>
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                      <span>{v.location}{v.location && v.zipCode ? " · " : ""}{v.zipCode && <span style={S.mono}>{v.zipCode}</span>}</span>
+                    </div>
+                  )}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: "auto", paddingTop: 8, borderTop: `1px solid ${BRAND.grayLight}` }}>
+                    <div>
+                      <div style={{ fontSize: 9, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>Total Cost</div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: BRAND.black, ...S.mono }}>{fmt$(m.totalCost)}</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 9, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.05em", fontWeight: 700 }}>{m.grossProfit != null ? "Profit" : "Status"}</div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: m.grossProfit != null ? (m.grossProfit >= 0 ? BRAND.green : "#DC2626") : BRAND.black, ...S.mono }}>
+                        {m.grossProfit != null ? fmt$(m.grossProfit) : v.status}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
         // Copart/IAA-style row layout: one vehicle per row, left thumbnail
         // + columns. Mobile collapses to photo + summary card via the
         // .inv-row CSS rules in the global style block at the top of App.
@@ -2060,10 +2249,10 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 10 }}>
             <Input label="Stock #" value={form.stockNum} onChange={v => upd("stockNum", v)} readOnly={!!editing} />
             <Input label="Year" value={form.year} onChange={v => upd("year", v)} type="number" placeholder="2022" />
-            <Input label="Make" value={form.make} onChange={v => upd("make", v)} placeholder="Toyota" />
-            <Input label="Model" value={form.model} onChange={v => upd("model", v)} placeholder="Camry" />
-            <Input label="Trim" value={form.trim} onChange={v => upd("trim", v)} placeholder="SE" />
-            <Input label="Color" value={form.color} onChange={v => upd("color", v)} placeholder="Black" />
+            <SelectOrOther label="Make" value={form.make} onChange={v => { upd("make", v); /* reset model when make changes */ if (v !== form.make) upd("model", ""); }} options={VEHICLE_MAKES} placeholder="Select make..." />
+            <SelectOrOther label="Model" value={form.model} onChange={v => upd("model", v)} options={MODELS_BY_MAKE[form.make] || []} placeholder={form.make ? "Select model..." : "Pick make first"} />
+            <SelectOrOther label="Trim" value={form.trim} onChange={v => upd("trim", v)} options={TRIMS_BY_MODEL[form.model] || []} placeholder={form.model ? "Select trim..." : "Pick model first"} />
+            <SelectOrOther label="Color" value={form.color} onChange={v => upd("color", v)} options={VEHICLE_COLORS} placeholder="Select color..." />
             <Input label="Odometer" value={form.odometer} onChange={v => upd("odometer", v)} type="number" />
             <Input label="VIN" value={form.vin} onChange={v => upd("vin", v)} placeholder="1HGCG..." />
           </div>
