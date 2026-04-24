@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback, createContext, useContext, Component } from "react";
-import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserProfile, updateUserRole, getAllUsers, updateUserPermissions, getUserData, saveAppData, loadAppData, saveSharedData, saveSharedDataTxn, loadSharedData, onSharedDataChange, saveApprovalsFB, loadApprovalsFB, addActivityLogEntryFB, loadActivityLogFB, changePassword, resetPassword, uploadFile, deleteFile } from "./src/firebase.js";
+import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, getUserRole, getUserProfile, updateUserRole, getAllUsers, addUserByEmail, deleteUserDoc, updateUserPermissions, getUserData, saveAppData, loadAppData, saveSharedData, saveSharedDataTxn, loadSharedData, onSharedDataChange, saveApprovalsFB, loadApprovalsFB, addActivityLogEntryFB, loadActivityLogFB, changePassword, resetPassword, uploadFile, deleteFile } from "./src/firebase.js";
 // Pure calculation functions live in src/calc.js so they can be
 // unit-tested (see tests/calc.test.mjs). Every display of Total Cost,
 // Net Profit, Gross Margin, etc. funnels through these — no parallel
@@ -7150,6 +7150,9 @@ function UsersTab() {
   const [editUser, setEditUser] = useState(null);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [addForm, setAddForm] = useState({ email: "", firstName: "", lastName: "", role: "user" });
+  const [confirmDel, setConfirmDel] = useState(null);
 
   const load = async () => { setLoading(true); try { const u = await getAllUsers(); setUsers(u); } catch (e) { setMsg("Failed to load users: " + e.message); } setLoading(false); };
   useEffect(() => { if (FIREBASE_ENABLED) load(); }, []);
@@ -7158,6 +7161,36 @@ function UsersTab() {
     setSaving(true); setMsg("");
     try { await updateUserPermissions(uid, updates); setMsg("Permissions saved!"); await load(); setTimeout(() => setMsg(""), 2000); }
     catch (e) { setMsg("Error: " + e.message); }
+    setSaving(false);
+  };
+
+  const addUser = async () => {
+    if (!addForm.email.trim()) { setMsg("Error: Email is required"); return; }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addForm.email.trim())) { setMsg("Error: Invalid email format"); return; }
+    setSaving(true); setMsg("");
+    try {
+      await addUserByEmail(addForm.email.trim(), `${addForm.firstName} ${addForm.lastName}`.trim(), addForm.role, {
+        firstName: addForm.firstName.trim(),
+        lastName: addForm.lastName.trim(),
+      });
+      setMsg(`User added! They'll appear with real login data after they sign in.`);
+      setShowAdd(false);
+      setAddForm({ email: "", firstName: "", lastName: "", role: "user" });
+      await load();
+      setTimeout(() => setMsg(""), 4000);
+    } catch (e) { setMsg("Error: " + e.message); }
+    setSaving(false);
+  };
+
+  const removeUser = async (id, email) => {
+    setSaving(true); setMsg("");
+    try {
+      await deleteUserDoc(id);
+      setMsg(`Removed ${email} from the Users tab. Firebase Auth account (if any) still exists — delete it separately in the Firebase console if needed.`);
+      await load();
+      setTimeout(() => setMsg(""), 6000);
+    } catch (e) { setMsg("Error: " + e.message); }
+    setConfirmDel(null);
     setSaving(false);
   };
 
@@ -7170,7 +7203,14 @@ function UsersTab() {
           <div style={{ fontSize: 18, fontWeight: 900, color: BRAND.black }}>User Management</div>
           <div style={{ fontSize: 11, color: BRAND.gray }}>Control access, roles, and page permissions for Auto Trade Hub</div>
         </div>
-        <Btn onClick={load}>↻ Refresh</Btn>
+        <div style={{ display: "flex", gap: 6 }}>
+          <Btn variant="secondary" onClick={load}>↻ Refresh</Btn>
+          <Btn onClick={() => setShowAdd(true)}>+ Add User</Btn>
+        </div>
+      </div>
+
+      <div style={{ background: "#EFF6FF", borderLeft: `3px solid #3B82F6`, padding: "10px 14px", borderRadius: 6, marginBottom: 14, fontSize: 11, color: "#1E3A8A", lineHeight: 1.5 }}>
+        <b>Missing a user?</b> Users created directly in the Firebase console or via app signup will appear here. If you add someone through Firebase first (or they already exist but aren't listed), click <b>+ Add User</b> and enter their email — this creates the Firestore record needed for role/page-permission controls. When they next sign in, the Firestore record auto-links to their Firebase UID.
       </div>
 
       {msg && <div style={{ background: msg.startsWith("Error") ? BRAND.redBg : "#F0FDF4", color: msg.startsWith("Error") ? BRAND.red : "#166534", padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginBottom: 12 }}>{msg}</div>}
@@ -7252,7 +7292,10 @@ function UsersTab() {
                           <Btn variant="secondary" onClick={() => setEditUser(null)}>Cancel</Btn>
                         </div>
                       ) : (
-                        <Btn variant="secondary" onClick={() => setEditUser({ ...u })}>Edit</Btn>
+                        <div style={{ display: "flex", gap: 4 }}>
+                          <Btn variant="secondary" onClick={() => setEditUser({ ...u })}>Edit</Btn>
+                          <Btn variant="danger" onClick={() => setConfirmDel(u)}>Remove</Btn>
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -7273,6 +7316,38 @@ function UsersTab() {
           • <b>Super Admin</b> (support@sayarah.io) — Cannot be modified
         </div>
       </div>
+
+      {showAdd && (
+        <Modal title="Add User" onClose={() => setShowAdd(false)}>
+          <div style={{ fontSize: 11, color: BRAND.gray, marginBottom: 12, lineHeight: 1.5 }}>
+            Creates a Firestore record for this user. You still need to:
+            <br/>1) Create their Firebase Auth account (Firebase console, or have them sign up with this email)
+            <br/>2) When they first sign in, their record here auto-links to the Firebase UID.
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <Input label="Email *" value={addForm.email} onChange={v => setAddForm(f => ({ ...f, email: v }))} placeholder="user@example.com" />
+            </div>
+            <Input label="First Name" value={addForm.firstName} onChange={v => setAddForm(f => ({ ...f, firstName: v }))} />
+            <Input label="Last Name" value={addForm.lastName} onChange={v => setAddForm(f => ({ ...f, lastName: v }))} />
+            <div style={{ gridColumn: "1 / -1" }}>
+              <Select label="Role" value={addForm.role} onChange={v => setAddForm(f => ({ ...f, role: v }))} options={USER_ROLES.map(r => r.key)} />
+            </div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 18 }}>
+            <Btn variant="secondary" onClick={() => setShowAdd(false)}>Cancel</Btn>
+            <Btn onClick={addUser} disabled={saving}>{saving ? "Adding..." : "Add User"}</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {confirmDel && (
+        <Confirm
+          msg={`Remove ${confirmDel.email} from the Users tab? This deletes their Firestore record but NOT their Firebase Auth account — they can still sign in and will re-create a record with default "user" role.`}
+          onOk={() => removeUser(confirmDel.id, confirmDel.email)}
+          onCancel={() => setConfirmDel(null)}
+        />
+      )}
     </div>
   );
 }

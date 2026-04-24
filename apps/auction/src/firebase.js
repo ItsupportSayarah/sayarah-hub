@@ -208,6 +208,45 @@ export async function getAllUsers() {
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
+// Add a user by email from the admin UI — creates a Firestore doc so the
+// user shows up in the Users tab immediately. When they later sign in
+// through the normal auth flow, firebaseSignIn's safety net attaches
+// their real Firebase UID doc; this email-keyed placeholder can be
+// merged/cleaned up later.
+export async function addUserByEmail(email, displayName, role = "user", { firstName, lastName, allowedTabs, auctionAccess } = {}) {
+  // Guard duplicates — one doc per email across any id scheme.
+  const existing = await getDocs(collection(db, "users"));
+  const dup = existing.docs.find(d => (d.data().email || "").toLowerCase() === email.toLowerCase());
+  if (dup) throw new Error("User with this email already exists");
+  // Deterministic email-derived id so subsequent reads resolve to the
+  // same doc and admins can't accidentally double-create.
+  const id = email.toLowerCase().replace(/[^a-z0-9@._-]/g, "").replace(/[@.]/g, "_");
+  const fn = firstName || displayName?.split(" ")[0] || email.split("@")[0];
+  const ln = lastName || displayName?.split(" ").slice(1).join(" ") || "";
+  await setDoc(doc(db, "users", id), {
+    uid: id,
+    email,
+    displayName: displayName || `${fn} ${ln}`.trim() || email.split("@")[0],
+    firstName: fn,
+    lastName: ln,
+    role,
+    auctionAccess: auctionAccess !== undefined ? auctionAccess : true,
+    logisticsAccess: true,
+    allowedTabs: Array.isArray(allowedTabs) ? allowedTabs : null,
+    addedByAdmin: true,
+    createdAt: serverTimestamp(),
+  });
+  return { id, email };
+}
+
+// Delete a user doc by id (admin only). Does NOT delete the Firebase
+// Auth account (that requires the Admin SDK server-side) — but removing
+// the Firestore record blocks them from the app and from the Users tab.
+export async function deleteUserDoc(id) {
+  const { deleteDoc } = await import("firebase/firestore");
+  await deleteDoc(doc(db, "users", id));
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  DATA HELPERS — Shared data (all users read/write same document)
 // ═══════════════════════════════════════════════════════════════
