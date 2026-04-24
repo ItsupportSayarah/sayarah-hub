@@ -52,6 +52,13 @@ import {
   calcMaSalesTax,
   parseBankCsv,
   suggestMatches,
+  // Phase 3
+  MA_USE_TAX_RATE,
+  calcUseTax,
+  calcMaUseTax,
+  useTaxOnPurchaseEntry,
+  isDateInClosedPeriod,
+  calcClosingEntries,
 } from "./src/money.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
@@ -1689,6 +1696,11 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
     depositSource: "", depositAmount: "",
     balanceSource: "", balanceAmount: "",
     postedToLedger: false,
+    // Phase 3 — MA use tax. When true AND the MA sales tax wasn't paid
+    // at purchase, a 6.25% use tax entry is auto-posted at the same
+    // time as the purchase ledger entry.
+    outOfStatePurchase: false,
+    maSalesTaxPaidAtPurchase: false,
   });
   const [form, setForm] = useState(empty());
   const [formError, setFormError] = useState("");
@@ -2027,6 +2039,29 @@ function InventoryTab({ data, setData, role = "user", currentUser = "" }) {
                 <div style={{ fontSize: 10, color: BRAND.gray, marginTop: 6, fontStyle: "italic" }}>
                   Leave blank to skip the ledger for this vehicle. To book, fill these in and click "Post to ledger" on the vehicle detail screen.
                 </div>
+                {/* MA use-tax flags — posts a 6.25% use-tax entry on
+                    purchase when the car was bought out-of-state and
+                    MA sales tax wasn't collected at the point of sale.
+                    Use-tax amount rolls into cost basis (debits the
+                    vehicle's inventory account). */}
+                <div style={{ marginTop: 10, padding: "8px 10px", background: "#FFFBEB", borderRadius: 6, fontSize: 11, border: "1px solid #FDE68A" }}>
+                  <div style={{ fontSize: 10, fontWeight: 800, color: "#92400E", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>MA Use Tax (6.25%)</div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: "#78350F" }}>
+                    <input type="checkbox" checked={!!form.outOfStatePurchase} onChange={e => upd("outOfStatePurchase", e.target.checked)} />
+                    Purchased out-of-state
+                  </label>
+                  {form.outOfStatePurchase && (
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", color: "#78350F", marginTop: 4 }}>
+                      <input type="checkbox" checked={!!form.maSalesTaxPaidAtPurchase} onChange={e => upd("maSalesTaxPaidAtPurchase", e.target.checked)} />
+                      MA sales tax already paid at purchase (no use tax owed)
+                    </label>
+                  )}
+                  {form.outOfStatePurchase && !form.maSalesTaxPaidAtPurchase && p(form.purchasePrice) > 0 && (
+                    <div style={{ fontSize: 10, color: "#78350F", marginTop: 4, fontStyle: "italic" }}>
+                      Use tax owed on purchase: <b>{fmt$2(p(form.purchasePrice) * 0.0625)}</b> — posted to MA Use Tax Payable when you "Post to ledger".
+                    </div>
+                  )}
+                </div>
               </div>
             )}
             {/* Photos — uploaded to Firebase Storage under vehicles/{id}/photos/.
@@ -2345,9 +2380,17 @@ function VehicleDetailModal({ vehicle, expenses, sale, data, setData, admin, cur
         entries.push(vehiclePurchaseFromMemberEntry({ stockNum: v.stockNum, memberId: v.balanceSource.slice(7), amount: balance, date, memo: `Balance — #${v.stockNum}`, user: currentUser }));
       }
     }
+    // MA use tax — posted alongside the purchase so cost basis includes
+    // the tax liability. Only when the car was bought out-of-state AND
+    // MA sales tax wasn't paid at purchase.
+    if (v.outOfStatePurchase && !v.maSalesTaxPaidAtPurchase) {
+      const ut = useTaxOnPurchaseEntry({ stockNum: v.stockNum, purchasePrice: p(v.purchasePrice), date, user: currentUser });
+      if (ut) entries.push(ut);
+    }
     setData(d => {
+      const closedPeriods = d.money?.closedPeriods || [];
       let ledger = d.money?.ledger || [];
-      for (const e of entries) ledger = postJournalEntry(ledger, e);
+      for (const e of entries) ledger = postJournalEntry(ledger, e, closedPeriods);
       // Ensure the vehicle inventory account exists in the chart so
       // balance lookups in the Money tab resolve.
       const accounts = d.money?.accounts || DEFAULT_ACCOUNTS;
@@ -4590,15 +4633,21 @@ function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
   const profitBalance = balances[SYSTEM_ACCOUNTS.PROFIT_DISTRIBUTION] || 0;
   const taxBalance = balances[SYSTEM_ACCOUNTS.TAX] || 0;
 
-  // Helper: post a journal entry and save.
+  // Helper: post a journal entry and save. Passes closedPeriods so
+  // the closed-year guard in postJournalEntry fires for any entry
+  // dated inside a closed fiscal period.
   const postEntry = (entry) => {
-    setData(d => ({
-      ...d,
-      money: {
-        ...d.money,
-        ledger: postJournalEntry(d.money?.ledger || [], entry),
-      },
-    }));
+    try {
+      setData(d => ({
+        ...d,
+        money: {
+          ...d.money,
+          ledger: postJournalEntry(d.money?.ledger || [], entry, d.money?.closedPeriods || []),
+        },
+      }));
+    } catch (err) {
+      alert(err.message || String(err));
+    }
   };
 
   // Helper: log + post
@@ -4636,7 +4685,7 @@ function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
       ...d,
       money: {
         ...d.money,
-        ledger: postJournalEntry(postJournalEntry(d.money?.ledger || [], entry1), entry2),
+        ledger: postJournalEntry(postJournalEntry(d.money?.ledger || [], entry1, d.money?.closedPeriods || []), entry2, d.money?.closedPeriods || []),
         contributions: (d.money?.contributions || []).map(c =>
           (c.memberId === memberId && c.month === currentMonth)
             ? { ...c, status: "paid", paidDate: new Date().toISOString().slice(0, 10), journalEntryId: entry1.id }
@@ -4731,8 +4780,10 @@ function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
     { id: "members", label: "Members" },
     { id: "vehicles", label: "Vehicle P&L" },
     { id: "transactions", label: "Transactions" },
+    { id: "audit", label: "Audit Trail" },
     { id: "reconciliation", label: "Bank Recon" },
     { id: "reports", label: "Tax Exports" },
+    { id: "yearend", label: "Year-End Close" },
   ];
 
   // Notifications: derive from state (no stored feed). Surfaced as a
@@ -4869,8 +4920,10 @@ function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
       {view === "members" && <MembersView money={money} balances={balances} admin={admin} memberFilter={memberFilter} setMemberFilter={setMemberFilter} />}
       {view === "vehicles" && <VehiclePLView data={data} balances={balances} />}
       {view === "transactions" && <TransactionsView ledger={money.ledger} accounts={money.accounts} members={money.members} />}
+      {view === "audit" && <AuditTrailView ledger={money.ledger} accounts={money.accounts} members={money.members} />}
       {view === "reconciliation" && <BankReconciliationView data={data} setData={setData} admin={admin} username={username} />}
       {view === "reports" && <TaxExportsView data={data} money={money} />}
+      {view === "yearend" && <YearEndCloseView data={data} setData={setData} money={money} admin={admin} username={username} />}
 
       {/* Rules modal */}
       {showRules && (
@@ -5062,6 +5115,114 @@ function BankReconciliationView({ data, setData, admin, username }) {
   const ledger = data.money?.ledger || [];
   const [csvText, setCsvText] = useState("");
   const [parseError, setParseError] = useState("");
+  // Plaid connection state — stored on data.money.plaid when Linked.
+  const plaid = data.money?.plaid || null;
+  const [plaidStatus, setPlaidStatus] = useState({ configured: null });
+  const [plaidBusy, setPlaidBusy] = useState(false);
+  useEffect(() => {
+    fetch("/api/plaid/status").then(r => r.json()).then(setPlaidStatus).catch(() => setPlaidStatus({ configured: false }));
+  }, []);
+
+  // Plaid Link script is loaded on demand when the admin clicks
+  // Connect — keeps the default bundle slim.
+  const loadPlaidScript = () => new Promise((resolve, reject) => {
+    if (window.Plaid) return resolve();
+    const s = document.createElement("script");
+    s.src = "https://cdn.plaid.com/link/v2/stable/link-initialize.js";
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("Failed to load Plaid Link script"));
+    document.body.appendChild(s);
+  });
+
+  const startPlaid = async () => {
+    setPlaidBusy(true);
+    try {
+      await loadPlaidScript();
+      const r = await fetch("/api/plaid/link-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: username || "sayarah-admin" }),
+      }).then(r => r.json());
+      if (!r.link_token) throw new Error(r.error || "Could not get link token");
+      const handler = window.Plaid.create({
+        token: r.link_token,
+        onSuccess: async (public_token, metadata) => {
+          const ex = await fetch("/api/plaid/exchange", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ publicToken: public_token }),
+          }).then(r => r.json());
+          if (!ex.access_token) { alert("Plaid exchange failed: " + (ex.error || "unknown")); return; }
+          setData(d => ({
+            ...d,
+            money: {
+              ...d.money,
+              plaid: {
+                accessToken: ex.access_token,
+                itemId: ex.item_id,
+                institution: metadata.institution?.name || "Unknown",
+                connectedAt: new Date().toISOString(),
+                connectedBy: username,
+                lastSyncAt: null,
+              },
+            },
+          }));
+          logActivity(username, "plaid_connected", `Connected bank via Plaid: ${metadata.institution?.name || "Unknown"}`);
+        },
+        onExit: () => {},
+      });
+      handler.open();
+    } catch (e) {
+      alert(e.message || String(e));
+    } finally { setPlaidBusy(false); }
+  };
+
+  const syncPlaid = async () => {
+    if (!plaid?.accessToken) return;
+    setPlaidBusy(true);
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const start = plaid.lastSyncAt
+        ? new Date(plaid.lastSyncAt).toISOString().slice(0, 10)
+        : new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+      const r = await fetch("/api/plaid/transactions", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ accessToken: plaid.accessToken, startDate: start, endDate: today }),
+      }).then(r => r.json());
+      if (!Array.isArray(r.transactions)) throw new Error(r.error || "No transactions returned");
+      const batchId = `plaid_${Date.now().toString(36)}`;
+      // Plaid amounts are positive for debits (money out), negative for
+      // credits (money in). Normalize to the CSV shape used elsewhere.
+      const rows = r.transactions.map((t, i) => ({
+        _id: `${batchId}_${i}`,
+        batchId,
+        date: t.date,
+        description: t.name || t.merchant_name || "(no description)",
+        amount: (-t.amount).toFixed(2), // flip sign: positive = money in
+        plaidTransactionId: t.transaction_id,
+        matchedEntryId: null,
+        ignored: false,
+        source: "plaid",
+      }));
+      setData(d => ({
+        ...d,
+        money: {
+          ...d.money,
+          bankImports: [...(d.money?.bankImports || []), ...rows],
+          plaid: { ...d.money.plaid, lastSyncAt: new Date().toISOString() },
+        },
+      }));
+      logActivity(username, "plaid_synced", `Imported ${rows.length} transactions from Plaid (${start} to ${today})`);
+    } catch (e) {
+      alert(e.message || String(e));
+    } finally { setPlaidBusy(false); }
+  };
+
+  const disconnectPlaid = () => {
+    if (!confirm("Disconnect Plaid? The stored access token is removed from the app; Plaid still retains permissions until you revoke in your bank portal.")) return;
+    setData(d => ({ ...d, money: { ...d.money, plaid: null } }));
+    logActivity(username, "plaid_disconnected", `Disconnected Plaid bank link`);
+  };
 
   const onFile = (file) => {
     if (!file) return;
@@ -5109,6 +5270,40 @@ function BankReconciliationView({ data, setData, admin, username }) {
 
   return (
     <div>
+      {admin && (
+        <Card style={{ marginBottom: 12 }}>
+          {/* Plaid live-sync card. Renders conditional on server config:
+              "configured: false" → show setup instructions instead of the
+              Connect button. */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: BRAND.black }}>Plaid (live bank sync)</div>
+            {plaidStatus.configured === false && <span style={{ fontSize: 10, color: "#92400E", background: "#FEF3C7", padding: "2px 8px", borderRadius: 4, fontWeight: 700 }}>NOT CONFIGURED</span>}
+            {plaidStatus.configured && !plaid && <span style={{ fontSize: 10, color: BRAND.gray, fontWeight: 700 }}>Not connected</span>}
+            {plaid && <span style={{ fontSize: 10, color: BRAND.green, fontWeight: 700 }}>✓ {plaid.institution}</span>}
+          </div>
+          {plaidStatus.configured === false && (
+            <div style={{ padding: "8px 10px", background: "#FFFBEB", borderRadius: 6, fontSize: 11, color: "#78350F", border: "1px solid #FDE68A", lineHeight: 1.5 }}>
+              Plaid live-sync isn't available because <code>PLAID_CLIENT_ID</code>, <code>PLAID_SECRET</code>, and <code>PLAID_ENV</code> aren't set on the server. Add them to Heroku Config Vars and redeploy. Until then, use CSV import below.
+            </div>
+          )}
+          {plaidStatus.configured && !plaid && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <Btn size="sm" onClick={startPlaid} disabled={plaidBusy}>{plaidBusy ? "Opening Plaid…" : "Connect Chase via Plaid"}</Btn>
+              <span style={{ fontSize: 10, color: BRAND.gray }}>Opens Plaid's secure bank-link flow. Storing the access token lets admins pull new transactions on demand.</span>
+            </div>
+          )}
+          {plaid && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <Btn size="sm" onClick={syncPlaid} disabled={plaidBusy}>{plaidBusy ? "Syncing…" : "Sync new transactions"}</Btn>
+              <Btn size="sm" variant="secondary" onClick={disconnectPlaid}>Disconnect</Btn>
+              <span style={{ fontSize: 10, color: BRAND.gray }}>
+                Connected {new Date(plaid.connectedAt).toLocaleDateString()} by {plaid.connectedBy}
+                {plaid.lastSyncAt ? ` · last sync ${new Date(plaid.lastSyncAt).toLocaleString()}` : " · never synced"}
+              </span>
+            </div>
+          )}
+        </Card>
+      )}
       {admin && (
         <Card style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 13, fontWeight: 800, color: BRAND.black, marginBottom: 8 }}>Import Chase CSV</div>
@@ -5312,6 +5507,250 @@ ${bodyHtml}
         <ExportCard title="Form 1120-S Package" summary="Combined P&L + Balance Sheet + K-1 + 1099 + MA tax" onPrint={() => print("Form 1120-S Preparation Package", form1120SHtml)} />
       </div>
     </Card>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// AUDIT TRAIL — filterable view over the entire ledger
+// ═══════════════════════════════════════════════════════════════
+function AuditTrailView({ ledger, accounts, members }) {
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [userFilter, setUserFilter] = useState("");
+  const [accountFilter, setAccountFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
+  const [expandedId, setExpandedId] = useState(null);
+
+  const uniqueUsers = [...new Set((ledger || []).map(e => e.user).filter(Boolean))];
+  const uniqueTypes = [...new Set((ledger || []).map(e => e.ref?.type).filter(Boolean))];
+
+  const filtered = (ledger || []).filter(e => {
+    if (fromDate && e.date < fromDate) return false;
+    if (toDate && e.date > toDate) return false;
+    if (userFilter && e.user !== userFilter) return false;
+    if (typeFilter && (e.ref?.type || "") !== typeFilter) return false;
+    if (accountFilter && !e.lines.some(l => l.accountId === accountFilter)) return false;
+    return true;
+  });
+
+  const accountName = (id) => {
+    if (id.startsWith("equity:member:")) {
+      const mid = id.split(":")[2];
+      return (members.find(m => m.id === mid)?.name || mid) + " (capital)";
+    }
+    if (id.startsWith("asset:vehicle:")) return `Vehicle #${id.split(":")[2]}`;
+    return accounts.find(a => a.id === id)?.name || id;
+  };
+
+  const exportAudit = () => {
+    const headers = ["Date", "Memo", "User", "Ref Type", "Account", "Debit", "Credit"];
+    const rows = [];
+    for (const e of filtered) {
+      for (const l of e.lines) {
+        rows.push([e.date, e.memo, e.user, e.ref?.type || "", accountName(l.accountId), p(l.debit).toFixed(2), p(l.credit).toFixed(2)]);
+      }
+    }
+    exportCSV(`audit_trail_${new Date().toISOString().slice(0, 10)}.csv`, headers, rows);
+  };
+
+  return (
+    <Card>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: BRAND.black }}>Audit Trail ({filtered.length} of {ledger.length})</div>
+        <Btn size="sm" variant="secondary" onClick={exportAudit}>Export CSV</Btn>
+      </div>
+      {/* Filters */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 12, padding: 10, background: "#F9FAFB", borderRadius: 6 }}>
+        <div>
+          <div style={{ fontSize: 9, color: BRAND.gray, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>From</div>
+          <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} style={{ width: "100%", padding: "4px 6px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 4, fontSize: 11, boxSizing: "border-box" }} />
+        </div>
+        <div>
+          <div style={{ fontSize: 9, color: BRAND.gray, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>To</div>
+          <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} style={{ width: "100%", padding: "4px 6px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 4, fontSize: 11, boxSizing: "border-box" }} />
+        </div>
+        <div>
+          <div style={{ fontSize: 9, color: BRAND.gray, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>User</div>
+          <select value={userFilter} onChange={e => setUserFilter(e.target.value)} style={{ width: "100%", padding: "4px 6px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 4, fontSize: 11 }}>
+            <option value="">(any)</option>
+            {uniqueUsers.map(u => <option key={u} value={u}>{u}</option>)}
+          </select>
+        </div>
+        <div>
+          <div style={{ fontSize: 9, color: BRAND.gray, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>Entry type</div>
+          <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={{ width: "100%", padding: "4px 6px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 4, fontSize: 11 }}>
+            <option value="">(any)</option>
+            {uniqueTypes.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <div>
+          <div style={{ fontSize: 9, color: BRAND.gray, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>Account</div>
+          <select value={accountFilter} onChange={e => setAccountFilter(e.target.value)} style={{ width: "100%", padding: "4px 6px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 4, fontSize: 11 }}>
+            <option value="">(any)</option>
+            {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+        </div>
+      </div>
+      {filtered.length === 0 ? (
+        <div style={{ padding: 16, textAlign: "center", color: BRAND.gray, fontStyle: "italic" }}>No entries match.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {[...filtered].reverse().map(e => {
+            const total = e.lines.reduce((s, l) => s + p(l.debit), 0);
+            const isExpanded = expandedId === e.id;
+            return (
+              <div key={e.id} style={{ border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, overflow: "hidden" }}>
+                <div onClick={() => setExpandedId(isExpanded ? null : e.id)} style={{ cursor: "pointer", padding: "8px 10px", display: "flex", justifyContent: "space-between", alignItems: "center", background: isExpanded ? "#FEF2F2" : BRAND.white, gap: 10, fontSize: 11 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
+                    <span style={{ color: BRAND.gray, ...S.mono, flexShrink: 0 }}>{e.date}</span>
+                    <span style={{ color: BRAND.black, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.memo}</span>
+                    <span style={{ fontSize: 9, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.05em", flexShrink: 0 }}>{e.ref?.type || "—"}</span>
+                    <span style={{ color: BRAND.gray, flexShrink: 0 }}>{e.user}</span>
+                    <span style={{ fontWeight: 800, color: BRAND.black, ...S.mono, flexShrink: 0 }}>{fmt$2(total)}</span>
+                    <span style={{ fontSize: 10, color: BRAND.gray, flexShrink: 0 }}>{isExpanded ? "▾" : "▸"}</span>
+                  </div>
+                </div>
+                {isExpanded && (
+                  <div style={{ padding: "8px 12px", background: "#FAFAFA", borderTop: `1px solid ${BRAND.grayLight}` }}>
+                    <div style={{ fontSize: 9, color: BRAND.gray, marginBottom: 4 }}>ID: {e.id} · Posted {new Date(e.timestamp).toLocaleString()}{e.ip ? ` · IP ${e.ip}` : ""}</div>
+                    <table style={{ width: "100%", fontSize: 10, borderCollapse: "collapse" }}>
+                      <thead>
+                        <tr style={{ borderBottom: `1px solid ${BRAND.grayLight}` }}>
+                          <th style={{ padding: "3px 6px", textAlign: "left", color: BRAND.gray, fontWeight: 700, textTransform: "uppercase" }}>Account</th>
+                          <th style={{ padding: "3px 6px", textAlign: "right", color: BRAND.gray, fontWeight: 700, textTransform: "uppercase" }}>Debit</th>
+                          <th style={{ padding: "3px 6px", textAlign: "right", color: BRAND.gray, fontWeight: 700, textTransform: "uppercase" }}>Credit</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {e.lines.map((l, i) => (
+                          <tr key={i}>
+                            <td style={{ padding: "3px 6px" }}>{accountName(l.accountId)}</td>
+                            <td style={{ padding: "3px 6px", textAlign: "right", ...S.mono, color: l.debit > 0 ? BRAND.black : BRAND.gray }}>{l.debit > 0 ? fmt$2(l.debit) : "—"}</td>
+                            <td style={{ padding: "3px 6px", textAlign: "right", ...S.mono, color: l.credit > 0 ? BRAND.black : BRAND.gray }}>{l.credit > 0 ? fmt$2(l.credit) : "—"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {e.ref && <div style={{ fontSize: 9, color: BRAND.gray, marginTop: 6, fontFamily: "ui-monospace, monospace" }}>ref: {JSON.stringify(e.ref)}</div>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// YEAR-END CLOSE — close revenue + expense accounts to Income
+// Summary → Retained Earnings; lock the fiscal period so no more
+// entries can be backdated into it.
+// ═══════════════════════════════════════════════════════════════
+function YearEndCloseView({ data, setData, money, admin, username }) {
+  const thisYear = new Date().getFullYear();
+  const [fyEnd, setFyEnd] = useState(`${thisYear - 1}-12-31`);
+  const closedPeriods = money.closedPeriods || [];
+
+  const preview = useMemo(() => calcClosingEntries({
+    ledger: money.ledger, accounts: money.accounts,
+    fiscalYearEnd: fyEnd, user: username,
+  }), [money.ledger, money.accounts, fyEnd, username]);
+
+  const alreadyClosed = closedPeriods.some(cp => cp.endDate === fyEnd);
+
+  const closeYear = () => {
+    if (alreadyClosed) { alert("This fiscal year is already closed."); return; }
+    if (preview.entries.length === 0) { alert("No closing entries needed — no revenue or expense activity in this fiscal year."); return; }
+    const yearStart = fyEnd.slice(0, 4) + "-01-01";
+    if (!confirm(`Close fiscal year ${yearStart.slice(0, 4)}?\n\nNet income: ${fmt$2(preview.netIncome)}\nEntries to post: ${preview.entries.length}\n\nAfter closing, no new journal entries can be posted with a date inside this period. Reversals must use a later date.`)) return;
+
+    setData(d => {
+      let ledger = d.money?.ledger || [];
+      const existingClosed = d.money?.closedPeriods || [];
+      for (const e of preview.entries) {
+        ledger = postJournalEntry(ledger, e, existingClosed); // closed-period check uses prior state
+      }
+      return {
+        ...d,
+        money: {
+          ...d.money,
+          ledger,
+          closedPeriods: [...existingClosed, {
+            startDate: yearStart,
+            endDate: fyEnd,
+            closedAt: new Date().toISOString(),
+            closedBy: username,
+            netIncome: preview.netIncome,
+            entryIds: preview.entries.map(e => e.id),
+          }],
+        },
+      };
+    });
+    logActivity(username, "year_end_closed", `Closed fiscal year ${fyEnd.slice(0, 4)}: net income ${fmt$2(preview.netIncome)}`, { fiscalYearEnd: fyEnd, netIncome: preview.netIncome });
+  };
+
+  return (
+    <div>
+      <Card style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: BRAND.black, marginBottom: 8 }}>Year-End Close</div>
+        <div style={{ fontSize: 11, color: BRAND.gray, marginBottom: 14, lineHeight: 1.5 }}>
+          Closing a fiscal year performs standard closing entries (revenue → Income Summary → Retained Earnings; expenses → Income Summary) and <b>locks the period</b> — no new journal entries can be posted with a date inside a closed year. Reversals are still possible but must be dated after the close.
+        </div>
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 10, color: BRAND.gray, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 3 }}>Fiscal year end</div>
+            <input type="date" value={fyEnd} onChange={e => setFyEnd(e.target.value)} style={{ padding: "6px 8px", border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, fontSize: 12 }} />
+          </div>
+          {admin && !alreadyClosed && <Btn size="sm" onClick={closeYear} disabled={preview.entries.length === 0}>Close Year {fyEnd.slice(0, 4)}</Btn>}
+          {alreadyClosed && <span style={{ fontSize: 11, color: BRAND.green, fontWeight: 700, padding: "6px 10px", background: "#D1FAE5", borderRadius: 6 }}>✓ Closed</span>}
+        </div>
+        {preview.entries.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Preview — entries that will post</div>
+            <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
+              <thead><tr style={{ background: "#F9FAFB" }}>{["Memo", "Lines", "Amount"].map(h => <th key={h} style={{ padding: "5px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: BRAND.gray, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
+              <tbody>
+                {preview.entries.map(e => {
+                  const amount = e.lines.reduce((s, l) => s + p(l.debit), 0);
+                  return (
+                    <tr key={e.id} style={{ borderBottom: `1px solid ${BRAND.grayLight}` }}>
+                      <td style={{ padding: "5px 8px" }}>{e.memo}</td>
+                      <td style={{ padding: "5px 8px", color: BRAND.gray, fontSize: 10 }}>{e.lines.length}</td>
+                      <td style={{ padding: "5px 8px", ...S.mono, textAlign: "right", fontWeight: 700 }}>{fmt$2(amount)}</td>
+                    </tr>
+                  );
+                })}
+                <tr style={{ background: "#FEF2F2", borderTop: `2px solid ${BRAND.red}` }}>
+                  <td style={{ padding: "8px", fontWeight: 900, color: BRAND.red }}>Net Income (FY {fyEnd.slice(0, 4)})</td>
+                  <td></td>
+                  <td style={{ padding: "8px", ...S.mono, textAlign: "right", fontWeight: 900, color: preview.netIncome >= 0 ? BRAND.green : "#DC2626", fontSize: 14 }}>{fmt$2(preview.netIncome)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+      {closedPeriods.length > 0 && (
+        <Card>
+          <div style={{ fontSize: 13, fontWeight: 800, color: BRAND.black, marginBottom: 8 }}>Closed Periods ({closedPeriods.length})</div>
+          <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
+            <thead><tr style={{ background: "#F9FAFB" }}>{["Period", "Net Income", "Closed At", "Closed By"].map(h => <th key={h} style={{ padding: "5px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: BRAND.gray, textTransform: "uppercase" }}>{h}</th>)}</tr></thead>
+            <tbody>
+              {closedPeriods.map(cp => (
+                <tr key={cp.endDate} style={{ borderBottom: `1px solid ${BRAND.grayLight}` }}>
+                  <td style={{ padding: "5px 8px", ...S.mono }}>{cp.startDate} to {cp.endDate}</td>
+                  <td style={{ padding: "5px 8px", ...S.mono, fontWeight: 700, color: cp.netIncome >= 0 ? BRAND.green : "#DC2626" }}>{fmt$2(cp.netIncome || 0)}</td>
+                  <td style={{ padding: "5px 8px", color: BRAND.gray }}>{new Date(cp.closedAt).toLocaleString()}</td>
+                  <td style={{ padding: "5px 8px", color: BRAND.gray }}>{cp.closedBy}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
+    </div>
   );
 }
 

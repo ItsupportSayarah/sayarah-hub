@@ -79,6 +79,109 @@ app.post("/api/ai/analyze", aiLimiter, async (req, res) => {
   } catch (e) { res.status(500).json({ error: "AI request failed: " + e.message }); }
 });
 
+// ─── Plaid integration (Money Management bank reconciliation) ───
+//
+// Requires PLAID_CLIENT_ID + PLAID_SECRET + PLAID_ENV (sandbox|
+// development|production) env vars. All three endpoints return a
+// clear "not configured" error if any of those are missing so the
+// frontend can render a setup prompt instead of a mystery 500.
+const plaidLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 60 });
+const plaidBase = () => {
+  const env = (process.env.PLAID_ENV || "sandbox").toLowerCase();
+  if (env === "production") return "https://production.plaid.com";
+  if (env === "development") return "https://development.plaid.com";
+  return "https://sandbox.plaid.com";
+};
+const plaidConfigured = () => !!(process.env.PLAID_CLIENT_ID && process.env.PLAID_SECRET);
+const plaidErr = (res) => res.status(501).json({
+  error: "Plaid not configured. Set PLAID_CLIENT_ID, PLAID_SECRET, and PLAID_ENV on the server.",
+  configured: false,
+});
+
+// Status — does the server have Plaid keys? Frontend uses this to
+// decide whether to render the Connect button or a setup notice.
+app.get("/api/plaid/status", (req, res) => {
+  res.json({
+    configured: plaidConfigured(),
+    env: (process.env.PLAID_ENV || "sandbox").toLowerCase(),
+  });
+});
+
+// Step 1 — create a link_token the frontend passes to Plaid Link.
+app.post("/api/plaid/link-token", plaidLimiter, async (req, res) => {
+  if (!plaidConfigured()) return plaidErr(res);
+  const { userId } = req.body || {};
+  if (!userId) return res.status(400).json({ error: "userId is required" });
+  try {
+    const resp = await fetch(`${plaidBase()}/link/token/create`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id: process.env.PLAID_CLIENT_ID,
+        secret: process.env.PLAID_SECRET,
+        user: { client_user_id: String(userId) },
+        client_name: "Sayarah Money Management",
+        products: ["transactions"],
+        country_codes: ["US"],
+        language: "en",
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) return res.status(resp.status).json(data);
+    res.json({ link_token: data.link_token, expiration: data.expiration });
+  } catch (e) { res.status(500).json({ error: "Plaid link-token request failed: " + e.message }); }
+});
+
+// Step 2 — exchange the public_token (returned by Plaid Link
+// onSuccess) for a durable access_token. The client stores the
+// access_token on the shared Money state so any admin can fetch
+// transactions later.
+app.post("/api/plaid/exchange", plaidLimiter, async (req, res) => {
+  if (!plaidConfigured()) return plaidErr(res);
+  const { publicToken } = req.body || {};
+  if (!publicToken) return res.status(400).json({ error: "publicToken is required" });
+  try {
+    const resp = await fetch(`${plaidBase()}/item/public_token/exchange`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id: process.env.PLAID_CLIENT_ID,
+        secret: process.env.PLAID_SECRET,
+        public_token: publicToken,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) return res.status(resp.status).json(data);
+    res.json({ access_token: data.access_token, item_id: data.item_id });
+  } catch (e) { res.status(500).json({ error: "Plaid token exchange failed: " + e.message }); }
+});
+
+// Step 3 — fetch transactions with a stored access_token. Frontend
+// turns each into a pending bank-import row in data.money.bankImports
+// so the existing recon UI can match them.
+app.post("/api/plaid/transactions", plaidLimiter, async (req, res) => {
+  if (!plaidConfigured()) return plaidErr(res);
+  const { accessToken, startDate, endDate } = req.body || {};
+  if (!accessToken || !startDate || !endDate) return res.status(400).json({ error: "accessToken + startDate + endDate are required" });
+  try {
+    const resp = await fetch(`${plaidBase()}/transactions/get`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        client_id: process.env.PLAID_CLIENT_ID,
+        secret: process.env.PLAID_SECRET,
+        access_token: accessToken,
+        start_date: startDate,
+        end_date: endDate,
+        options: { count: 500 },
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) return res.status(resp.status).json(data);
+    res.json({ transactions: data.transactions || [], accounts: data.accounts || [] });
+  } catch (e) { res.status(500).json({ error: "Plaid transactions request failed: " + e.message }); }
+});
+
 // ─── Health check ───
 app.get("/health", (req, res) => {
   res.status(200).json({ status: "ok", uptime: process.uptime(), timestamp: new Date().toISOString() });

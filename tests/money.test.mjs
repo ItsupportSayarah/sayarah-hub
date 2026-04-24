@@ -493,3 +493,154 @@ test("suggestMatches: no match on different date", () => {
   const csvRow = { date: "2025-01-06", amount: "25000.00" };
   assert.equal(suggestMatches(csvRow, [entry]).length, 0);
 });
+
+// ─── Phase 3: MA use tax ─────────────────────────────────────
+import {
+  MA_USE_TAX_RATE,
+  calcUseTax,
+  calcMaUseTax,
+  useTaxOnPurchaseEntry,
+  isDateInClosedPeriod,
+  calcClosingEntries,
+} from "../apps/auction/src/money.js";
+
+test("MA use tax rate is 6.25% (verified against mass.gov)", () => {
+  assert.equal(MA_USE_TAX_RATE, 0.0625);
+  assert.equal(calcUseTax(10000), 625);
+  assert.equal(calcUseTax(9000), 562.5);
+});
+
+test("useTaxOnPurchaseEntry: debit vehicle inventory, credit use tax payable", () => {
+  const e = useTaxOnPurchaseEntry({ stockNum: "001", purchasePrice: 10000, date: "2025-01-05", user: "u" });
+  assert.equal(validateJournalEntry(e), null);
+  const inventoryLine = e.lines.find((l) => l.accountId === vehicleAccountId("001"));
+  assert.equal(inventoryLine.debit, 625, "use tax rolls into cost basis (debit vehicle inv)");
+  const liabilityLine = e.lines.find((l) => l.accountId === SYSTEM_ACCOUNTS.USE_TAX_PAYABLE);
+  assert.equal(liabilityLine.credit, 625);
+});
+
+test("useTaxOnPurchaseEntry: zero-price purchase returns null", () => {
+  const e = useTaxOnPurchaseEntry({ stockNum: "002", purchasePrice: 0, date: "2025-01-05", user: "u" });
+  assert.equal(e, null);
+});
+
+test("calcMaUseTax sums the liability in a date range", () => {
+  const e1 = useTaxOnPurchaseEntry({ stockNum: "001", purchasePrice: 10000, date: "2025-01-05", user: "u" });
+  const e2 = useTaxOnPurchaseEntry({ stockNum: "002", purchasePrice: 8000, date: "2025-02-10", user: "u" });
+  const ledger = [e1, e2];
+  const r = calcMaUseTax(ledger, "2025-01-01", "2025-01-31");
+  assert.equal(r.owed, 625);
+  assert.equal(r.paid, 0);
+});
+
+// ─── Phase 3: Closed-period lock ─────────────────────────────
+test("isDateInClosedPeriod: inclusive bounds", () => {
+  const closed = [{ startDate: "2024-01-01", endDate: "2024-12-31" }];
+  assert.equal(isDateInClosedPeriod("2024-06-15", closed), true);
+  assert.equal(isDateInClosedPeriod("2024-01-01", closed), true);
+  assert.equal(isDateInClosedPeriod("2024-12-31", closed), true);
+  assert.equal(isDateInClosedPeriod("2025-01-01", closed), false);
+  assert.equal(isDateInClosedPeriod("2023-12-31", closed), false);
+});
+
+test("postJournalEntry refuses to post into a closed period", () => {
+  const closed = [{ startDate: "2024-01-01", endDate: "2024-12-31" }];
+  const entry = buildJournalEntry({
+    date: "2024-06-15",
+    lines: [
+      { accountId: "a", debit: 100, credit: 0 },
+      { accountId: "b", debit: 0, credit: 100 },
+    ],
+  });
+  assert.throws(
+    () => postJournalEntry([], entry, closed),
+    /Cannot post to a closed period/
+  );
+});
+
+test("postJournalEntry still accepts entries outside closed periods", () => {
+  const closed = [{ startDate: "2024-01-01", endDate: "2024-12-31" }];
+  const entry = buildJournalEntry({
+    date: "2025-03-10",
+    lines: [
+      { accountId: "a", debit: 100, credit: 0 },
+      { accountId: "b", debit: 0, credit: 100 },
+    ],
+  });
+  const ledger = postJournalEntry([], entry, closed);
+  assert.equal(ledger.length, 1);
+});
+
+// ─── Phase 3: Year-end close ─────────────────────────────────
+test("calcClosingEntries: revenue → income summary → retained earnings", () => {
+  const accounts = [
+    { id: SYSTEM_ACCOUNTS.REVENUE_VEHICLE_SALES, type: "revenue" },
+    { id: SYSTEM_ACCOUNTS.COGS_VEHICLES, type: "expense" },
+    { id: SYSTEM_ACCOUNTS.INCOME_SUMMARY, type: "equity" },
+    { id: SYSTEM_ACCOUNTS.RETAINED_EARNINGS, type: "equity" },
+    { id: "bank", type: "asset" },
+  ];
+  const ledger = [
+    buildJournalEntry({ date: "2024-06-01", lines: [
+      { accountId: "bank", debit: 50000, credit: 0 },
+      { accountId: SYSTEM_ACCOUNTS.REVENUE_VEHICLE_SALES, debit: 0, credit: 50000 },
+    ]}),
+    buildJournalEntry({ date: "2024-06-15", lines: [
+      { accountId: SYSTEM_ACCOUNTS.COGS_VEHICLES, debit: 40000, credit: 0 },
+      { accountId: "bank", debit: 0, credit: 40000 },
+    ]}),
+  ];
+  const result = calcClosingEntries({ ledger, accounts, fiscalYearEnd: "2024-12-31", user: "admin" });
+  assert.equal(result.revenue, 50000);
+  assert.equal(result.expenses, 40000);
+  assert.equal(result.netIncome, 10000);
+  assert.equal(result.entries.length, 3, "three closing entries: close revenue, close expenses, close income summary");
+  for (const e of result.entries) assert.equal(validateJournalEntry(e), null, `closing entry must balance: ${e.memo}`);
+
+  // After posting all three entries, revenue and expense accounts should
+  // net to zero, Retained Earnings should hold the net income.
+  let closedLedger = ledger;
+  for (const e of result.entries) closedLedger = postJournalEntry(closedLedger, e);
+  const balances = calcAllBalances(closedLedger, accounts);
+  assert.equal(balances[SYSTEM_ACCOUNTS.REVENUE_VEHICLE_SALES], 0, "revenue closed to 0");
+  assert.equal(balances[SYSTEM_ACCOUNTS.COGS_VEHICLES], 0, "expenses closed to 0");
+  assert.equal(balances[SYSTEM_ACCOUNTS.INCOME_SUMMARY], 0, "income summary closed to 0");
+  assert.equal(balances[SYSTEM_ACCOUNTS.RETAINED_EARNINGS], 10000, "net income landed in retained earnings");
+});
+
+test("calcClosingEntries: net loss (expenses > revenue) debits retained earnings", () => {
+  const accounts = [
+    { id: SYSTEM_ACCOUNTS.REVENUE_VEHICLE_SALES, type: "revenue" },
+    { id: SYSTEM_ACCOUNTS.COGS_VEHICLES, type: "expense" },
+    { id: SYSTEM_ACCOUNTS.INCOME_SUMMARY, type: "equity" },
+    { id: SYSTEM_ACCOUNTS.RETAINED_EARNINGS, type: "equity" },
+    { id: "bank", type: "asset" },
+  ];
+  const ledger = [
+    buildJournalEntry({ date: "2024-06-01", lines: [
+      { accountId: "bank", debit: 30000, credit: 0 },
+      { accountId: SYSTEM_ACCOUNTS.REVENUE_VEHICLE_SALES, debit: 0, credit: 30000 },
+    ]}),
+    buildJournalEntry({ date: "2024-06-15", lines: [
+      { accountId: SYSTEM_ACCOUNTS.COGS_VEHICLES, debit: 40000, credit: 0 },
+      { accountId: "bank", debit: 0, credit: 40000 },
+    ]}),
+  ];
+  const result = calcClosingEntries({ ledger, accounts, fiscalYearEnd: "2024-12-31", user: "admin" });
+  assert.equal(result.netIncome, -10000);
+  let closedLedger = ledger;
+  for (const e of result.entries) closedLedger = postJournalEntry(closedLedger, e);
+  const balances = calcAllBalances(closedLedger, accounts);
+  assert.equal(balances[SYSTEM_ACCOUNTS.RETAINED_EARNINGS], -10000, "net loss reduces retained earnings");
+});
+
+test("calcClosingEntries: no-activity year returns empty entries + zero net", () => {
+  const r = calcClosingEntries({
+    ledger: [],
+    accounts: [{ id: SYSTEM_ACCOUNTS.REVENUE_VEHICLE_SALES, type: "revenue" }],
+    fiscalYearEnd: "2024-12-31",
+    user: "admin",
+  });
+  assert.equal(r.entries.length, 0);
+  assert.equal(r.netIncome, 0);
+});

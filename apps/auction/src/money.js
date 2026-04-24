@@ -38,14 +38,21 @@ export const SYSTEM_ACCOUNTS = {
   SAYARAH_BANK: "bank:sayarah-chase",
   ATLANTIC_FUND: "fund:atlantic",
   PROFIT_DISTRIBUTION: "equity:profit-distribution",
+  RETAINED_EARNINGS: "equity:retained-earnings",
+  INCOME_SUMMARY: "equity:income-summary",
   TAX: "liability:tax-account",
   REVENUE_VEHICLE_SALES: "revenue:vehicle-sales",
   COGS_VEHICLES: "expense:cogs-vehicles",
   OPERATING_EXPENSES: "expense:operating",
   SALES_TAX_PAYABLE: "liability:sales-tax-ma",
+  USE_TAX_PAYABLE: "liability:use-tax-ma",
 };
 
 export const TAX_PER_SALE = 295; // MA S-Corp — skimmed to the tax sub-account on every sold vehicle
+// MA use tax: 6.25% on out-of-state purchases brought into MA for use.
+// Applied when a vehicle's acquisition source is flagged as out-of-state
+// and no MA sales tax was paid at purchase.
+export const MA_USE_TAX_RATE = 0.0625;
 
 // ─── Default chart of accounts ────────────────────────────────
 // Installed on first run via seedChartOfAccounts(). The app stores
@@ -55,11 +62,14 @@ export const DEFAULT_ACCOUNTS = [
   { id: SYSTEM_ACCOUNTS.SAYARAH_BANK, name: "Sayarah Chase Bank", type: "asset", system: true, description: "Primary operating account — holds the Atlantic Fund." },
   { id: SYSTEM_ACCOUNTS.ATLANTIC_FUND, name: "Atlantic Fund", type: "asset", system: true, description: "Shared member pool for vehicle purchases. Held inside the Chase account." },
   { id: SYSTEM_ACCOUNTS.PROFIT_DISTRIBUTION, name: "Profit Distribution (pending)", type: "equity", system: true, description: "Holds vehicle profit from sale until month-end split." },
+  { id: SYSTEM_ACCOUNTS.RETAINED_EARNINGS, name: "Retained Earnings", type: "equity", system: true, description: "Cumulative net income across closed fiscal years (after distributions)." },
+  { id: SYSTEM_ACCOUNTS.INCOME_SUMMARY, name: "Income Summary (temp)", type: "equity", system: true, description: "Closing-entry clearing account used only during year-end close." },
   { id: SYSTEM_ACCOUNTS.TAX, name: "Tax Account ($295 per sale)", type: "liability", system: true, description: "Skimmed from every vehicle sale for MA/federal taxes + misc." },
   { id: SYSTEM_ACCOUNTS.REVENUE_VEHICLE_SALES, name: "Vehicle Sales Revenue", type: "revenue", system: true },
   { id: SYSTEM_ACCOUNTS.COGS_VEHICLES, name: "Cost of Goods Sold — Vehicles", type: "expense", system: true },
   { id: SYSTEM_ACCOUNTS.OPERATING_EXPENSES, name: "Operating Expenses", type: "expense", system: true },
   { id: SYSTEM_ACCOUNTS.SALES_TAX_PAYABLE, name: "MA Sales Tax Payable", type: "liability", system: true },
+  { id: SYSTEM_ACCOUNTS.USE_TAX_PAYABLE, name: "MA Use Tax Payable", type: "liability", system: true, description: "Owed on out-of-state purchases brought into MA for use (6.25%)." },
 ];
 
 // Seed a member capital account. Called once per member.
@@ -100,7 +110,7 @@ export function lineIsValid(line) {
   return true;
 }
 
-export function validateJournalEntry(entry) {
+export function validateJournalEntry(entry, closedPeriods = []) {
   if (!entry || !Array.isArray(entry.lines) || entry.lines.length < 2) {
     return "Journal entry must have at least 2 lines";
   }
@@ -114,7 +124,23 @@ export function validateJournalEntry(entry) {
     return `Debits (${totalDebit.toFixed(2)}) must equal credits (${totalCredit.toFixed(2)})`;
   }
   if (!entry.date) return "Journal entry must have a date";
+  // Closed-period guard: once a fiscal year is closed no new entries can be
+  // posted with a date inside it. Reversal / correction entries also pass
+  // through this check — they must be dated in an open period.
+  if (isDateInClosedPeriod(entry.date, closedPeriods)) {
+    return `Cannot post to a closed period (date ${entry.date} falls within a closed fiscal period)`;
+  }
   return null;
+}
+
+// True if the given YYYY-MM-DD date falls within any closed period.
+// closedPeriods is an array of { startDate, endDate, ... }.
+export function isDateInClosedPeriod(dateStr, closedPeriods) {
+  if (!dateStr || !Array.isArray(closedPeriods)) return false;
+  for (const cp of closedPeriods) {
+    if (cp && dateStr >= cp.startDate && dateStr <= cp.endDate) return true;
+  }
+  return false;
 }
 
 export function buildJournalEntry({ date, memo, lines, user, ip, ref }) {
@@ -136,9 +162,10 @@ export function buildJournalEntry({ date, memo, lines, user, ip, ref }) {
 
 // Append a validated entry to the ledger. Returns the new ledger
 // (never mutates the input). Throws on invalid input — caller must
-// catch and surface to the user.
-export function postJournalEntry(ledger, entry) {
-  const err = validateJournalEntry(entry);
+// catch and surface to the user. Pass `closedPeriods` (data.money
+// .closedPeriods) so closed-year guard fires.
+export function postJournalEntry(ledger, entry, closedPeriods = []) {
+  const err = validateJournalEntry(entry, closedPeriods);
   if (err) throw new Error(`Journal entry rejected: ${err}`);
   return [...(ledger || []), entry];
 }
@@ -555,6 +582,126 @@ export function calcMaSalesTax(ledger, accounts, startDate, endDate) {
   }
   return { collected, startDate, endDate };
 }
+
+// MA use tax owed in a period (6.25% on out-of-state purchases
+// brought into MA for use — recognized at vehicle purchase time).
+export function calcMaUseTax(ledger, startDate, endDate) {
+  const inRange = entriesInRange(ledger, startDate, endDate);
+  let owed = 0;
+  let paid = 0;
+  for (const entry of inRange) {
+    for (const line of entry.lines) {
+      if (line.accountId === SYSTEM_ACCOUNTS.USE_TAX_PAYABLE) {
+        owed += p(line.credit);
+        paid += p(line.debit);
+      }
+    }
+  }
+  return { owed, paid, netOwed: owed - paid, startDate, endDate };
+}
+
+// Compute the use tax owed on an out-of-state vehicle purchase.
+export function calcUseTax(purchasePrice) {
+  return roundMoney(p(purchasePrice) * MA_USE_TAX_RATE);
+}
+const roundMoney = (n) => (n == null || !Number.isFinite(n)) ? 0 : Math.round(n * 100) / 100;
+
+// Journal entry that recognizes use-tax liability at purchase time.
+// Posted alongside the vehicle-purchase entries when the source is
+// flagged as out-of-state and no MA sales tax was paid at purchase.
+// Debits the vehicle inventory account (tax is part of cost basis);
+// credits the MA Use Tax Payable liability.
+export function useTaxOnPurchaseEntry({ stockNum, purchasePrice, date, user, ip }) {
+  const tax = calcUseTax(purchasePrice);
+  if (tax <= 0) return null;
+  return buildJournalEntry({
+    date,
+    memo: `MA Use Tax 6.25% on #${stockNum} — recognized at purchase`,
+    user, ip,
+    ref: { type: "use_tax", stockNum },
+    lines: [
+      { accountId: vehicleAccountId(stockNum), debit: tax, credit: 0 },
+      { accountId: SYSTEM_ACCOUNTS.USE_TAX_PAYABLE, debit: 0, credit: tax },
+    ],
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// YEAR-END CLOSE
+//
+// Closes temporary accounts (revenue + expense) to Income Summary,
+// then closes Income Summary to Retained Earnings (S-Corp retained
+// earnings pattern — distributions to shareholders are separate
+// transactions during the year, not part of the closing process).
+// Returns an array of journal entries to post in sequence.
+// ═══════════════════════════════════════════════════════════════
+export function calcClosingEntries({ ledger, accounts, fiscalYearEnd, user, ip }) {
+  const yearStart = fiscalYearEnd.slice(0, 4) + "-01-01";
+  const pl = calcProfitLoss(ledger, accounts, yearStart, fiscalYearEnd);
+  const entries = [];
+  const date = fiscalYearEnd;
+
+  // 1) Close revenue accounts → Income Summary.
+  const revenueLines = [];
+  let totalRevenue = 0;
+  for (const [accId, amt] of Object.entries(pl.byAccount)) {
+    const acc = accounts.find((a) => a.id === accId);
+    if (acc && acc.type === "revenue" && Math.abs(amt) > 0.005) {
+      // Revenue has credit-normal balance. Debit it to close.
+      revenueLines.push({ accountId: accId, debit: amt, credit: 0 });
+      totalRevenue += amt;
+    }
+  }
+  if (revenueLines.length > 0) {
+    revenueLines.push({ accountId: SYSTEM_ACCOUNTS.INCOME_SUMMARY, debit: 0, credit: totalRevenue });
+    entries.push(buildJournalEntry({
+      date, memo: `Year-end close: revenue → Income Summary (FY ${yearStart.slice(0, 4)})`,
+      user, ip, ref: { type: "year_end_close", step: "close_revenue", year: yearStart.slice(0, 4) },
+      lines: revenueLines,
+    }));
+  }
+
+  // 2) Close expense accounts → Income Summary.
+  const expenseLines = [];
+  let totalExpense = 0;
+  for (const [accId, amt] of Object.entries(pl.byAccount)) {
+    const acc = accounts.find((a) => a.id === accId);
+    if (acc && acc.type === "expense" && Math.abs(amt) > 0.005) {
+      // Expense has debit-normal balance. Credit it to close.
+      expenseLines.push({ accountId: accId, debit: 0, credit: amt });
+      totalExpense += amt;
+    }
+  }
+  if (expenseLines.length > 0) {
+    expenseLines.push({ accountId: SYSTEM_ACCOUNTS.INCOME_SUMMARY, debit: totalExpense, credit: 0 });
+    entries.push(buildJournalEntry({
+      date, memo: `Year-end close: expenses → Income Summary (FY ${yearStart.slice(0, 4)})`,
+      user, ip, ref: { type: "year_end_close", step: "close_expenses", year: yearStart.slice(0, 4) },
+      lines: expenseLines,
+    }));
+  }
+
+  // 3) Close Income Summary → Retained Earnings.
+  const netIncome = pl.netIncome;
+  if (Math.abs(netIncome) > 0.005) {
+    entries.push(buildJournalEntry({
+      date, memo: `Year-end close: Income Summary → Retained Earnings (${fmtSigned(netIncome)} FY ${yearStart.slice(0, 4)})`,
+      user, ip, ref: { type: "year_end_close", step: "close_income_summary", year: yearStart.slice(0, 4) },
+      lines: netIncome >= 0
+        ? [
+            { accountId: SYSTEM_ACCOUNTS.INCOME_SUMMARY, debit: netIncome, credit: 0 },
+            { accountId: SYSTEM_ACCOUNTS.RETAINED_EARNINGS, debit: 0, credit: netIncome },
+          ]
+        : [
+            { accountId: SYSTEM_ACCOUNTS.RETAINED_EARNINGS, debit: -netIncome, credit: 0 },
+            { accountId: SYSTEM_ACCOUNTS.INCOME_SUMMARY, debit: 0, credit: -netIncome },
+          ],
+    }));
+  }
+
+  return { entries, netIncome, revenue: totalRevenue, expenses: totalExpense, yearStart, yearEnd: fiscalYearEnd };
+}
+const fmtSigned = (n) => (n >= 0 ? "+" : "") + n.toFixed(2);
 
 // ═══════════════════════════════════════════════════════════════
 // BANK RECONCILIATION HELPERS
