@@ -14,6 +14,37 @@ import {
   calcTotalCost,
   calcVehicleExpenses,
 } from "./src/calc.js";
+// Money Management accounting core — see src/money.js + tests/money.test.mjs
+import {
+  SYSTEM_ACCOUNTS,
+  TAX_PER_SALE,
+  DEFAULT_ACCOUNTS,
+  memberAccountId,
+  vehicleAccountId,
+  memberAccount as buildMemberAccount,
+  vehicleAccount as buildVehicleAccount,
+  buildJournalEntry,
+  postJournalEntry,
+  buildReversingEntry,
+  calcAllBalances,
+  monthKey,
+  findContribution,
+  findApproval,
+  calcMemberMonthlyStatus,
+  canMemberUseFund,
+  generateMonthlyContributions,
+  contributionPaidEntryBalanced,
+  allocateToFundEntry,
+  vehiclePurchaseFromFundEntry,
+  vehiclePurchaseFromMemberEntry,
+  vehicleSaleEntries,
+  distributeMonthEndEntry,
+  MONTHLY_CONTRIBUTION_AMOUNT,
+  ATLANTIC_FUND_TARGET,
+  ATLANTIC_FUND_LOW_BALANCE,
+  LARGE_OUTFLOW_THRESHOLD,
+  entriesForAccount,
+} from "./src/money.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
 class ErrorBoundary extends Component {
@@ -449,7 +480,73 @@ function saveWidgetPrefs(prefs) { localStorage.setItem(WIDGET_PREFS_KEY, JSON.st
 
 const DOC_CATEGORIES = ["Title", "Receipt", "Inspection Report", "Insurance", "Repair Invoice", "Photo", "Registration", "Other"];
 
-const defaultData = () => ({ vehicles: [], expenses: [], sales: [], mileage: [], documents: [], auctionEvents: [], trash: [], nextStockNum: 1, holdCosts: { ...DEFAULT_HOLD_COSTS }, auctionFeeTiers: null, startingCapital: 0 });
+// Default rules text shown on the Money Management → Rules page
+// (admin-editable). Referenced by the Rules component via data.rules.
+const DEFAULT_RULES_CONTENT = `# Sayarah Money Management — Rules
+
+## 1. Entity
+- **Entity type:** S-Corp
+- **State of registration:** Massachusetts
+- **Banking:** Sayarah account at Chase Bank
+- **Members:** 3
+
+## 2. Monthly Contribution
+- Each member contributes **$25,000 per month**.
+- **Due date:** 1st of each month.
+- Status shown as **green** (paid + approved) or **red** (missed or unapproved).
+
+## 3. Atlantic Fund
+- Shared pool held inside the Sayarah Chase account.
+- **Maximum / target balance:** $75,000.
+- **Low-balance warning:** triggered at $20,000.
+- **Cannot be overdrawn.**
+- **Admin approval required** before the start of each month for each member to use the fund.
+- A **missed contribution** flags the member **and** blocks their fund usage until resolved.
+- Outflows over **$10,000** require a **second member's approval**.
+
+## 4. Vehicle Payments
+- Both deposit and balance can be paid by a member or from the Atlantic Fund.
+- Every vehicle must have a recorded funding source.
+
+## 5. Profit Distribution
+- When a fund-purchased vehicle is sold, the **principal returns to the Atlantic Fund**.
+- **$295 per sale** moves to the Tax account (for taxes + other costs).
+- Remaining profit is **split equally** among the three members.
+- Distribution happens at the **end of each month**.
+
+## 6. Tax / Compliance
+- S-Corp, Massachusetts.
+- The Tax account holds $295 per sale for taxes and other related costs.
+`;
+
+const defaultData = () => ({
+  vehicles: [], expenses: [], sales: [], mileage: [], documents: [], auctionEvents: [], trash: [],
+  nextStockNum: 1,
+  holdCosts: { ...DEFAULT_HOLD_COSTS },
+  auctionFeeTiers: null,
+  startingCapital: 0,
+  // ── Money Management ──
+  // Seeded with three placeholder members so a fresh install has a
+  // working fund immediately; admin can rename / reassign them via
+  // the Money Management settings UI.
+  money: {
+    accounts: DEFAULT_ACCOUNTS,
+    members: [
+      { id: "m1", name: "Member 1", email: "" },
+      { id: "m2", name: "Member 2", email: "" },
+      { id: "m3", name: "Member 3", email: "" },
+    ],
+    ledger: [],
+    contributions: [],
+    approvals: [],
+  },
+  rules: {
+    content: DEFAULT_RULES_CONTENT,
+    version: 1,
+    updatedAt: new Date().toISOString(),
+    updatedBy: "system",
+  },
+});
 // Wraps a deleted record with audit metadata for the trash bucket.
 const toTrash = (item, entity, user) => ({ ...item, _entity: entity, _deletedAt: new Date().toISOString(), _deletedBy: user || "unknown" });
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -4260,6 +4357,503 @@ function TrashTab({ data, setData, currentUser }) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+// MONEY MANAGEMENT TAB — Phase 1 core
+//
+// Dashboard + six sub-views backed by the double-entry ledger in
+// data.money.ledger. All arithmetic is in src/money.js (tested in
+// tests/money.test.mjs). This component owns UI, wiring, and
+// admin workflows (approvals, contribution marking, month-end
+// distribution trigger).
+// ═══════════════════════════════════════════════════════════════
+function MoneyManagementTab({ data, setData, username, userRole, darkMode }) {
+  const money = data.money || { accounts: DEFAULT_ACCOUNTS, members: [], ledger: [], contributions: [], approvals: [] };
+  const admin = isAdmin(userRole);
+  const today = new Date();
+  const currentMonth = monthKey(today);
+
+  const [view, setView] = useState("dashboard");
+  const [memberFilter, setMemberFilter] = useState(null);
+  const [showRules, setShowRules] = useState(false);
+  const [showEditRules, setShowEditRules] = useState(false);
+
+  // Balances are computed from the ledger every render — no stored
+  // totals that could drift out of sync.
+  const balances = useMemo(() => calcAllBalances(money.ledger, money.accounts), [money.ledger, money.accounts]);
+
+  const fundBalance = balances[SYSTEM_ACCOUNTS.ATLANTIC_FUND] || 0;
+  const profitBalance = balances[SYSTEM_ACCOUNTS.PROFIT_DISTRIBUTION] || 0;
+  const taxBalance = balances[SYSTEM_ACCOUNTS.TAX] || 0;
+
+  // Helper: post a journal entry and save.
+  const postEntry = (entry) => {
+    setData(d => ({
+      ...d,
+      money: {
+        ...d.money,
+        ledger: postJournalEntry(d.money?.ledger || [], entry),
+      },
+    }));
+  };
+
+  // Helper: log + post
+  const postWithLog = (entry, action, description) => {
+    postEntry(entry);
+    logActivity(username, action, description, { entryId: entry.id, ref: entry.ref });
+  };
+
+  // ── Monthly status for each member ──
+  const memberStatuses = money.members.map(m => ({
+    member: m,
+    status: calcMemberMonthlyStatus(m.id, currentMonth, money.contributions, money.approvals),
+    contribution: findContribution(money.contributions, m.id, currentMonth),
+    approval: findApproval(money.approvals, m.id, currentMonth),
+    capitalBalance: balances[memberAccountId(m.id)] || 0,
+  }));
+
+  // ── Actions ──
+  const seedMonth = () => {
+    setData(d => ({
+      ...d,
+      money: {
+        ...d.money,
+        contributions: generateMonthlyContributions(d.money?.contributions || [], d.money?.members || [], currentMonth),
+      },
+    }));
+    logActivity(username, "money_seeded_month", `Generated contribution records for ${currentMonth}`);
+  };
+
+  const markContributionPaid = (memberId) => {
+    const amount = MONTHLY_CONTRIBUTION_AMOUNT;
+    const entry1 = contributionPaidEntryBalanced({ memberId, month: currentMonth, amount, user: username });
+    const entry2 = allocateToFundEntry({ amount, user: username, memo: `Contribution ${currentMonth} → Atlantic Fund` });
+    setData(d => ({
+      ...d,
+      money: {
+        ...d.money,
+        ledger: postJournalEntry(postJournalEntry(d.money?.ledger || [], entry1), entry2),
+        contributions: (d.money?.contributions || []).map(c =>
+          (c.memberId === memberId && c.month === currentMonth)
+            ? { ...c, status: "paid", paidDate: new Date().toISOString().slice(0, 10), journalEntryId: entry1.id }
+            : c
+        ),
+      },
+    }));
+    const name = money.members.find(m => m.id === memberId)?.name || memberId;
+    logActivity(username, "contribution_paid", `${name} paid ${currentMonth} contribution ($${amount})`);
+  };
+
+  const approveFundUsage = (memberId) => {
+    const existing = findApproval(money.approvals, memberId, currentMonth);
+    setData(d => ({
+      ...d,
+      money: {
+        ...d.money,
+        approvals: existing
+          ? (d.money.approvals || []).map(a => (a.memberId === memberId && a.month === currentMonth) ? { ...a, status: "approved", approvedBy: username, approvedAt: new Date().toISOString() } : a)
+          : [...(d.money?.approvals || []), { id: `appr_${currentMonth}_${memberId}`, memberId, month: currentMonth, status: "approved", approvedBy: username, approvedAt: new Date().toISOString() }],
+      },
+    }));
+    const name = money.members.find(m => m.id === memberId)?.name || memberId;
+    logActivity(username, "fund_usage_approved", `Approved ${name} for fund usage ${currentMonth}`);
+  };
+
+  const runMonthEndDistribution = () => {
+    if (profitBalance <= 0) return;
+    const entry = distributeMonthEndEntry({ month: currentMonth, members: money.members, profitBalance, user: username });
+    if (!entry) return;
+    postWithLog(entry, "month_end_distribution", `Distributed ${fmt$2(profitBalance)} across ${money.members.length} members for ${currentMonth}`);
+  };
+
+  const saveRules = (content) => {
+    setData(d => ({
+      ...d,
+      rules: {
+        content,
+        version: (d.rules?.version || 0) + 1,
+        updatedAt: new Date().toISOString(),
+        updatedBy: username,
+      },
+    }));
+    logActivity(username, "rules_updated", `Updated Money Management rules to v${(data.rules?.version || 0) + 1}`);
+    setShowEditRules(false);
+  };
+
+  // ══════════════════════════════════════════════════════════════
+  // UI
+  // ══════════════════════════════════════════════════════════════
+  const SUB_VIEWS = [
+    { id: "dashboard", label: "Dashboard" },
+    { id: "fund", label: "Atlantic Fund" },
+    { id: "profit", label: "Profit Distribution" },
+    { id: "tax", label: "Tax Account" },
+    { id: "members", label: "Members" },
+    { id: "vehicles", label: "Vehicle P&L" },
+    { id: "transactions", label: "Transactions" },
+  ];
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 900, color: BRAND.black }}>Money Management</div>
+          <div style={{ fontSize: 12, color: BRAND.gray }}>Atlantic Fund · Member Capital · Profit Distribution · Tax — all backed by the ledger</div>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <Btn variant="secondary" size="sm" onClick={() => setShowRules(true)}>Rules</Btn>
+          {admin && <Btn size="sm" onClick={seedMonth}>Seed {currentMonth}</Btn>}
+        </div>
+      </div>
+
+      {/* Sub-view tabs */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 14, flexWrap: "wrap" }}>
+        {SUB_VIEWS.map(sv => (
+          <button key={sv.id} onClick={() => setView(sv.id)} style={{
+            background: view === sv.id ? BRAND.red : BRAND.white,
+            color: view === sv.id ? "#fff" : BRAND.grayDark,
+            border: `1px solid ${view === sv.id ? BRAND.red : BRAND.grayLight}`,
+            borderRadius: 6, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+          }}>{sv.label}</button>
+        ))}
+      </div>
+
+      {view === "dashboard" && (
+        <div>
+          {/* Key balances */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+            <StatCard label="Atlantic Fund" value={fmt$(fundBalance)} color={fundBalance < ATLANTIC_FUND_LOW_BALANCE ? "#DC2626" : BRAND.green} sub={fundBalance < ATLANTIC_FUND_LOW_BALANCE ? `Below $${ATLANTIC_FUND_LOW_BALANCE.toLocaleString()} warning` : `Target $${ATLANTIC_FUND_TARGET.toLocaleString()}`} />
+            <StatCard label="Profit Distribution" value={fmt$(profitBalance)} color={BRAND.blue} sub={profitBalance > 0 ? "Pending month-end payout" : "No pending profit"} />
+            <StatCard label="Tax Account" value={fmt$(taxBalance)} color="#D97706" sub={`$${TAX_PER_SALE} per sale`} />
+            <StatCard label="Total Journal Entries" value={money.ledger.length} color={BRAND.gray} sub={`this month: ${money.ledger.filter(e => monthKey(e.date) === currentMonth).length}`} />
+          </div>
+
+          {/* Member status strip */}
+          <Card style={{ marginBottom: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.red, textTransform: "uppercase", letterSpacing: "0.07em" }}>{currentMonth} — Member Status</div>
+              {admin && profitBalance > 0 && (
+                <Btn size="sm" onClick={runMonthEndDistribution}>Distribute {fmt$(profitBalance)} now</Btn>
+              )}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
+              {memberStatuses.map(({ member, status, contribution, approval, capitalBalance }) => (
+                <div key={member.id} style={{ border: `1px solid ${BRAND.grayLight}`, borderRadius: 8, padding: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <div style={{ width: 12, height: 12, borderRadius: "50%", background: status === "green" ? "#16A34A" : "#DC2626", flexShrink: 0 }} />
+                    <div style={{ fontSize: 13, fontWeight: 800, color: BRAND.black }}>{member.name}</div>
+                    <span style={{ marginLeft: "auto", fontSize: 10, color: BRAND.gray, ...S.mono }}>{fmt$(capitalBalance)}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: BRAND.grayDark, display: "flex", flexDirection: "column", gap: 3 }}>
+                    <div>Contribution: <b style={{ color: contribution?.status === "paid" ? BRAND.green : "#DC2626" }}>{contribution?.status || "—"}</b></div>
+                    <div>Admin approval: <b style={{ color: approval?.status === "approved" ? BRAND.green : "#DC2626" }}>{approval?.status || "—"}</b></div>
+                  </div>
+                  {admin && (
+                    <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+                      {contribution && contribution.status !== "paid" && <Btn size="sm" variant="secondary" onClick={() => markContributionPaid(member.id)}>Mark paid</Btn>}
+                      {(!approval || approval.status !== "approved") && <Btn size="sm" onClick={() => approveFundUsage(member.id)}>Approve fund</Btn>}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            {money.members.length > 0 && money.contributions.filter(c => c.month === currentMonth).length === 0 && admin && (
+              <div style={{ marginTop: 10, padding: "8px 12px", background: "#FEF3C7", color: "#92400E", borderRadius: 6, fontSize: 11, fontWeight: 600 }}>
+                No contribution records yet for {currentMonth}. Click "Seed {currentMonth}" above to generate them.
+              </div>
+            )}
+          </Card>
+
+          {/* Recent transactions */}
+          <Card>
+            <div style={{ fontSize: 11, fontWeight: 800, color: BRAND.red, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>Recent Transactions</div>
+            {money.ledger.length === 0 ? (
+              <div style={{ fontSize: 12, color: BRAND.gray, fontStyle: "italic", padding: 12 }}>No journal entries yet. Mark a contribution paid or record a vehicle sale to get started.</div>
+            ) : (
+              <LedgerTable entries={[...money.ledger].slice(-20).reverse()} accounts={money.accounts} members={money.members} />
+            )}
+          </Card>
+        </div>
+      )}
+
+      {view === "fund" && <AccountLedgerView accountId={SYSTEM_ACCOUNTS.ATLANTIC_FUND} title="Atlantic Fund" ledger={money.ledger} accounts={money.accounts} members={money.members} balance={fundBalance} />}
+      {view === "profit" && <AccountLedgerView accountId={SYSTEM_ACCOUNTS.PROFIT_DISTRIBUTION} title="Profit Distribution" ledger={money.ledger} accounts={money.accounts} members={money.members} balance={profitBalance} />}
+      {view === "tax" && <AccountLedgerView accountId={SYSTEM_ACCOUNTS.TAX} title={`Tax Account ($${TAX_PER_SALE} per sale)`} ledger={money.ledger} accounts={money.accounts} members={money.members} balance={taxBalance} />}
+      {view === "members" && <MembersView money={money} balances={balances} admin={admin} memberFilter={memberFilter} setMemberFilter={setMemberFilter} />}
+      {view === "vehicles" && <VehiclePLView data={data} balances={balances} />}
+      {view === "transactions" && <TransactionsView ledger={money.ledger} accounts={money.accounts} members={money.members} />}
+
+      {/* Rules modal */}
+      {showRules && (
+        <RulesModal rules={data.rules || { content: DEFAULT_RULES_CONTENT, version: 1 }} admin={admin} onClose={() => setShowRules(false)} onEdit={() => { setShowRules(false); setShowEditRules(true); }} />
+      )}
+      {showEditRules && admin && (
+        <RulesEditor rules={data.rules || { content: DEFAULT_RULES_CONTENT, version: 1 }} onSave={saveRules} onCancel={() => setShowEditRules(false)} />
+      )}
+    </div>
+  );
+}
+
+// Compact ledger table used on the dashboard recent-transactions feed
+// and inside sub-views. Each row is one journal entry — shows memo,
+// date, primary accounts, and the bigger of its debit/credit totals.
+function LedgerTable({ entries, accounts, members }) {
+  const accountName = (id) => {
+    if (id.startsWith("equity:member:")) {
+      const memberId = id.split(":")[2];
+      return (members.find(m => m.id === memberId)?.name || memberId) + " (capital)";
+    }
+    if (id.startsWith("asset:vehicle:")) {
+      const stock = id.split(":")[2];
+      return `Vehicle #${stock}`;
+    }
+    return accounts.find(a => a.id === id)?.name || id;
+  };
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
+        <thead>
+          <tr style={{ background: "#F9FAFB", borderBottom: `1px solid ${BRAND.grayLight}` }}>
+            <th style={{ padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: BRAND.gray, textTransform: "uppercase" }}>Date</th>
+            <th style={{ padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: BRAND.gray, textTransform: "uppercase" }}>Memo</th>
+            <th style={{ padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: BRAND.gray, textTransform: "uppercase" }}>Accounts</th>
+            <th style={{ padding: "6px 8px", textAlign: "right", fontSize: 10, fontWeight: 700, color: BRAND.gray, textTransform: "uppercase" }}>Amount</th>
+            <th style={{ padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: BRAND.gray, textTransform: "uppercase" }}>By</th>
+          </tr>
+        </thead>
+        <tbody>
+          {entries.map(e => {
+            const totalDebit = e.lines.reduce((s, l) => s + p(l.debit), 0);
+            return (
+              <tr key={e.id} style={{ borderBottom: `1px solid ${BRAND.grayLight}` }}>
+                <td style={{ padding: "6px 8px", color: BRAND.grayDark, ...S.mono }}>{e.date}</td>
+                <td style={{ padding: "6px 8px", color: BRAND.black }}>{e.memo}</td>
+                <td style={{ padding: "6px 8px", color: BRAND.gray, fontSize: 10 }}>
+                  {e.lines.slice(0, 3).map(l => accountName(l.accountId)).join(" ↔ ")}
+                  {e.lines.length > 3 && ` +${e.lines.length - 3}`}
+                </td>
+                <td style={{ padding: "6px 8px", textAlign: "right", fontWeight: 700, color: BRAND.black, ...S.mono }}>{fmt$2(totalDebit)}</td>
+                <td style={{ padding: "6px 8px", color: BRAND.gray, fontSize: 10 }}>{e.user}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// Ledger filtered to a single account — used for Atlantic Fund /
+// Profit Distribution / Tax sub-views.
+function AccountLedgerView({ accountId, title, ledger, accounts, members, balance }) {
+  const filtered = entriesForAccount(ledger, accountId);
+  return (
+    <Card>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 12 }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: BRAND.black }}>{title}</div>
+        <div style={{ fontSize: 18, fontWeight: 900, color: BRAND.red, ...S.mono }}>{fmt$(balance)}</div>
+      </div>
+      {filtered.length === 0 ? (
+        <div style={{ padding: 16, textAlign: "center", color: BRAND.gray, fontStyle: "italic" }}>No activity yet.</div>
+      ) : (
+        <LedgerTable entries={[...filtered].reverse()} accounts={accounts} members={members} />
+      )}
+    </Card>
+  );
+}
+
+function MembersView({ money, balances, admin, memberFilter, setMemberFilter }) {
+  return (
+    <Card>
+      <div style={{ fontSize: 15, fontWeight: 800, color: BRAND.black, marginBottom: 12 }}>Member Capital Accounts</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+        {money.members.map(m => {
+          const bal = balances[memberAccountId(m.id)] || 0;
+          const contributions = money.contributions.filter(c => c.memberId === m.id);
+          const paid = contributions.filter(c => c.status === "paid").length;
+          return (
+            <div key={m.id} style={{ border: `1px solid ${BRAND.grayLight}`, borderRadius: 8, padding: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: BRAND.black, marginBottom: 4 }}>{m.name}</div>
+              {m.email && <div style={{ fontSize: 10, color: BRAND.gray, marginBottom: 8 }}>{m.email}</div>}
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderTop: `1px solid ${BRAND.grayLight}` }}>
+                <span style={{ fontSize: 11, color: BRAND.gray }}>Capital balance</span>
+                <span style={{ fontSize: 13, fontWeight: 800, color: BRAND.black, ...S.mono }}>{fmt$(bal)}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0" }}>
+                <span style={{ fontSize: 11, color: BRAND.gray }}>Contributions paid</span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: BRAND.green }}>{paid} / {contributions.length}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+function VehiclePLView({ data, balances }) {
+  const vehicles = data.vehicles || [];
+  return (
+    <Card>
+      <div style={{ fontSize: 15, fontWeight: 800, color: BRAND.black, marginBottom: 12 }}>Per-Vehicle P&L (from inventory)</div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", fontSize: 11, borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ background: "#F9FAFB" }}>
+              {["Stock#", "Vehicle", "Total Cost", "Sale", "Profit", "Funding", "Ledger"].map(h => (
+                <th key={h} style={{ padding: "6px 8px", textAlign: "left", fontSize: 10, fontWeight: 700, color: BRAND.gray, textTransform: "uppercase" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {vehicles.map(v => {
+              const tc = calcTotalCost(v, data.expenses || []);
+              const sale = (data.sales || []).find(s => s.stockNum === v.stockNum);
+              const gross = sale ? p(sale.grossPrice) : 0;
+              const profit = sale ? gross - tc : null;
+              const inventoryBal = balances[vehicleAccountId(v.stockNum)] || 0;
+              return (
+                <tr key={v.id} style={{ borderBottom: `1px solid ${BRAND.grayLight}` }}>
+                  <td style={{ padding: "6px 8px", ...S.mono, fontWeight: 700, color: BRAND.red }}>#{v.stockNum}</td>
+                  <td style={{ padding: "6px 8px" }}>{v.year} {v.make} {v.model}</td>
+                  <td style={{ padding: "6px 8px", ...S.mono }}>{fmt$(tc)}</td>
+                  <td style={{ padding: "6px 8px", ...S.mono }}>{sale ? fmt$(gross) : "—"}</td>
+                  <td style={{ padding: "6px 8px", ...S.mono, fontWeight: 700, color: profit == null ? BRAND.gray : profit >= 0 ? BRAND.green : "#DC2626" }}>{profit == null ? "—" : fmt$(profit)}</td>
+                  <td style={{ padding: "6px 8px", fontSize: 10, color: BRAND.gray }}>{v.fundingSource || "—"}</td>
+                  <td style={{ padding: "6px 8px", fontSize: 10, color: BRAND.gray, ...S.mono }}>{inventoryBal > 0 ? fmt$(inventoryBal) + " on ledger" : "not on ledger"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ marginTop: 10, padding: "8px 10px", background: "#EFF6FF", borderRadius: 6, fontSize: 10, color: "#1E40AF", border: "1px solid #BFDBFE" }}>
+        Inventory-ledger parity: vehicles tagged with a funding source and posted to the ledger show a non-zero balance in the "Ledger" column. Vehicles saved before Money Management was added won't appear on the ledger until an admin posts their opening balance — see Vehicle detail → "Post to ledger" button.
+      </div>
+    </Card>
+  );
+}
+
+function TransactionsView({ ledger, accounts, members }) {
+  const [query, setQuery] = useState("");
+  const filtered = ledger.filter(e => {
+    const q = query.trim().toLowerCase();
+    if (!q) return true;
+    return (e.memo || "").toLowerCase().includes(q) ||
+           (e.user || "").toLowerCase().includes(q) ||
+           (e.ref && JSON.stringify(e.ref).toLowerCase().includes(q));
+  });
+  return (
+    <Card>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: BRAND.black }}>All Journal Entries ({ledger.length})</div>
+        <input
+          placeholder="Filter by memo, user, ref…"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          style={{ border: `1px solid ${BRAND.grayLight}`, borderRadius: 6, padding: "6px 10px", fontSize: 12, fontFamily: "inherit", minWidth: 240 }}
+        />
+      </div>
+      {filtered.length === 0 ? (
+        <div style={{ padding: 16, textAlign: "center", color: BRAND.gray, fontStyle: "italic" }}>No entries match.</div>
+      ) : (
+        <LedgerTable entries={[...filtered].reverse()} accounts={accounts} members={members} />
+      )}
+    </Card>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RULES MODAL — readable view with Print + admin Edit
+// ═══════════════════════════════════════════════════════════════
+function RulesModal({ rules, admin, onClose, onEdit }) {
+  // Convert the markdown-lite content to display-ready HTML. We only
+  // support headings (#, ##), bullets (-), and bold (**foo**) —
+  // intentionally narrow so the content stays safe to render.
+  const renderContent = (text) => {
+    const lines = text.split("\n");
+    const elems = [];
+    let listBuffer = null;
+    const flushList = () => {
+      if (listBuffer) { elems.push(<ul key={`ul${elems.length}`} style={{ paddingLeft: 20, marginBottom: 10 }}>{listBuffer}</ul>); listBuffer = null; }
+    };
+    const renderInline = (s) => s.split(/(\*\*[^*]+\*\*)/g).map((chunk, i) =>
+      chunk.startsWith("**") && chunk.endsWith("**")
+        ? <b key={i}>{chunk.slice(2, -2)}</b>
+        : <span key={i}>{chunk}</span>
+    );
+    lines.forEach((line, i) => {
+      if (line.startsWith("# ")) { flushList(); elems.push(<h1 key={i} style={{ fontSize: 20, fontWeight: 900, margin: "16px 0 8px", color: BRAND.red, borderBottom: `2px solid ${BRAND.redBg2}`, paddingBottom: 6 }}>{line.slice(2)}</h1>); }
+      else if (line.startsWith("## ")) { flushList(); elems.push(<h2 key={i} style={{ fontSize: 16, fontWeight: 800, margin: "14px 0 6px", color: BRAND.black }}>{line.slice(3)}</h2>); }
+      else if (line.startsWith("- ")) { if (!listBuffer) listBuffer = []; listBuffer.push(<li key={i} style={{ fontSize: 13, lineHeight: 1.6, color: BRAND.grayDark }}>{renderInline(line.slice(2))}</li>); }
+      else if (line.trim() === "") { flushList(); }
+      else { flushList(); elems.push(<p key={i} style={{ fontSize: 13, lineHeight: 1.6, color: BRAND.grayDark, margin: "4px 0" }}>{renderInline(line)}</p>); }
+    });
+    flushList();
+    return elems;
+  };
+
+  const printRules = () => {
+    const esc_ = (s) => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const printable = rules.content.split("\n").map(l => {
+      if (l.startsWith("# ")) return `<h1>${esc_(l.slice(2))}</h1>`;
+      if (l.startsWith("## ")) return `<h2>${esc_(l.slice(3))}</h2>`;
+      if (l.startsWith("- ")) return `<li>${esc_(l.slice(2)).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")}</li>`;
+      if (l.trim() === "") return "";
+      return `<p>${esc_(l).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")}</p>`;
+    }).join("\n").replace(/(<li>.*?<\/li>\n?)+/gs, m => `<ul>${m}</ul>`);
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Sayarah Money Management — Rules (v${rules.version})</title>
+<style>body{font-family:Arial,sans-serif;max-width:720px;margin:24px auto;padding:24px;color:#111;line-height:1.5}h1{font-size:22px;color:#8B1A1A;border-bottom:2px solid #8B1A1A;padding-bottom:8px;margin-top:24px}h2{font-size:16px;margin-top:16px}ul{padding-left:22px}.header{border-bottom:1px solid #ccc;padding-bottom:10px;margin-bottom:20px}.header .meta{color:#666;font-size:11px}.signature{margin-top:40px;border-top:1px solid #ccc;padding-top:20px;font-size:11px;color:#666}@media print{body{padding:12px}}</style>
+</head><body>
+<div class="header"><div style="font-weight:900;font-size:13px">Sayarah — Money Management Rules</div><div class="meta">Version ${rules.version} · Last updated ${new Date(rules.updatedAt).toLocaleString()} by ${esc_(rules.updatedBy)}</div></div>
+${printable}
+<div class="signature">Acknowledged by: __________________________________  Date: ____________</div>
+</body></html>`;
+    const w = window.open("", "_blank");
+    w.document.write(html);
+    w.document.close();
+    w.onload = () => w.print();
+  };
+
+  return (
+    <Modal title={`Money Management Rules (v${rules.version})`} onClose={onClose} wide>
+      <div style={{ maxHeight: 540, overflowY: "auto", padding: "0 4px" }}>
+        {renderContent(rules.content)}
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 16, paddingTop: 12, borderTop: `1px solid ${BRAND.grayLight}`, gap: 8, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 10, color: BRAND.gray }}>
+          Last updated {new Date(rules.updatedAt).toLocaleString()} by {rules.updatedBy}
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <Btn variant="secondary" size="sm" onClick={printRules}>Print / Save as PDF</Btn>
+          {admin && <Btn size="sm" onClick={onEdit}>Edit Rules</Btn>}
+          <Btn variant="secondary" size="sm" onClick={onClose}>Close</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function RulesEditor({ rules, onSave, onCancel }) {
+  const [content, setContent] = useState(rules.content);
+  return (
+    <Modal title={`Edit Rules (v${rules.version} → v${rules.version + 1})`} onClose={onCancel} wide>
+      <div style={{ fontSize: 11, color: BRAND.gray, marginBottom: 8 }}>
+        Use Markdown-lite: <code># Heading</code> · <code>## Subheading</code> · <code>- bullet</code> · <code>**bold**</code>
+      </div>
+      <textarea
+        value={content}
+        onChange={e => setContent(e.target.value)}
+        spellCheck
+        style={{ width: "100%", minHeight: 400, padding: 12, border: `1px solid ${BRAND.grayLight}`, borderRadius: 8, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: 12, lineHeight: 1.5, resize: "vertical", boxSizing: "border-box" }}
+      />
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginTop: 12 }}>
+        <Btn variant="secondary" size="sm" onClick={onCancel}>Cancel</Btn>
+        <Btn size="sm" onClick={() => onSave(content)}>Save rules</Btn>
+      </div>
+    </Modal>
+  );
+}
+
 function UsersTab() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -4984,7 +5578,7 @@ function AppInner() {
 
   const adminMode = isAdmin(userRole);
   const managerMode = isManager(userRole);
-  const allAdminTabs = [...TABS, "Calendar", "Reports", "Approvals", "Activity", "Trash", "Users", "Settings"];
+  const allAdminTabs = [...TABS, "Calendar", "Reports", "Money", "Approvals", "Activity", "Trash", "Users", "Settings"];
   const visibleTabs = adminMode ? allAdminTabs : managerMode ? (allowedTabs && allowedTabs.length ? allowedTabs.filter(t => allAdminTabs.includes(t)) : ["Dashboard"]) : [...TABS, "Calendar", "Settings"];
 
   // Navigation — clean flat tabs, Settings accessed via gear icon only
@@ -5399,6 +5993,7 @@ function AppInner() {
         {tab === "Analytics" && <AnalyticsTab data={data} />}
         {tab === "Calendar" && <CalendarTab data={data} setData={setData} />}
         {tab === "Reports" && (adminMode || managerMode) && <ReportsTab data={data} />}
+        {tab === "Money" && (adminMode || managerMode) && <MoneyManagementTab data={data} setData={setData} username={username} userRole={userRole} darkMode={darkMode} />}
         {tab === "Approvals" && (adminMode || managerMode) && <ApprovalsTab data={data} setData={setData} />}
         {tab === "Activity" && (adminMode || managerMode) && <ActivityTab />}
         {tab === "Trash" && adminMode && <TrashTab data={data} setData={setData} currentUser={username} />}
