@@ -520,12 +520,19 @@ function authenticateUser() {
 // Firebase auth wrapper — used by LoginPage when Firebase is enabled
 async function firebaseLogin(email, password) {
   const user = await firebaseSignIn(email, password);
-  const profile = await getUserProfile(user.uid);
+  // If the profile read itself fails (rules race, transient denial,
+  // doc not yet created), don't block the sign-in — Firebase Auth
+  // has already accepted the credentials, and an admin can refine
+  // permissions in the Users tab later. Only enforce the
+  // auctionAccess gate when we successfully read the doc and it
+  // explicitly says no.
+  let profile = null;
+  try { profile = await getUserProfile(user.uid); }
+  catch (e) { console.warn("firebaseLogin profile read failed:", e?.code || e?.message); }
   const role = profile?.role || "user";
   const firstName = profile?.firstName || (user.displayName || email.split("@")[0]).split(" ")[0];
-  // Check auctionAccess — admin/manager always have access, others need explicit permission
   const isSuperAdmin = email === (import.meta.env.VITE_SUPER_ADMIN_EMAIL || "support@sayarah.io");
-  if (!isSuperAdmin && role !== "admin" && role !== "manager" && profile?.auctionAccess !== true) {
+  if (profile && !isSuperAdmin && role !== "admin" && role !== "manager" && profile.auctionAccess !== true) {
     await firebaseSignOut();
     throw { code: "auth/unauthorized", message: "You don't have access to Auto Trade Hub. Contact your admin to request access." };
   }
@@ -1474,27 +1481,21 @@ function LoginPage({ onLogin }) {
     // auth.currentUser is now populated. Load profile + complete login.
     const fbUser = auth.currentUser;
     if (!fbUser) { setError("Authentication lost. Please try again."); setMfaResolver(null); return; }
-    try {
-      const profile = await getUserProfile(fbUser.uid);
-      const role = profile?.role || "user";
-      const isSuperAdmin = (fbUser.email || "") === (import.meta.env.VITE_SUPER_ADMIN_EMAIL || "support@sayarah.io");
-      if (!isSuperAdmin && role !== "admin" && role !== "manager" && profile?.auctionAccess !== true) {
-        await firebaseSignOut();
-        setError("You don't have access to Auto Trade Hub. Contact your admin.");
-        setMfaResolver(null); return;
-      }
-      const firstName = profile?.firstName || (fbUser.displayName || fbUser.email.split("@")[0]).split(" ")[0];
-      onLogin(firstName, role, fbUser.uid);
-    } catch (e) {
-      // Translate raw Firestore permission errors into something the
-      // user can act on. The Firestore SDK message ("Missing or
-      // insufficient permissions.") is meaningless on a login form.
-      const isPerm = e?.code === "permission-denied" || /permission/i.test(e?.message || "");
-      const msg = isPerm
-        ? "Your account isn't fully set up yet. Please ask your admin to confirm access."
-        : (e?.message || "Login failed");
-      setError(msg); setMfaResolver(null);
+    // Same defensive logic as firebaseLogin: a profile-read failure
+    // shouldn't block sign-in. Auth already accepted the user; gate
+    // only fires when we successfully read a doc that says no.
+    let profile = null;
+    try { profile = await getUserProfile(fbUser.uid); }
+    catch (e) { console.warn("finishAfterMfa profile read failed:", e?.code || e?.message); }
+    const role = profile?.role || "user";
+    const isSuperAdmin = (fbUser.email || "") === (import.meta.env.VITE_SUPER_ADMIN_EMAIL || "support@sayarah.io");
+    if (profile && !isSuperAdmin && role !== "admin" && role !== "manager" && profile.auctionAccess !== true) {
+      await firebaseSignOut();
+      setError("You don't have access to Auto Trade Hub. Contact your admin.");
+      setMfaResolver(null); return;
     }
+    const firstName = profile?.firstName || (fbUser.displayName || fbUser.email.split("@")[0]).split(" ")[0];
+    onLogin(firstName, role, fbUser.uid);
   };
 
   const go = async () => {
