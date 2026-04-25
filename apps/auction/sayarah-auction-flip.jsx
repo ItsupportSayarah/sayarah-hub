@@ -5,6 +5,7 @@ import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, ge
   startTotpEnrollment, finishTotpEnrollment,
   buildRecaptchaVerifier, startSmsEnrollment, finishSmsEnrollment,
   submitTotpChallenge, startSmsChallenge, submitSmsChallenge,
+  sendEmailVerificationIfNeeded,
 } from "./src/firebase.js";
 import QRCode from "qrcode";
 // Pure calculation functions live in src/calc.js so they can be
@@ -1352,9 +1353,28 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
 
   const beginSms = () => { setMethod("sms"); setStep("enrolling"); setErr(""); };
 
+  // auth/unverified-email is special: Firebase requires email
+  // verification before SMS enrollment (TOTP doesn't need it). Track
+  // it separately so the UI can offer a "send verification email"
+  // button instead of a generic error.
+  const [needsEmailVerify, setNeedsEmailVerify] = useState(false);
+  const [verifyEmailSent, setVerifyEmailSent] = useState(false);
+
+  const sendVerifyEmail = async () => {
+    setErr(""); setBusy(true);
+    try {
+      await sendEmailVerificationIfNeeded(user);
+      setVerifyEmailSent(true);
+    } catch (e) {
+      console.error("sendEmailVerification error:", e);
+      setErr(`${e?.code || "error"} · ${e?.message || "Failed to send verification email"}`);
+    }
+    setBusy(false);
+  };
+
   const sendSmsCode = async () => {
     if (!/^\+\d{8,15}$/.test(phone.trim())) { setErr("Use E.164 format — e.g. +15555550123"); return; }
-    setErr(""); setBusy(true);
+    setErr(""); setNeedsEmailVerify(false); setBusy(true);
     try {
       // Clear any prior reCAPTCHA widget on this container so a retry
       // after an error doesn't fail with a stale token.
@@ -1367,7 +1387,12 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error("SMS enrollment error — full detail:", { code: e?.code, message: e?.message, customData: e?.customData, raw: e });
-      setErr(`${e?.code || "error"} · ${e?.message || "Failed to send code"}`);
+      if (e?.code === "auth/unverified-email") {
+        setNeedsEmailVerify(true);
+        setErr("");
+      } else {
+        setErr(`${e?.code || "error"} · ${e?.message || "Failed to send code"}`);
+      }
     }
     setBusy(false);
   };
@@ -1418,9 +1443,19 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
           <div style={{ fontSize: 12, color: BRAND.grayDark, marginBottom: 10 }}>Enter your phone number in E.164 format (e.g. <code>+15555550123</code>):</div>
           <Input label="Phone" value={phone} onChange={setPhone} placeholder="+15555550123" />
           <div id={recapId} style={{ marginTop: 8 }} />
+          {needsEmailVerify && (
+            <div style={{ background: "#FEF3C7", border: "1px solid #FCD34D", color: "#92400E", padding: "10px 12px", borderRadius: 6, fontSize: 12, marginTop: 10, lineHeight: 1.5 }}>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>Verify your email first</div>
+              <div>Firebase requires a verified email before enrolling SMS. {verifyEmailSent ? <b>Verification email sent — check your inbox, click the link, then come back and tap "Send code" again.</b> : "We can send a verification email to your address right now."}</div>
+              <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
+                <Btn onClick={sendVerifyEmail} disabled={busy || verifyEmailSent}>{busy ? "Sending..." : verifyEmailSent ? "Sent ✓" : "Send verification email"}</Btn>
+                <span style={{ fontSize: 11, color: BRAND.gray }}>Or use the Authenticator app option — it doesn't require email verification.</span>
+              </div>
+            </div>
+          )}
           {err && <div style={{ color: "#DC2626", fontSize: 12, marginTop: 10, padding: "8px 12px", background: "#FEF2F2", borderRadius: 6 }}>{err}</div>}
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 14 }}>
-            <Btn variant="secondary" onClick={() => { setStep("choose"); setErr(""); }}>Back</Btn>
+            <Btn variant="secondary" onClick={() => { setStep("choose"); setErr(""); setNeedsEmailVerify(false); setVerifyEmailSent(false); }}>Back</Btn>
             <Btn onClick={sendSmsCode} disabled={busy}>{busy ? "Sending..." : "Send code"}</Btn>
           </div>
         </div>

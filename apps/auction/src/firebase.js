@@ -4,7 +4,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { initializeApp } from "firebase/app";
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail, multiFactor, TotpMultiFactorGenerator, PhoneAuthProvider, PhoneMultiFactorGenerator, RecaptchaVerifier, getMultiFactorResolver } from "firebase/auth";
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail, sendEmailVerification, multiFactor, TotpMultiFactorGenerator, PhoneAuthProvider, PhoneMultiFactorGenerator, RecaptchaVerifier, getMultiFactorResolver } from "firebase/auth";
 import { getFirestore, doc, getDoc, setDoc, addDoc, onSnapshot, collection, getDocs, deleteDoc, query, where, orderBy, limit as fsLimit, serverTimestamp, runTransaction } from "firebase/firestore";
 import { getStorage, ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 
@@ -313,6 +313,19 @@ export async function finishTotpEnrollment(user, secret, verificationCode, displ
   if (!user) throw new Error("Not signed in");
   const credential = TotpMultiFactorGenerator.assertionForEnrollment(secret, verificationCode);
   await multiFactor(user).enroll(credential, displayName);
+}
+
+// ─── Email verification ───
+// Firebase requires email verification before a user can enroll an
+// SMS second factor (TOTP doesn't have this restriction). For users
+// imported from the legacy auth system or created via Firebase Console
+// without verification, we have to send the verification email and
+// then ask them to retry SMS enrollment after clicking the link.
+export async function sendEmailVerificationIfNeeded(user) {
+  if (!user) throw new Error("Not signed in");
+  if (user.emailVerified) return { sent: false, reason: "already-verified" };
+  await sendEmailVerification(user);
+  return { sent: true };
 }
 
 // ─── SMS enrollment ───
