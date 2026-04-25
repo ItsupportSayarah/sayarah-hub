@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext, Component } from "react";
-import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData, onUsersChange, addUserByEmail, deleteUserDoc, ensureUserDoc, getUserProfile, changePassword, resetPassword } from "./src/firebase.js";
+import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData, onUsersChange, addUserByEmail, createUserAccount, generatePassword, deleteUserDoc, ensureUserDoc, getUserProfile, changePassword, resetPassword } from "./src/firebase.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
 class ErrorBoundary extends Component {
@@ -349,6 +349,9 @@ function UsersView({ users, onRefresh }) {
   const [newFirstName, setNewFirstName] = useState("");
   const [newLastName, setNewLastName] = useState("");
   const [newRole, setNewRole] = useState("user");
+  const [newPassword, setNewPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [createdCreds, setCreatedCreds] = useState(null); // { email, password } shown after success
   const [adding, setAdding] = useState(false);
   const [confirmDel, setConfirmDel] = useState(null);
 
@@ -404,20 +407,29 @@ function UsersView({ users, onRefresh }) {
   const handleAddUser = async () => {
     if (!newEmail.trim()) { setMsg("Error: Email is required"); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail.trim())) { setMsg("Error: Enter a valid email address"); return; }
+    if (!newPassword || newPassword.length < 8) { setMsg("Error: Password must be at least 8 characters"); return; }
     setAdding(true); setMsg("");
     try {
       const fn = newFirstName.trim();
       const ln = newLastName.trim();
-      await addUserByEmail(newEmail.trim(), fn && ln ? `${fn} ${ln}` : fn || ln || "", newRole, { firstName: fn, lastName: ln });
-      setMsg("User added successfully!");
-      setNewEmail(""); setNewFirstName(""); setNewLastName(""); setNewRole("user"); setShowAddUser(false);
+      const result = await createUserAccount(newEmail.trim(), newPassword, {
+        firstName: fn,
+        lastName: ln,
+        displayName: fn && ln ? `${fn} ${ln}` : fn || ln || "",
+        role: newRole,
+      });
+      // Surface the credentials to the admin so they can pass them to
+      // the user. Cleared when admin closes the success card.
+      setCreatedCreds({ email: result.email, password: newPassword, verificationSent: result.verificationSent });
+      setNewEmail(""); setNewFirstName(""); setNewLastName(""); setNewRole("user"); setNewPassword(""); setShowAddUser(false);
       await onRefresh();
-      setTimeout(() => setMsg(""), 3000);
     } catch (e) {
       const base = e?.message || String(e);
-      const hint = (e?.code === "permission-denied" || /permission|PERMISSION/.test(base))
-        ? " — Firestore rules blocked the write. Your Firestore role must be \"admin\" (see banner above). If you're the super admin, click Sync my role."
-        : "";
+      const code = e?.code || "";
+      const hint = code === "auth/email-already-in-use" ? " — that email already has a Firebase Auth account. Use Reset Password to send them a sign-in link."
+        : (code === "permission-denied" || /permission|PERMISSION/.test(base))
+          ? " — Firestore rules blocked the write. Your Firestore role must be \"admin\" (see banner above). If you're the super admin, click Sync my role."
+          : "";
       setMsg("Error: " + base + hint);
     }
     setAdding(false);
@@ -448,7 +460,10 @@ function UsersView({ users, onRefresh }) {
       {/* Add User Form */}
       {showAddUser && (
         <Card style={{ marginBottom: 16, borderLeft: `4px solid ${B.green}` }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: B.navy, marginBottom: 12 }}>Add New User to Firestore</div>
+          <div style={{ fontSize: 13, fontWeight: 800, color: B.navy, marginBottom: 4 }}>Create User Account</div>
+          <div style={{ fontSize: 11, color: B.gray, marginBottom: 14, lineHeight: 1.5 }}>
+            Creates the Firebase Auth account, sends a verification email, and writes the directory entry — all in one step. The user can sign in immediately with the password you set below.
+          </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
             <div>
               <label style={{ fontSize: 10, fontWeight: 700, color: B.grayDark, display: "block", marginBottom: 4 }}>Email *</label>
@@ -468,9 +483,67 @@ function UsersView({ users, onRefresh }) {
                 {ROLES.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
               </select>
             </div>
-            <Btn onClick={handleAddUser} disabled={adding} variant="success" style={{ fontSize: 12 }}>{adding ? "Adding..." : "Add User"}</Btn>
           </div>
-          <div style={{ fontSize: 10, color: B.gray, marginTop: 8 }}>Add users who exist in Firebase Auth but haven't signed in to any app yet. They will appear in the admin panel immediately.</div>
+          <div style={{ marginTop: 12 }}>
+            <label style={{ fontSize: 10, fontWeight: 700, color: B.grayDark, display: "block", marginBottom: 4 }}>Initial Password * <span style={{ fontWeight: 500, color: B.gray }}>(min 8 chars — share with user)</span></label>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input
+                value={newPassword}
+                onChange={e => setNewPassword(e.target.value)}
+                type={showPassword ? "text" : "password"}
+                placeholder="Type or click Generate"
+                style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${B.grayLight}`, fontSize: 12, fontFamily: "'DM Mono', monospace", width: 260, outline: "none", letterSpacing: 0.5 }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(s => !s)}
+                style={{ padding: "8px 10px", borderRadius: 6, border: `1px solid ${B.grayLight}`, background: B.white, fontSize: 11, fontWeight: 600, color: B.grayDark, cursor: "pointer", fontFamily: font }}
+              >{showPassword ? "Hide" : "Show"}</button>
+              <button
+                type="button"
+                onClick={() => { setNewPassword(generatePassword(14)); setShowPassword(true); }}
+                style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${B.blue}`, background: B.white, fontSize: 11, fontWeight: 700, color: B.blue, cursor: "pointer", fontFamily: font }}
+              >Generate</button>
+              {newPassword && (
+                <button
+                  type="button"
+                  onClick={() => { try { navigator.clipboard.writeText(newPassword); setMsg("Password copied to clipboard"); setTimeout(() => setMsg(""), 1800); } catch {} }}
+                  style={{ padding: "8px 12px", borderRadius: 6, border: `1px solid ${B.grayLight}`, background: B.white, fontSize: 11, fontWeight: 600, color: B.grayDark, cursor: "pointer", fontFamily: font }}
+                >Copy</button>
+              )}
+            </div>
+          </div>
+          <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
+            <Btn onClick={handleAddUser} disabled={adding} variant="success" style={{ fontSize: 12 }}>{adding ? "Creating..." : "Create User"}</Btn>
+          </div>
+        </Card>
+      )}
+
+      {/* Post-create credentials card — shown once after successful
+          creation so the admin can hand the password to the new user
+          before it disappears. Closing clears it. */}
+      {createdCreds && (
+        <Card style={{ marginBottom: 16, borderLeft: `4px solid ${B.blue}`, background: "#EFF6FF" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: B.navy, marginBottom: 4 }}>✓ User created — share these credentials</div>
+              <div style={{ fontSize: 11, color: B.grayDark, marginBottom: 10, lineHeight: 1.5 }}>
+                Send the email + password to the new user through a secure channel. {createdCreds.verificationSent ? "A verification email has also been sent — they'll need to click the link before enrolling SMS two-factor (Authenticator app works without verification)." : ""}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: "6px 12px", alignItems: "center", fontSize: 12, fontFamily: "'DM Mono', monospace", background: B.white, border: `1px solid ${B.grayLight}`, borderRadius: 6, padding: "10px 12px" }}>
+                <span style={{ color: B.gray, fontWeight: 700 }}>Email</span>
+                <span style={{ color: B.navy, wordBreak: "break-all" }}>{createdCreds.email}</span>
+                <button type="button" onClick={() => { try { navigator.clipboard.writeText(createdCreds.email); setMsg("Email copied"); setTimeout(() => setMsg(""), 1500); } catch {} }} style={{ padding: "4px 10px", borderRadius: 4, border: `1px solid ${B.grayLight}`, background: B.white, fontSize: 10, fontWeight: 700, color: B.grayDark, cursor: "pointer", fontFamily: font }}>Copy</button>
+                <span style={{ color: B.gray, fontWeight: 700 }}>Password</span>
+                <span style={{ color: B.navy, wordBreak: "break-all", letterSpacing: 0.5 }}>{createdCreds.password}</span>
+                <button type="button" onClick={() => { try { navigator.clipboard.writeText(createdCreds.password); setMsg("Password copied"); setTimeout(() => setMsg(""), 1500); } catch {} }} style={{ padding: "4px 10px", borderRadius: 4, border: `1px solid ${B.grayLight}`, background: B.white, fontSize: 10, fontWeight: 700, color: B.grayDark, cursor: "pointer", fontFamily: font }}>Copy</button>
+              </div>
+              <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                <button type="button" onClick={() => { try { navigator.clipboard.writeText(`Email: ${createdCreds.email}\nPassword: ${createdCreds.password}`); setMsg("Both copied"); setTimeout(() => setMsg(""), 1500); } catch {} }} style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${B.blue}`, background: B.blue, color: B.white, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: font }}>Copy Both</button>
+              </div>
+            </div>
+            <button type="button" onClick={() => setCreatedCreds(null)} style={{ background: "none", border: "none", color: B.gray, fontSize: 18, cursor: "pointer", padding: 0, lineHeight: 1 }}>×</button>
+          </div>
         </Card>
       )}
 

@@ -3,8 +3,8 @@
 //  Replace the config below with YOUR Firebase project config
 // ═══════════════════════════════════════════════════════════════
 
-import { initializeApp } from "firebase/app";
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail } from "firebase/auth";
+import { initializeApp, getApps, getApp } from "firebase/app";
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, updateProfile, updatePassword, reauthenticateWithCredential, EmailAuthProvider, sendPasswordResetEmail, sendEmailVerification } from "firebase/auth";
 import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, getDocs, deleteDoc, query, where, serverTimestamp } from "firebase/firestore";
 
 // ──────────────────────────────────────────────────────────────
@@ -352,6 +352,82 @@ export async function addUserByEmail(email, displayName, role = "user", { firstN
     createdAt: serverTimestamp(),
   });
   return { id, email };
+}
+
+// ─── Create Firebase Auth account + Firestore doc in one shot ───
+// "Add User" used to only write a Firestore placeholder, leaving the
+// admin to manually create the Firebase Auth account in the console
+// and somehow share the password. This does both client-side: the
+// user can sign in immediately with the chosen password.
+//
+// Uses a SECONDARY Firebase app instance so the createUser call signs
+// in to a sandbox auth that doesn't replace the admin's primary
+// session. After the new user is created we sign that secondary out
+// — the admin remains signed in throughout.
+function getSecondaryAuth() {
+  const name = "user-create";
+  const existing = getApps().find(a => a.name === name);
+  const sec = existing || initializeApp(firebaseConfig, name);
+  return getAuth(sec);
+}
+
+export async function createUserAccount(email, password, { firstName, lastName, displayName, role = "user", allowedTabs, auctionAccess, sendVerification = true } = {}) {
+  if (!email || !password) throw new Error("Email and password are required");
+  if (password.length < 8) throw new Error("Password must be at least 8 characters");
+  // Block duplicates against Firestore — Firebase Auth will also
+  // reject duplicates with auth/email-already-in-use, but checking
+  // here gives a friendlier message and avoids creating an orphan.
+  const existing = await getDocs(collection(db, "users"));
+  const dup = existing.docs.find(d => (d.data().email || "").toLowerCase() === email.toLowerCase());
+  if (dup) throw new Error("A user with this email already exists in the directory.");
+
+  const secondaryAuth = getSecondaryAuth();
+  const fn = firstName || displayName?.split(" ")[0] || email.split("@")[0];
+  const ln = lastName || displayName?.split(" ").slice(1).join(" ") || "";
+  const fullName = displayName || `${fn} ${ln}`.trim() || email.split("@")[0];
+  let cred;
+  try {
+    cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+    try { await updateProfile(cred.user, { displayName: fullName }); } catch {}
+    // Firebase requires email verification before SMS MFA enrollment.
+    // Send the link now so the new user can complete it before logging
+    // in; suppress the failure if mail isn't configured — admin can
+    // resend later from the user's tile.
+    if (sendVerification) { try { await sendEmailVerification(cred.user); } catch (e) { console.warn("verification email failed:", e?.message); } }
+    // Write the Firestore doc keyed by the real Firebase UID (no orphan,
+    // no migration needed on first sign-in).
+    await setDoc(doc(db, "users", cred.user.uid), {
+      uid: cred.user.uid,
+      email,
+      displayName: fullName,
+      firstName: fn,
+      lastName: ln,
+      role,
+      auctionAccess: auctionAccess !== undefined ? auctionAccess : true,
+      logisticsAccess: true,
+      allowedTabs: Array.isArray(allowedTabs) ? allowedTabs : null,
+      addedByAdmin: true,
+      createdAt: serverTimestamp(),
+    });
+  } finally {
+    try { await signOut(secondaryAuth); } catch {}
+  }
+  return { uid: cred.user.uid, email, verificationSent: sendVerification };
+}
+
+// Generate a strong, easy-to-share initial password — 14 chars with a
+// guaranteed mix of letters, digits, and a couple symbols. The admin
+// gets one click to fill the password field instead of inventing one.
+export function generatePassword(length = 14) {
+  const upper = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  const lower = "abcdefghijkmnopqrstuvwxyz";
+  const digits = "23456789";
+  const symbols = "!@#$%&*";
+  const all = upper + lower + digits + symbols;
+  const pick = (set) => set[Math.floor(Math.random() * set.length)];
+  const required = [pick(upper), pick(lower), pick(digits), pick(symbols)];
+  const rest = Array.from({ length: Math.max(0, length - required.length) }, () => pick(all));
+  return [...required, ...rest].sort(() => Math.random() - 0.5).join("");
 }
 
 // Delete a user's Firestore doc. Admin-only. Does not delete the
