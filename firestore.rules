@@ -33,10 +33,27 @@ service cloud.firestore {
     }
 
     // ─── Users collection ───
-    // Users can read their own doc; admins can read/write all
+    // Users can read/write their own doc; admins can read/write all.
+    // Plus: a user can read/update/delete any doc whose `email` field
+    // matches their auth token email — needed so a freshly signed-in
+    // user can migrate the placeholder doc that "Add User" created
+    // (keyed by email, not by Firebase UID) into a UID-keyed doc and
+    // then clean up the orphan. Without this, the user signs in but
+    // gets a fresh doc with no `auctionAccess`, locking them out.
+    function emailMatches() {
+      return resource != null
+        && resource.data.email is string
+        && request.auth.token.email is string
+        && resource.data.email.lower() == request.auth.token.email.lower();
+    }
     match /users/{uid} {
-      allow read: if isAuth() && (request.auth.uid == uid || isAdminOrManager());
-      allow write: if isAuth() && (request.auth.uid == uid || isAdmin());
+      allow read: if isAuth() && (
+        request.auth.uid == uid || emailMatches() || isAdminOrManager()
+      );
+      allow create: if isAuth() && (request.auth.uid == uid || isAdmin());
+      allow update, delete: if isAuth() && (
+        request.auth.uid == uid || emailMatches() || isAdmin()
+      );
     }
 
     // ─── Auction Shared Data (vehicles, expenses, sales) ───

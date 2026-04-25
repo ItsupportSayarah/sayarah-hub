@@ -1245,10 +1245,22 @@ function MfaChallengeView({ resolver, onResolved, onCancel }) {
   const sendSms = async () => {
     setErr(""); setBusy(true);
     try {
+      // Clear any prior reCAPTCHA widget so a retry doesn't fail with a
+      // stale token, and render the new one before verifyPhoneNumber so
+      // the token is ready when Firebase asks for it. Same pattern as
+      // SMS enrollment — without these two lines verifyPhoneNumber
+      // throws auth/internal-error or hangs.
+      const container = document.getElementById(recapId);
+      if (container) container.innerHTML = "";
       const verifier = buildRecaptchaVerifier(recapId);
+      await verifier.render();
       const vid = await startSmsChallenge(resolver, selected.uid, verifier);
       setVerificationId(vid); setSmsSent(true);
-    } catch (e) { setErr(e?.message || "Failed to send code"); }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("SMS challenge error — full detail:", { code: e?.code, message: e?.message, customData: e?.customData, raw: e });
+      setErr(`${e?.code || "error"} · ${e?.message || "Failed to send code"}`);
+    }
     setBusy(false);
   };
 
@@ -1260,7 +1272,9 @@ function MfaChallengeView({ resolver, onResolved, onCancel }) {
       else await submitTotpChallenge(resolver, selected.uid, code.trim());
       onResolved();
     } catch (e) {
-      setErr(e?.code === "auth/invalid-verification-code" ? "Wrong code — try again." : (e?.message || "Verification failed"));
+      // eslint-disable-next-line no-console
+      console.error("MFA challenge verify error — full detail:", { code: e?.code, message: e?.message, customData: e?.customData, raw: e });
+      setErr(e?.code === "auth/invalid-verification-code" ? "Wrong code — try again." : `${e?.code || "error"} · ${e?.message || "Verification failed"}`);
     }
     setBusy(false);
   };

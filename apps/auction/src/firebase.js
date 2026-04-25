@@ -77,6 +77,33 @@ export async function firebaseSignUp(email, password, displayName, { firstName, 
 // email in the rules file (see firestore.rules).
 const SUPER_ADMIN_EMAIL = (import.meta.env.VITE_SUPER_ADMIN_EMAIL || "support@sayarah.io").toLowerCase();
 
+// When admin uses "Add User" we create a Firestore doc keyed by an
+// email-derived id (e.g. "john_example_com") because we don't know
+// the Firebase UID until the user actually signs in. On first sign-in
+// we look for that orphan, copy its role/permissions to the new
+// UID-keyed doc, and delete the orphan. Without this, "Add User"
+// + first sign-in produces two docs: an orphan with the admin's
+// permissions and a fresh UID-keyed doc with auctionAccess:false →
+// the user is locked out of the app the admin just invited them to.
+async function tryMigrateOrphanUserDoc(fbUser) {
+  const email = (fbUser.email || "").toLowerCase();
+  if (!email) return null;
+  const detId = email.replace(/[^a-z0-9@._-]/g, "").replace(/[@.]/g, "_");
+  if (!detId || detId === fbUser.uid) return null;
+  try {
+    const orphanRef = doc(db, "users", detId);
+    const orphanSnap = await getDoc(orphanRef);
+    if (!orphanSnap.exists()) return null;
+    const data = orphanSnap.data() || {};
+    if ((data.email || "").toLowerCase() !== email) return null;
+    try { await deleteDoc(orphanRef); } catch (e) { console.warn("orphan delete failed:", e?.message); }
+    return data;
+  } catch (e) {
+    console.warn("orphan migration skipped:", e?.message);
+    return null;
+  }
+}
+
 // Sign in existing user (ensures Firestore user doc exists AND that
 // the super-admin email has role=admin on the Firestore doc — the
 // client-side app treats the super-admin email as admin via a simple
@@ -89,16 +116,24 @@ export async function firebaseSignIn(email, password) {
   const ref = doc(db, "users", cred.user.uid);
   const snap = await getDoc(ref);
   if (!snap.exists()) {
-    const name = cred.user.displayName || email.split("@")[0];
+    const inherited = await tryMigrateOrphanUserDoc(cred.user);
+    const name = inherited?.displayName || cred.user.displayName || email.split("@")[0];
     await setDoc(ref, {
       uid: cred.user.uid,
       email: cred.user.email,
       displayName: name,
-      firstName: name.split(" ")[0] || "",
-      lastName: name.split(" ").slice(1).join(" ") || "",
-      role: isSuper ? "admin" : "user",
-      logisticsAccess: true,
-      auctionAccess: isSuper ? true : false,
+      firstName: inherited?.firstName || name.split(" ")[0] || "",
+      lastName: inherited?.lastName || name.split(" ").slice(1).join(" ") || "",
+      role: isSuper ? "admin" : (inherited?.role || "user"),
+      logisticsAccess: inherited?.logisticsAccess !== undefined ? inherited.logisticsAccess : true,
+      // No orphan = user came in via Firebase Console / direct auth, so
+      // treat them as approved. The public auction signup form goes
+      // through firebaseSignUp (which creates a doc with auctionAccess:
+      // false) so it doesn't hit this branch.
+      auctionAccess: isSuper ? true : (inherited?.auctionAccess !== undefined ? inherited.auctionAccess : true),
+      allowedTabs: inherited?.allowedTabs || null,
+      addedByAdmin: inherited?.addedByAdmin || false,
+      migratedFromOrphan: !!inherited,
       createdAt: serverTimestamp(),
     });
   } else if (isSuper && snap.data().role !== "admin") {
@@ -195,19 +230,23 @@ export async function ensureUserDoc(fbUser) {
   const ref = doc(db, "users", fbUser.uid);
   const snap = await getDoc(ref);
   if (!snap.exists()) {
-    const name = fbUser.displayName || (fbUser.email || "").split("@")[0] || "User";
+    const inherited = await tryMigrateOrphanUserDoc(fbUser);
+    const name = inherited?.displayName || fbUser.displayName || (fbUser.email || "").split("@")[0] || "User";
     await setDoc(ref, {
       uid: fbUser.uid,
       email: fbUser.email,
       displayName: name,
-      firstName: name.split(" ")[0] || "",
-      lastName: name.split(" ").slice(1).join(" ") || "",
-      role: isSuper ? "admin" : "user",
-      logisticsAccess: true,
-      auctionAccess: isSuper,
+      firstName: inherited?.firstName || name.split(" ")[0] || "",
+      lastName: inherited?.lastName || name.split(" ").slice(1).join(" ") || "",
+      role: isSuper ? "admin" : (inherited?.role || "user"),
+      logisticsAccess: inherited?.logisticsAccess !== undefined ? inherited.logisticsAccess : true,
+      auctionAccess: isSuper ? true : (inherited?.auctionAccess !== undefined ? inherited.auctionAccess : true),
+      allowedTabs: inherited?.allowedTabs || null,
+      addedByAdmin: inherited?.addedByAdmin || false,
+      migratedFromOrphan: !!inherited,
       createdAt: serverTimestamp(),
     });
-    return { role: isSuper ? "admin" : "user", created: true };
+    return { role: isSuper ? "admin" : (inherited?.role || "user"), created: true, migrated: !!inherited };
   }
   if (isSuper && snap.data().role !== "admin") {
     await setDoc(ref, { role: "admin", auctionAccess: true }, { merge: true });
