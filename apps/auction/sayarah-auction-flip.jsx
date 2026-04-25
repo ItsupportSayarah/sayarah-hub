@@ -5,7 +5,7 @@ import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, ge
   startTotpEnrollment, finishTotpEnrollment,
   buildRecaptchaVerifier, startSmsEnrollment, finishSmsEnrollment,
   submitTotpChallenge, startSmsChallenge, submitSmsChallenge,
-  sendEmailVerificationIfNeeded,
+  sendEmailVerificationIfNeeded, reauthenticateWithPassword,
 } from "./src/firebase.js";
 import QRCode from "qrcode";
 // Pure calculation functions live in src/calc.js so they can be
@@ -1347,7 +1347,11 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
       const dataUrl = await QRCode.toDataURL(otpAuthUrl, { margin: 1, width: 220 });
       setSecret(secret); setSecretKey(secretKey); setQrDataUrl(dataUrl);
       setMethod("totp"); setStep("verifying");
-    } catch (e) { setErr(e?.message || "Failed to start TOTP enrollment"); }
+    } catch (e) {
+      console.error("TOTP enrollment start error:", e);
+      if (e?.code === "auth/requires-recent-login") { setNeedsReauth("totp"); setMethod("totp"); }
+      else setErr(`${e?.code || "error"} · ${e?.message || "Failed to start TOTP enrollment"}`);
+    }
     setBusy(false);
   };
 
@@ -1359,6 +1363,11 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
   // button instead of a generic error.
   const [needsEmailVerify, setNeedsEmailVerify] = useState(false);
   const [verifyEmailSent, setVerifyEmailSent] = useState(false);
+  // auth/requires-recent-login fires when the auth token is too old
+  // for security-sensitive ops (MFA enroll). Show an inline password
+  // prompt → reauthenticate → automatically retry the original action.
+  const [needsReauth, setNeedsReauth] = useState(null); // null | "sms" | "totp"
+  const [reauthPassword, setReauthPassword] = useState("");
 
   const sendVerifyEmail = async () => {
     setErr(""); setBusy(true);
@@ -1390,9 +1399,33 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
       if (e?.code === "auth/unverified-email") {
         setNeedsEmailVerify(true);
         setErr("");
+      } else if (e?.code === "auth/requires-recent-login") {
+        setNeedsReauth("sms");
+        setErr("");
       } else {
         setErr(`${e?.code || "error"} · ${e?.message || "Failed to send code"}`);
       }
+    }
+    setBusy(false);
+  };
+
+  const submitReauth = async () => {
+    if (!reauthPassword.trim()) { setErr("Enter your password"); return; }
+    setErr(""); setBusy(true);
+    try {
+      await reauthenticateWithPassword(reauthPassword);
+      const retry = needsReauth;
+      setNeedsReauth(null);
+      setReauthPassword("");
+      // Auto-retry the action that triggered the reauth prompt.
+      if (retry === "sms") await sendSmsCode();
+      else if (retry === "totp") await beginTotp();
+    } catch (e) {
+      console.error("reauthenticate error:", e);
+      const msg = e?.code === "auth/wrong-password" || e?.code === "auth/invalid-credential"
+        ? "Wrong password — try again."
+        : `${e?.code || "error"} · ${e?.message || "Reauthentication failed"}`;
+      setErr(msg);
     }
     setBusy(false);
   };
@@ -1420,7 +1453,22 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
         </div>
       )}
 
-      {step === "choose" && (
+      {needsReauth && (
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 700, color: BRAND.black, marginBottom: 4 }}>Confirm your password</div>
+          <div style={{ fontSize: 12, color: BRAND.gray, lineHeight: 1.5, marginBottom: 12 }}>
+            Firebase requires a fresh sign-in for this step. Enter your password to continue — we'll automatically resume {needsReauth === "sms" ? "SMS" : "Authenticator"} enrollment.
+          </div>
+          <Input label="Password" type="password" value={reauthPassword} onChange={setReauthPassword} placeholder="••••••••" />
+          {err && <div style={{ color: "#DC2626", fontSize: 12, marginTop: 10, padding: "8px 12px", background: "#FEF2F2", borderRadius: 6 }}>{err}</div>}
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 14 }}>
+            <Btn variant="secondary" onClick={() => { setNeedsReauth(null); setReauthPassword(""); setErr(""); }}>Cancel</Btn>
+            <Btn onClick={submitReauth} disabled={busy || !reauthPassword}>{busy ? "Confirming..." : "Confirm"}</Btn>
+          </div>
+        </div>
+      )}
+
+      {!needsReauth && step === "choose" && (
         <div>
           <div style={{ fontSize: 12, color: BRAND.grayDark, lineHeight: 1.5, marginBottom: 14 }}>
             Pick how you want to receive the second-step code on every sign-in:
@@ -1438,7 +1486,7 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
         </div>
       )}
 
-      {step === "enrolling" && method === "sms" && (
+      {!needsReauth && step === "enrolling" && method === "sms" && (
         <div>
           <div style={{ fontSize: 12, color: BRAND.grayDark, marginBottom: 10 }}>Enter your phone number in E.164 format (e.g. <code>+15555550123</code>):</div>
           <Input label="Phone" value={phone} onChange={setPhone} placeholder="+15555550123" />
@@ -1461,7 +1509,7 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
         </div>
       )}
 
-      {step === "verifying" && method === "totp" && (
+      {!needsReauth && step === "verifying" && method === "totp" && (
         <div>
           <div style={{ fontSize: 12, color: BRAND.grayDark, marginBottom: 10, lineHeight: 1.5 }}>
             Scan this QR with your authenticator app, then enter the 6-digit code to confirm.
@@ -1482,7 +1530,7 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
         </div>
       )}
 
-      {step === "verifying" && method === "sms" && (
+      {!needsReauth && step === "verifying" && method === "sms" && (
         <div>
           <div style={{ fontSize: 12, color: BRAND.grayDark, marginBottom: 10 }}>Code sent to <b>{phone}</b>. Enter it below:</div>
           <Input label="6-digit code" value={code} onChange={v => setCode(v.replace(/\D/g, "").slice(0, 6))} placeholder="123456" />

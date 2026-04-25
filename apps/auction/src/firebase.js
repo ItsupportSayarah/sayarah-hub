@@ -328,6 +328,18 @@ export async function sendEmailVerificationIfNeeded(user) {
   return { sent: true };
 }
 
+// ─── Reauthenticate (for security-sensitive ops) ───
+// Firebase throws auth/requires-recent-login on MFA enrollment if the
+// user's last sign-in is too old. Prompting for the password and
+// reauthenticating refreshes the token without forcing them to log
+// out and back in.
+export async function reauthenticateWithPassword(currentPassword) {
+  const user = auth.currentUser;
+  if (!user || !user.email) throw new Error("Not signed in");
+  const credential = EmailAuthProvider.credential(user.email, currentPassword);
+  await reauthenticateWithCredential(user, credential);
+}
+
 // ─── SMS enrollment ───
 // Requires a reCAPTCHA container element in the DOM.
 export function buildRecaptchaVerifier(containerId, size = "invisible") {
