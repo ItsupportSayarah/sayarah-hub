@@ -131,7 +131,10 @@ function LoginPage({ onLogin }) {
         if (role !== "admin") { setErr("Access denied. Admin only."); await firebaseSignOut(); setLoading(false); return; }
       }
       onLogin();
-    } catch (e) { setErr(e.message); }
+    } catch (e) {
+      const isPerm = e?.code === "permission-denied" || /permission/i.test(e?.message || "");
+      setErr(isPerm ? "Your account isn't fully set up yet. Please ask your admin to confirm access." : (e?.message || "Login failed"));
+    }
     setLoading(false);
   };
 

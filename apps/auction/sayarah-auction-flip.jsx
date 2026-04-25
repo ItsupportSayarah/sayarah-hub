@@ -1485,7 +1485,16 @@ function LoginPage({ onLogin }) {
       }
       const firstName = profile?.firstName || (fbUser.displayName || fbUser.email.split("@")[0]).split(" ")[0];
       onLogin(firstName, role, fbUser.uid);
-    } catch (e) { setError(e?.message || "Login failed"); setMfaResolver(null); }
+    } catch (e) {
+      // Translate raw Firestore permission errors into something the
+      // user can act on. The Firestore SDK message ("Missing or
+      // insufficient permissions.") is meaningless on a login form.
+      const isPerm = e?.code === "permission-denied" || /permission/i.test(e?.message || "");
+      const msg = isPerm
+        ? "Your account isn't fully set up yet. Please ask your admin to confirm access."
+        : (e?.message || "Login failed");
+      setError(msg); setMfaResolver(null);
+    }
   };
 
   const go = async () => {
@@ -1515,12 +1524,14 @@ function LoginPage({ onLogin }) {
           const resolver = getMfaResolver(err);
           if (resolver) { setMfaResolver(resolver); setLoading(false); return; }
         }
+        const isPerm = err?.code === "permission-denied" || /permission/i.test(err?.message || "");
         const msg = err.code === "auth/user-not-found" ? "Invalid email or password"
           : err.code === "auth/wrong-password" ? "Invalid email or password"
           : err.code === "auth/invalid-email" ? "Invalid email format"
           : err.code === "auth/email-already-in-use" ? "Email already registered — try signing in"
           : err.code === "auth/weak-password" ? "Password must be at least 8 characters"
           : err.code === "auth/invalid-credential" ? "Invalid email or password"
+          : isPerm ? "Your account isn't fully set up yet. Please ask your admin to confirm access."
           : err.message || "Authentication failed";
         setError(msg); setLoading(false);
       }

@@ -79,32 +79,41 @@ async function tryMigrateOrphanUserDoc(fbUser) {
 // super-admin email has role=admin — client treats super admin as
 // admin by email, Firestore rules check the role field. They must
 // agree or every rule-gated write fails silently).
+//
+// Firestore bootstrap is wrapped so a rules / permission hiccup can
+// never leak raw "Missing or insufficient permissions." to the
+// admin login form. The role check below the call still renders a
+// proper "Access denied" message if the user truly isn't admin.
 export async function firebaseSignIn(email, password) {
   const cred = await signInWithEmailAndPassword(auth, email, password);
   const isSuper = (cred.user.email || "").toLowerCase() === SUPER_ADMIN_EMAIL;
-  const ref = doc(db, "users", cred.user.uid);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) {
-    const inherited = await tryMigrateOrphanUserDoc(cred.user);
-    const name = inherited?.displayName || cred.user.displayName || email.split("@")[0];
-    await setDoc(ref, {
-      uid: cred.user.uid,
-      email: cred.user.email,
-      displayName: name,
-      firstName: inherited?.firstName || name.split(" ")[0] || "",
-      lastName: inherited?.lastName || name.split(" ").slice(1).join(" ") || "",
-      role: isSuper ? "admin" : (inherited?.role || "user"),
-      logisticsAccess: inherited?.logisticsAccess !== undefined ? inherited.logisticsAccess : true,
-      auctionAccess: isSuper ? true : (inherited?.auctionAccess !== undefined ? inherited.auctionAccess : true),
-      allowedTabs: inherited?.allowedTabs || null,
-      addedByAdmin: inherited?.addedByAdmin || false,
-      migratedFromOrphan: !!inherited,
-      createdAt: serverTimestamp(),
-    });
-  } else if (isSuper && snap.data().role !== "admin") {
-    await setDoc(ref, { role: "admin", auctionAccess: true }, { merge: true });
+  try {
+    const ref = doc(db, "users", cred.user.uid);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) {
+      const inherited = await tryMigrateOrphanUserDoc(cred.user);
+      const name = inherited?.displayName || cred.user.displayName || email.split("@")[0];
+      await setDoc(ref, {
+        uid: cred.user.uid,
+        email: cred.user.email,
+        displayName: name,
+        firstName: inherited?.firstName || name.split(" ")[0] || "",
+        lastName: inherited?.lastName || name.split(" ").slice(1).join(" ") || "",
+        role: isSuper ? "admin" : (inherited?.role || "user"),
+        logisticsAccess: inherited?.logisticsAccess !== undefined ? inherited.logisticsAccess : true,
+        auctionAccess: isSuper ? true : (inherited?.auctionAccess !== undefined ? inherited.auctionAccess : true),
+        allowedTabs: inherited?.allowedTabs || null,
+        addedByAdmin: inherited?.addedByAdmin || false,
+        migratedFromOrphan: !!inherited,
+        createdAt: serverTimestamp(),
+      });
+    } else if (isSuper && snap.data().role !== "admin") {
+      await setDoc(ref, { role: "admin", auctionAccess: true }, { merge: true });
+    }
+  } catch (e) {
+    console.warn("firebaseSignIn doc bootstrap skipped:", e?.code || e?.message || e);
   }
-  // Record login event
+  // Record login event (already wrapped in its own try/catch)
   await recordLoginEvent(cred.user.uid);
   return cred.user;
 }

@@ -110,38 +110,48 @@ async function tryMigrateOrphanUserDoc(fbUser) {
 // email check, but Firestore rules check the `role` field. If the two
 // drift (e.g. signup created a "user" role doc for the super admin),
 // every rule-gated write fails silently. We reconcile on every sign-in.
+//
+// All Firestore work is wrapped: if a write/read fails (e.g. rules
+// haven't been redeployed yet), sign-in still succeeds. The downstream
+// auctionAccess check renders a friendly "ask your admin" message
+// instead of leaking raw "Missing or insufficient permissions." to
+// the login form.
 export async function firebaseSignIn(email, password) {
   const cred = await signInWithEmailAndPassword(auth, email, password);
   const isSuper = (cred.user.email || "").toLowerCase() === SUPER_ADMIN_EMAIL;
-  const ref = doc(db, "users", cred.user.uid);
-  const snap = await getDoc(ref);
-  if (!snap.exists()) {
-    const inherited = await tryMigrateOrphanUserDoc(cred.user);
-    const name = inherited?.displayName || cred.user.displayName || email.split("@")[0];
-    await setDoc(ref, {
-      uid: cred.user.uid,
-      email: cred.user.email,
-      displayName: name,
-      firstName: inherited?.firstName || name.split(" ")[0] || "",
-      lastName: inherited?.lastName || name.split(" ").slice(1).join(" ") || "",
-      role: isSuper ? "admin" : (inherited?.role || "user"),
-      logisticsAccess: inherited?.logisticsAccess !== undefined ? inherited.logisticsAccess : true,
-      // No orphan = user came in via Firebase Console / direct auth, so
-      // treat them as approved. The public auction signup form goes
-      // through firebaseSignUp (which creates a doc with auctionAccess:
-      // false) so it doesn't hit this branch.
-      auctionAccess: isSuper ? true : (inherited?.auctionAccess !== undefined ? inherited.auctionAccess : true),
-      allowedTabs: inherited?.allowedTabs || null,
-      addedByAdmin: inherited?.addedByAdmin || false,
-      migratedFromOrphan: !!inherited,
-      createdAt: serverTimestamp(),
-    });
-  } else if (isSuper && snap.data().role !== "admin") {
-    // Doc exists but role is stale — promote to admin. Self-write is
-    // always allowed by the rules (request.auth.uid == uid).
-    await setDoc(ref, { role: "admin", auctionAccess: true }, { merge: true });
+  try {
+    const ref = doc(db, "users", cred.user.uid);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) {
+      const inherited = await tryMigrateOrphanUserDoc(cred.user);
+      const name = inherited?.displayName || cred.user.displayName || email.split("@")[0];
+      await setDoc(ref, {
+        uid: cred.user.uid,
+        email: cred.user.email,
+        displayName: name,
+        firstName: inherited?.firstName || name.split(" ")[0] || "",
+        lastName: inherited?.lastName || name.split(" ").slice(1).join(" ") || "",
+        role: isSuper ? "admin" : (inherited?.role || "user"),
+        logisticsAccess: inherited?.logisticsAccess !== undefined ? inherited.logisticsAccess : true,
+        // No orphan = user came in via Firebase Console / direct auth,
+        // so treat them as approved. The public auction signup form
+        // goes through firebaseSignUp (which creates a doc with
+        // auctionAccess:false) so it doesn't hit this branch.
+        auctionAccess: isSuper ? true : (inherited?.auctionAccess !== undefined ? inherited.auctionAccess : true),
+        allowedTabs: inherited?.allowedTabs || null,
+        addedByAdmin: inherited?.addedByAdmin || false,
+        migratedFromOrphan: !!inherited,
+        createdAt: serverTimestamp(),
+      });
+    } else if (isSuper && snap.data().role !== "admin") {
+      // Doc exists but role is stale — promote to admin. Self-write is
+      // always allowed by the rules (request.auth.uid == uid).
+      await setDoc(ref, { role: "admin", auctionAccess: true }, { merge: true });
+    }
+  } catch (e) {
+    console.warn("firebaseSignIn doc bootstrap skipped:", e?.code || e?.message || e);
   }
-  // Record login event
+  // Record login event (already wrapped in its own try/catch)
   await recordLoginEvent(cred.user.uid);
   return cred.user;
 }
