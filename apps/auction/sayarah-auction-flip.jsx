@@ -1322,6 +1322,181 @@ function MfaChallengeView({ resolver, onResolved, onCancel }) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// COUNTRY PICKER — flag + dial code dropdown for the SMS phone input.
+// E.164 phone numbers must lead with the country dial code; rather
+// than ask the user to remember "+1" we surface a searchable picker
+// defaulting to the United States.
+// ═══════════════════════════════════════════════════════════════
+const COUNTRIES = [
+  { code: "US", flag: "🇺🇸", name: "United States", dial: "1" },
+  { code: "CA", flag: "🇨🇦", name: "Canada", dial: "1" },
+  { code: "MX", flag: "🇲🇽", name: "Mexico", dial: "52" },
+  { code: "GB", flag: "🇬🇧", name: "United Kingdom", dial: "44" },
+  { code: "SA", flag: "🇸🇦", name: "Saudi Arabia", dial: "966" },
+  { code: "AE", flag: "🇦🇪", name: "United Arab Emirates", dial: "971" },
+  { code: "EG", flag: "🇪🇬", name: "Egypt", dial: "20" },
+  { code: "QA", flag: "🇶🇦", name: "Qatar", dial: "974" },
+  { code: "KW", flag: "🇰🇼", name: "Kuwait", dial: "965" },
+  { code: "BH", flag: "🇧🇭", name: "Bahrain", dial: "973" },
+  { code: "OM", flag: "🇴🇲", name: "Oman", dial: "968" },
+  { code: "JO", flag: "🇯🇴", name: "Jordan", dial: "962" },
+  { code: "LB", flag: "🇱🇧", name: "Lebanon", dial: "961" },
+  { code: "IL", flag: "🇮🇱", name: "Israel", dial: "972" },
+  { code: "IQ", flag: "🇮🇶", name: "Iraq", dial: "964" },
+  { code: "TR", flag: "🇹🇷", name: "Türkiye", dial: "90" },
+  { code: "IN", flag: "🇮🇳", name: "India", dial: "91" },
+  { code: "PK", flag: "🇵🇰", name: "Pakistan", dial: "92" },
+  { code: "BD", flag: "🇧🇩", name: "Bangladesh", dial: "880" },
+  { code: "LK", flag: "🇱🇰", name: "Sri Lanka", dial: "94" },
+  { code: "NP", flag: "🇳🇵", name: "Nepal", dial: "977" },
+  { code: "CN", flag: "🇨🇳", name: "China", dial: "86" },
+  { code: "JP", flag: "🇯🇵", name: "Japan", dial: "81" },
+  { code: "KR", flag: "🇰🇷", name: "South Korea", dial: "82" },
+  { code: "HK", flag: "🇭🇰", name: "Hong Kong", dial: "852" },
+  { code: "TW", flag: "🇹🇼", name: "Taiwan", dial: "886" },
+  { code: "ID", flag: "🇮🇩", name: "Indonesia", dial: "62" },
+  { code: "MY", flag: "🇲🇾", name: "Malaysia", dial: "60" },
+  { code: "SG", flag: "🇸🇬", name: "Singapore", dial: "65" },
+  { code: "PH", flag: "🇵🇭", name: "Philippines", dial: "63" },
+  { code: "TH", flag: "🇹🇭", name: "Thailand", dial: "66" },
+  { code: "VN", flag: "🇻🇳", name: "Vietnam", dial: "84" },
+  { code: "AU", flag: "🇦🇺", name: "Australia", dial: "61" },
+  { code: "NZ", flag: "🇳🇿", name: "New Zealand", dial: "64" },
+  { code: "DE", flag: "🇩🇪", name: "Germany", dial: "49" },
+  { code: "FR", flag: "🇫🇷", name: "France", dial: "33" },
+  { code: "ES", flag: "🇪🇸", name: "Spain", dial: "34" },
+  { code: "IT", flag: "🇮🇹", name: "Italy", dial: "39" },
+  { code: "PT", flag: "🇵🇹", name: "Portugal", dial: "351" },
+  { code: "NL", flag: "🇳🇱", name: "Netherlands", dial: "31" },
+  { code: "BE", flag: "🇧🇪", name: "Belgium", dial: "32" },
+  { code: "CH", flag: "🇨🇭", name: "Switzerland", dial: "41" },
+  { code: "AT", flag: "🇦🇹", name: "Austria", dial: "43" },
+  { code: "IE", flag: "🇮🇪", name: "Ireland", dial: "353" },
+  { code: "SE", flag: "🇸🇪", name: "Sweden", dial: "46" },
+  { code: "NO", flag: "🇳🇴", name: "Norway", dial: "47" },
+  { code: "DK", flag: "🇩🇰", name: "Denmark", dial: "45" },
+  { code: "FI", flag: "🇫🇮", name: "Finland", dial: "358" },
+  { code: "PL", flag: "🇵🇱", name: "Poland", dial: "48" },
+  { code: "CZ", flag: "🇨🇿", name: "Czechia", dial: "420" },
+  { code: "GR", flag: "🇬🇷", name: "Greece", dial: "30" },
+  { code: "RO", flag: "🇷🇴", name: "Romania", dial: "40" },
+  { code: "RU", flag: "🇷🇺", name: "Russia", dial: "7" },
+  { code: "UA", flag: "🇺🇦", name: "Ukraine", dial: "380" },
+  { code: "ZA", flag: "🇿🇦", name: "South Africa", dial: "27" },
+  { code: "NG", flag: "🇳🇬", name: "Nigeria", dial: "234" },
+  { code: "KE", flag: "🇰🇪", name: "Kenya", dial: "254" },
+  { code: "GH", flag: "🇬🇭", name: "Ghana", dial: "233" },
+  { code: "MA", flag: "🇲🇦", name: "Morocco", dial: "212" },
+  { code: "DZ", flag: "🇩🇿", name: "Algeria", dial: "213" },
+  { code: "TN", flag: "🇹🇳", name: "Tunisia", dial: "216" },
+  { code: "BR", flag: "🇧🇷", name: "Brazil", dial: "55" },
+  { code: "AR", flag: "🇦🇷", name: "Argentina", dial: "54" },
+  { code: "CL", flag: "🇨🇱", name: "Chile", dial: "56" },
+  { code: "CO", flag: "🇨🇴", name: "Colombia", dial: "57" },
+  { code: "PE", flag: "🇵🇪", name: "Peru", dial: "51" },
+  { code: "VE", flag: "🇻🇪", name: "Venezuela", dial: "58" },
+];
+const COUNTRY_DEFAULT = COUNTRIES[0]; // US
+
+function CountrySelect({ value, onChange, disabled }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const wrapRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e) => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
+    const onEsc = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onEsc);
+    return () => { document.removeEventListener("mousedown", onDocClick); document.removeEventListener("keydown", onEsc); };
+  }, [open]);
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return COUNTRIES;
+    return COUNTRIES.filter(c => c.name.toLowerCase().includes(q) || c.dial.startsWith(q.replace(/^\+/, "")) || c.code.toLowerCase() === q);
+  }, [search]);
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={() => !disabled && setOpen(o => !o)}
+        disabled={disabled}
+        style={{
+          display: "flex", alignItems: "center", gap: 8,
+          height: 44, padding: "0 12px",
+          minWidth: 124,
+          border: `1px solid ${open ? BRAND.red : BRAND.grayLight}`,
+          borderRadius: 10, background: "#fff",
+          fontFamily: "inherit", fontSize: 14, fontWeight: 600, color: BRAND.black,
+          cursor: disabled ? "not-allowed" : "pointer",
+          transition: "border-color 120ms ease, box-shadow 120ms ease",
+          boxShadow: open ? "0 0 0 3px rgba(139,26,26,0.12)" : "none",
+        }}
+      >
+        <span style={{ fontSize: 18, lineHeight: 1 }}>{value.flag}</span>
+        <span style={{ color: BRAND.gray, fontWeight: 500 }}>+{value.dial}</span>
+        <span style={{ marginLeft: "auto", color: BRAND.gray, fontSize: 10 }}>▾</span>
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 6px)", left: 0,
+          width: 320, maxWidth: "calc(100vw - 40px)",
+          background: "#fff",
+          border: `1px solid ${BRAND.grayLight}`,
+          borderRadius: 12,
+          boxShadow: "0 12px 32px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06)",
+          overflow: "hidden",
+          zIndex: 100,
+        }}>
+          <div style={{ padding: 10, borderBottom: `1px solid ${BRAND.grayLight}` }}>
+            <input
+              autoFocus
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search country or dial code…"
+              style={{
+                width: "100%", boxSizing: "border-box",
+                padding: "9px 12px", border: `1px solid ${BRAND.grayLight}`,
+                borderRadius: 8, fontSize: 13, fontFamily: "inherit", outline: "none",
+              }}
+            />
+          </div>
+          <div style={{ maxHeight: 280, overflowY: "auto" }}>
+            {filtered.length === 0 ? (
+              <div style={{ padding: "16px 14px", fontSize: 12, color: BRAND.gray, textAlign: "center" }}>No matches</div>
+            ) : filtered.map(c => {
+              const sel = c.code === value.code;
+              return (
+                <button
+                  key={c.code}
+                  type="button"
+                  onClick={() => { onChange(c); setOpen(false); setSearch(""); }}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10, width: "100%",
+                    padding: "10px 14px", border: "none",
+                    background: sel ? "#FEF2F2" : "#fff",
+                    fontFamily: "inherit", fontSize: 13, color: BRAND.black,
+                    textAlign: "left", cursor: "pointer",
+                    borderLeft: sel ? `3px solid ${BRAND.red}` : "3px solid transparent",
+                    transition: "background 80ms ease",
+                  }}
+                  onMouseEnter={e => { if (!sel) e.currentTarget.style.background = "#F9FAFB"; }}
+                  onMouseLeave={e => { if (!sel) e.currentTarget.style.background = "#fff"; }}
+                >
+                  <span style={{ fontSize: 18, lineHeight: 1 }}>{c.flag}</span>
+                  <span style={{ flex: 1, fontWeight: sel ? 700 : 500 }}>{c.name}</span>
+                  <span style={{ color: BRAND.gray, fontSize: 12, fontVariantNumeric: "tabular-nums" }}>+{c.dial}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 // MFA SETUP — post-login modal for enrolling a second factor.
 // User picks TOTP (authenticator app) or SMS, enters + verifies.
 // Required for all users (blocks the app until at least one factor
@@ -1333,7 +1508,8 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [secret, setSecret] = useState(null);
   const [secretKey, setSecretKey] = useState("");
-  const [phone, setPhone] = useState("");
+  const [phone, setPhone] = useState(""); // national digits only — E.164 is built from country.dial + phone
+  const [country, setCountry] = useState(COUNTRY_DEFAULT);
   const [verificationId, setVerificationId] = useState("");
   const [code, setCode] = useState("");
   const [err, setErr] = useState("");
@@ -1381,8 +1557,18 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
     setBusy(false);
   };
 
+  // Compose E.164 from the country picker + the national digits the
+  // user typed. Strips anything non-numeric so users can paste numbers
+  // with hyphens, spaces, or parens.
+  const e164 = useMemo(() => {
+    const digits = phone.replace(/\D/g, "");
+    return digits ? `+${country.dial}${digits}` : "";
+  }, [country, phone]);
+
   const sendSmsCode = async () => {
-    if (!/^\+\d{8,15}$/.test(phone.trim())) { setErr("Use E.164 format — e.g. +15555550123"); return; }
+    const digits = phone.replace(/\D/g, "");
+    if (digits.length < 6) { setErr("Enter your phone number"); return; }
+    if (e164.length > 16) { setErr("Phone number is too long"); return; }
     setErr(""); setNeedsEmailVerify(false); setBusy(true);
     try {
       // Clear any prior reCAPTCHA widget on this container so a retry
@@ -1391,7 +1577,7 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
       if (container) container.innerHTML = "";
       const verifier = buildRecaptchaVerifier(recapId);
       await verifier.render();
-      const vid = await startSmsEnrollment(user, phone.trim(), verifier);
+      const vid = await startSmsEnrollment(user, e164, verifier);
       setVerificationId(vid); setStep("verifying");
     } catch (e) {
       // eslint-disable-next-line no-console
@@ -1435,7 +1621,7 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
     setErr(""); setBusy(true);
     try {
       if (method === "totp") await finishTotpEnrollment(user, secret, code.trim(), "Authenticator App");
-      else await finishSmsEnrollment(user, verificationId, code.trim(), `SMS ${phone}`);
+      else await finishSmsEnrollment(user, verificationId, code.trim(), `SMS ${e164}`);
       onEnrolled();
     } catch (e) {
       // eslint-disable-next-line no-console
@@ -1488,23 +1674,51 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
 
       {!needsReauth && step === "enrolling" && method === "sms" && (
         <div>
-          <div style={{ fontSize: 12, color: BRAND.grayDark, marginBottom: 10 }}>Enter your phone number in E.164 format (e.g. <code>+15555550123</code>):</div>
-          <Input label="Phone" value={phone} onChange={setPhone} placeholder="+15555550123" />
-          <div id={recapId} style={{ marginTop: 8 }} />
+          <div style={{ fontSize: 13, fontWeight: 700, color: BRAND.black, marginBottom: 4 }}>Add your phone number</div>
+          <div style={{ fontSize: 12, color: BRAND.gray, lineHeight: 1.5, marginBottom: 14 }}>
+            Pick your country and enter the number that should receive the 6-digit code on every sign-in.
+          </div>
+          <label style={{ fontSize: 11, fontWeight: 700, color: BRAND.gray, textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 6 }}>Phone</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <CountrySelect value={country} onChange={setCountry} disabled={busy} />
+            <input
+              value={phone}
+              onChange={e => setPhone(e.target.value.replace(/\D/g, "").slice(0, 15))}
+              placeholder="555 123 4567"
+              inputMode="tel"
+              autoFocus
+              style={{
+                flex: 1, height: 44, padding: "0 14px",
+                border: `1px solid ${BRAND.grayLight}`, borderRadius: 10,
+                fontSize: 15, fontFamily: "inherit", color: BRAND.black,
+                outline: "none", boxSizing: "border-box",
+                fontVariantNumeric: "tabular-nums",
+                transition: "border-color 120ms ease, box-shadow 120ms ease",
+              }}
+              onFocus={e => { e.target.style.borderColor = BRAND.red; e.target.style.boxShadow = "0 0 0 3px rgba(139,26,26,0.12)"; }}
+              onBlur={e => { e.target.style.borderColor = BRAND.grayLight; e.target.style.boxShadow = "none"; }}
+            />
+          </div>
+          {phone && (
+            <div style={{ fontSize: 11, color: BRAND.gray, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>
+              We'll text <b style={{ color: BRAND.black }}>{e164}</b>
+            </div>
+          )}
+          <div id={recapId} style={{ marginTop: 10 }} />
           {needsEmailVerify && (
-            <div style={{ background: "#FEF3C7", border: "1px solid #FCD34D", color: "#92400E", padding: "10px 12px", borderRadius: 6, fontSize: 12, marginTop: 10, lineHeight: 1.5 }}>
+            <div style={{ background: "#FEF3C7", border: "1px solid #FCD34D", color: "#92400E", padding: "12px 14px", borderRadius: 10, fontSize: 12, marginTop: 12, lineHeight: 1.5 }}>
               <div style={{ fontWeight: 700, marginBottom: 4 }}>Verify your email first</div>
               <div>Firebase requires a verified email before enrolling SMS. {verifyEmailSent ? <b>Verification email sent — check your inbox, click the link, then come back and tap "Send code" again.</b> : "We can send a verification email to your address right now."}</div>
-              <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center" }}>
+              <div style={{ marginTop: 10, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                 <Btn onClick={sendVerifyEmail} disabled={busy || verifyEmailSent}>{busy ? "Sending..." : verifyEmailSent ? "Sent ✓" : "Send verification email"}</Btn>
-                <span style={{ fontSize: 11, color: BRAND.gray }}>Or use the Authenticator app option — it doesn't require email verification.</span>
+                <span style={{ fontSize: 11, color: "#92400E" }}>Or use the Authenticator app — no verification needed.</span>
               </div>
             </div>
           )}
-          {err && <div style={{ color: "#DC2626", fontSize: 12, marginTop: 10, padding: "8px 12px", background: "#FEF2F2", borderRadius: 6 }}>{err}</div>}
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 14 }}>
+          {err && <div style={{ color: "#DC2626", fontSize: 12, marginTop: 12, padding: "10px 12px", background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 8 }}>{err}</div>}
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 18, gap: 8 }}>
             <Btn variant="secondary" onClick={() => { setStep("choose"); setErr(""); setNeedsEmailVerify(false); setVerifyEmailSent(false); }}>Back</Btn>
-            <Btn onClick={sendSmsCode} disabled={busy}>{busy ? "Sending..." : "Send code"}</Btn>
+            <Btn onClick={sendSmsCode} disabled={busy || !phone}>{busy ? "Sending..." : "Send code"}</Btn>
           </div>
         </div>
       )}
@@ -1532,7 +1746,7 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
 
       {!needsReauth && step === "verifying" && method === "sms" && (
         <div>
-          <div style={{ fontSize: 12, color: BRAND.grayDark, marginBottom: 10 }}>Code sent to <b>{phone}</b>. Enter it below:</div>
+          <div style={{ fontSize: 12, color: BRAND.grayDark, marginBottom: 10 }}>Code sent to <b>{e164}</b>. Enter it below:</div>
           <Input label="6-digit code" value={code} onChange={v => setCode(v.replace(/\D/g, "").slice(0, 6))} placeholder="123456" />
           {err && <div style={{ color: "#DC2626", fontSize: 12, marginTop: 10, padding: "8px 12px", background: "#FEF2F2", borderRadius: 6 }}>{err}</div>}
           <div style={{ display: "flex", justifyContent: "space-between", marginTop: 14 }}>
