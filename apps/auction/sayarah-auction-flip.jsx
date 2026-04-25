@@ -1503,9 +1503,13 @@ function CountrySelect({ value, onChange, disabled }) {
 // Required for all users (blocks the app until at least one factor
 // is enrolled). Super admin is exempt via the caller.
 // ═══════════════════════════════════════════════════════════════
-function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
-  const [method, setMethod] = useState(null); // "totp" | "sms"
-  const [step, setStep] = useState("choose"); // "choose" | "enrolling" | "verifying"
+function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false, initialMethod = null }) {
+  // initialMethod lets callers (Settings → "+ Authenticator", "+ SMS")
+  // jump straight into the chosen flow so the user doesn't see the
+  // generic "pick a method" step they didn't ask for. TOTP starts the
+  // enrollment immediately on mount so the QR appears without a click.
+  const [method, setMethod] = useState(initialMethod);
+  const [step, setStep] = useState(initialMethod === "sms" ? "enrolling" : "choose"); // "choose" | "enrolling" | "verifying"
   const [qrDataUrl, setQrDataUrl] = useState("");
   const [secret, setSecret] = useState(null);
   const [secretKey, setSecretKey] = useState("");
@@ -1531,6 +1535,14 @@ function MfaSetupModal({ user, onEnrolled, onClose, dismissible = false }) {
     }
     setBusy(false);
   };
+
+  // When opened with initialMethod="totp" (Settings → "+ Authenticator
+  // app"), kick off TOTP enrollment immediately so the QR is already
+  // on screen — saves the user a click and matches the intent.
+  useEffect(() => {
+    if (initialMethod === "totp" && step === "choose" && !secret) beginTotp();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const beginSms = () => { setMethod("sms"); setStep("enrolling"); setErr(""); };
 
@@ -8524,9 +8536,14 @@ function AuctionFeeTiersCard({ data, setData, darkMode, username }) {
 // factors and lets the user enroll more or remove existing ones.
 function SecurityCard() {
   const [factors, setFactors] = useState(() => listMfaFactors(auth.currentUser));
-  const [showSetup, setShowSetup] = useState(false);
+  // setupMethod === null → modal closed; "totp"|"sms" → modal open and
+  // the picked method's flow runs immediately (no extra "choose" step).
+  const [setupMethod, setSetupMethod] = useState(null);
   const [msg, setMsg] = useState("");
   const refresh = () => setFactors(listMfaFactors(auth.currentUser));
+
+  const hasTotp = factors.some(f => f.factorId === "totp");
+  const hasSms = factors.some(f => f.factorId === "phone");
 
   const remove = async (uid) => {
     if (!confirm("Remove this second factor? You'll need to re-enroll it before you can use it again.")) return;
@@ -8536,44 +8553,108 @@ function SecurityCard() {
 
   return (
     <Card style={{ marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
-        <div style={{ width: 36, height: 36, borderRadius: 8, background: "#FEF3C7", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 14 }}>
+        <div style={{ width: 36, height: 36, borderRadius: 8, background: "#FEF3C7", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#92400E" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         </div>
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 800, color: BRAND.black }}>Two-Factor Authentication</div>
-          <div style={{ fontSize: 11, color: BRAND.gray }}>Required on every sign-in. Use an authenticator app (preferred) or SMS text code.</div>
+          <div style={{ fontSize: 11, color: BRAND.gray, marginTop: 2 }}>Required on every sign-in. Enroll either method (or both — recommended) for backup.</div>
         </div>
-        <Btn onClick={() => setShowSetup(true)}>+ Add method</Btn>
       </div>
+
       {msg && <div style={{ background: msg.startsWith("Error") ? "#FEF2F2" : "#F0FDF4", color: msg.startsWith("Error") ? "#DC2626" : "#166534", padding: "8px 12px", borderRadius: 6, fontSize: 12, fontWeight: 600, marginBottom: 10 }}>{msg}</div>}
-      {factors.length === 0 ? (
-        <div style={{ fontSize: 12, color: BRAND.gray, fontStyle: "italic", padding: "8px 0" }}>
-          No second factor enrolled yet. Click <b>Add method</b> to set one up.
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {factors.map(f => (
-            <div key={f.uid} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", border: `1px solid ${BRAND.grayLight}`, borderRadius: 8, padding: "10px 12px" }}>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.black }}>
-                  {f.factorId === "phone" ? "💬 SMS" : "📱 Authenticator App"}
-                  {f.displayName && <span style={{ color: BRAND.gray, marginLeft: 6, fontWeight: 400 }}>· {f.displayName}</span>}
-                </div>
-                {f.phoneNumber && <div style={{ fontSize: 11, color: BRAND.gray, ...S.mono }}>{f.phoneNumber}</div>}
-                {f.enrollmentTime && <div style={{ fontSize: 10, color: BRAND.gray }}>Enrolled {new Date(f.enrollmentTime).toLocaleDateString()}</div>}
-              </div>
-              <Btn variant="danger" size="sm" onClick={() => remove(f.uid)}>Remove</Btn>
-            </div>
-          ))}
+
+      {/* Recommendation banner: nudge users with only one method to add
+          the other. Authenticator is the priority recommendation (works
+          offline, no SMS cost, no email-verification dependency). */}
+      {hasSms && !hasTotp && (
+        <div style={{ background: "#EFF6FF", border: "1px solid #BFDBFE", color: "#1E40AF", padding: "12px 14px", borderRadius: 8, fontSize: 12, marginBottom: 12, lineHeight: 1.5, display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 22 }}>📱</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, marginBottom: 2 }}>Add an authenticator app for stronger security</div>
+            <div style={{ color: "#1E3A8A" }}>Codes from Google Authenticator, Authy, or 1Password work offline and don't depend on SMS delivery.</div>
+          </div>
+          <Btn onClick={() => setSetupMethod("totp")}>Set up</Btn>
         </div>
       )}
-      {showSetup && auth.currentUser && (
+      {hasTotp && !hasSms && (
+        <div style={{ background: "#F0FDF4", border: "1px solid #BBF7D0", color: "#166534", padding: "12px 14px", borderRadius: 8, fontSize: 12, marginBottom: 12, lineHeight: 1.5, display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 22 }}>💬</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, marginBottom: 2 }}>Add SMS as a backup</div>
+            <div style={{ color: "#15803D" }}>If you lose access to your authenticator app, an SMS code lets you recover your account.</div>
+          </div>
+          <Btn onClick={() => setSetupMethod("sms")}>Set up</Btn>
+        </div>
+      )}
+
+      {/* Method tiles — already-enrolled methods show their detail and
+          a Remove button; missing methods show an "Add" CTA. Layout
+          stays stable as the user enrolls/removes factors. */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 10 }}>
+        {/* TOTP tile */}
+        {(() => {
+          const f = factors.find(x => x.factorId === "totp");
+          return f ? (
+            <div style={{ border: `1px solid ${BRAND.grayLight}`, borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 6, background: "#F9FAFB" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: BRAND.black }}>📱 Authenticator app</div>
+                  <div style={{ fontSize: 11, color: BRAND.gray }}>{f.displayName || "Enrolled"}</div>
+                  {f.enrollmentTime && <div style={{ fontSize: 10, color: BRAND.gray, marginTop: 2 }}>Added {new Date(f.enrollmentTime).toLocaleDateString()}</div>}
+                </div>
+                <span style={{ fontSize: 10, fontWeight: 800, color: "#15803D", background: "#DCFCE7", padding: "3px 8px", borderRadius: 999 }}>ACTIVE</span>
+              </div>
+              <Btn variant="danger" size="sm" onClick={() => remove(f.uid)} style={{ alignSelf: "flex-start", marginTop: 4 }}>Remove</Btn>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setSetupMethod("totp")} style={{ border: `1.5px dashed ${BRAND.grayLight}`, borderRadius: 10, padding: 14, background: "#fff", cursor: "pointer", textAlign: "left", fontFamily: "inherit", display: "flex", flexDirection: "column", gap: 4, transition: "border-color 120ms ease, background 120ms ease" }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = BRAND.red; e.currentTarget.style.background = "#FEF2F2"; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = BRAND.grayLight; e.currentTarget.style.background = "#fff"; }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 800, color: BRAND.black }}>📱 Authenticator app <span style={{ color: BRAND.red, fontWeight: 700, fontSize: 10, marginLeft: 4, padding: "2px 6px", background: "#FEF2F2", borderRadius: 999 }}>RECOMMENDED</span></div>
+              <div style={{ fontSize: 11, color: BRAND.gray, lineHeight: 1.5 }}>Google Authenticator, Authy, 1Password, Microsoft Authenticator, etc. Works offline.</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.red, marginTop: 4 }}>+ Add authenticator app</div>
+            </button>
+          );
+        })()}
+
+        {/* SMS tile */}
+        {(() => {
+          const f = factors.find(x => x.factorId === "phone");
+          return f ? (
+            <div style={{ border: `1px solid ${BRAND.grayLight}`, borderRadius: 10, padding: 14, display: "flex", flexDirection: "column", gap: 6, background: "#F9FAFB" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: BRAND.black }}>💬 SMS</div>
+                  {f.phoneNumber && <div style={{ fontSize: 11, color: BRAND.gray, ...S.mono }}>{f.phoneNumber}</div>}
+                  {f.enrollmentTime && <div style={{ fontSize: 10, color: BRAND.gray, marginTop: 2 }}>Added {new Date(f.enrollmentTime).toLocaleDateString()}</div>}
+                </div>
+                <span style={{ fontSize: 10, fontWeight: 800, color: "#15803D", background: "#DCFCE7", padding: "3px 8px", borderRadius: 999 }}>ACTIVE</span>
+              </div>
+              <Btn variant="danger" size="sm" onClick={() => remove(f.uid)} style={{ alignSelf: "flex-start", marginTop: 4 }}>Remove</Btn>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setSetupMethod("sms")} style={{ border: `1.5px dashed ${BRAND.grayLight}`, borderRadius: 10, padding: 14, background: "#fff", cursor: "pointer", textAlign: "left", fontFamily: "inherit", display: "flex", flexDirection: "column", gap: 4, transition: "border-color 120ms ease, background 120ms ease" }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = BRAND.red; e.currentTarget.style.background = "#FEF2F2"; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = BRAND.grayLight; e.currentTarget.style.background = "#fff"; }}
+            >
+              <div style={{ fontSize: 13, fontWeight: 800, color: BRAND.black }}>💬 Text message (SMS)</div>
+              <div style={{ fontSize: 11, color: BRAND.gray, lineHeight: 1.5 }}>A 6-digit code is texted to your phone on every sign-in.</div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: BRAND.red, marginTop: 4 }}>+ Add SMS</div>
+            </button>
+          );
+        })()}
+      </div>
+
+      {setupMethod && auth.currentUser && (
         <MfaSetupModal
           user={auth.currentUser}
           dismissible={true}
-          onEnrolled={() => { setShowSetup(false); refresh(); setMsg("Second factor added."); setTimeout(() => setMsg(""), 3000); }}
-          onClose={() => setShowSetup(false)}
+          initialMethod={setupMethod}
+          onEnrolled={() => { setSetupMethod(null); refresh(); setMsg(`${setupMethod === "totp" ? "Authenticator app" : "SMS"} added.`); setTimeout(() => setMsg(""), 3000); }}
+          onClose={() => setSetupMethod(null)}
         />
       )}
     </Card>
