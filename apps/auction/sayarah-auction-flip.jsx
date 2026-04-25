@@ -6,6 +6,7 @@ import { auth, firebaseSignIn, firebaseSignUp, firebaseSignOut, onAuthChange, ge
   buildRecaptchaVerifier, startSmsEnrollment, finishSmsEnrollment,
   submitTotpChallenge, startSmsChallenge, submitSmsChallenge,
   sendEmailVerificationIfNeeded, reauthenticateWithPassword,
+  validatePasswordStrength,
 } from "./src/firebase.js";
 import QRCode from "qrcode";
 // Pure calculation functions live in src/calc.js so they can be
@@ -1801,7 +1802,14 @@ function LoginPage({ onLogin }) {
       if (!user.trim()) { setError("Enter your email"); return; }
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(user.trim())) { setError("Enter a valid email address"); return; }
       if (!pass.trim()) { setError("Enter a password"); return; }
-      if (isSignUp && pass.length < 8) { setError("Password must be at least 8 characters"); return; }
+      if (isSignUp) {
+        const strength = validatePasswordStrength(pass);
+        if (!strength.ok) {
+          const missing = strength.checks.filter(c => !c.ok).map(c => c.label.toLowerCase());
+          setError("Password is too weak — needs " + missing.join(", "));
+          return;
+        }
+      }
       setLoading(true); setError("");
       try {
         if (isSignUp) {
@@ -2034,6 +2042,29 @@ function LoginPage({ onLogin }) {
                 <input type="password" value={pass} onChange={e => setPass(e.target.value)} onFocus={() => setFocused("pass")} onBlur={() => setFocused(null)} onKeyDown={e => e.key === "Enter" && go()} placeholder="Enter password"
                   style={{ width: "100%", border: `2px solid ${focused === "pass" ? BRAND.red : BRAND.grayLight}`, borderRadius: 10, padding: "12px 12px 12px 38px", fontSize: 14, background: BRAND.white, outline: "none", boxSizing: "border-box", transition: "border-color 0.2s, box-shadow 0.2s", boxShadow: focused === "pass" ? "0 0 0 3px rgba(139,26,26,0.1)" : "none", fontFamily: "inherit" }} />
               </div>
+              {FIREBASE_ENABLED && isSignUp && pass && (() => {
+                const { checks, score, ok } = validatePasswordStrength(pass);
+                const barColor = ok ? "#16A34A" : score >= 4 ? "#F59E0B" : score >= 2 ? "#F97316" : "#DC2626";
+                const label = ok ? "Strong" : score >= 4 ? "Almost there" : score >= 2 ? "Weak" : "Very weak";
+                return (
+                  <div style={{ marginTop: 8, padding: "10px 12px", background: BRAND.white, border: `1px solid ${BRAND.grayLight}`, borderRadius: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                      <div style={{ flex: 1, height: 5, background: BRAND.grayLight, borderRadius: 3, overflow: "hidden" }}>
+                        <div style={{ width: `${(score / checks.length) * 100}%`, height: "100%", background: barColor, transition: "width 160ms ease, background 160ms ease" }} />
+                      </div>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: barColor, minWidth: 78, textAlign: "right" }}>{label}</div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 12px" }}>
+                      {checks.map(c => (
+                        <div key={c.key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: c.ok ? "#15803D" : BRAND.gray }}>
+                          <span style={{ width: 14, height: 14, borderRadius: "50%", background: c.ok ? "#16A34A" : "#E5E7EB", color: BRAND.white, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 800, flexShrink: 0 }}>{c.ok ? "✓" : "·"}</span>
+                          <span>{c.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Error */}

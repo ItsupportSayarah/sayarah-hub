@@ -52,8 +52,33 @@ export async function deleteFile(path) {
 //  AUTH HELPERS
 // ═══════════════════════════════════════════════════════════════
 
+// ─── Password strength policy ───
+// Same rules as the admin panel — keep the two in sync. Returns a
+// per-rule breakdown so the signup form can render a live checklist
+// as the user types, plus a single `ok` flag for submit gating.
+export const PASSWORD_RULES = [
+  { key: "length",  label: "At least 8 characters",         test: (p) => (p || "").length >= 8 },
+  { key: "upper",   label: "One uppercase letter (A–Z)",    test: (p) => /[A-Z]/.test(p || "") },
+  { key: "lower",   label: "One lowercase letter (a–z)",    test: (p) => /[a-z]/.test(p || "") },
+  { key: "digit",   label: "One number (0–9)",              test: (p) => /[0-9]/.test(p || "") },
+  { key: "symbol",  label: "One symbol (! @ # $ % & * …)",  test: (p) => /[^A-Za-z0-9]/.test(p || "") },
+];
+export function validatePasswordStrength(password) {
+  const checks = PASSWORD_RULES.map(r => ({ key: r.key, label: r.label, ok: r.test(password) }));
+  const ok = checks.every(c => c.ok);
+  const score = checks.filter(c => c.ok).length; // 0..5
+  return { ok, checks, score };
+}
+
 // Sign up a new user with email & password
 export async function firebaseSignUp(email, password, displayName, { firstName, lastName } = {}) {
+  const strength = validatePasswordStrength(password);
+  if (!strength.ok) {
+    const missing = strength.checks.filter(c => !c.ok).map(c => c.label);
+    const err = new Error("Password too weak — needs: " + missing.join(", "));
+    err.code = "auth/weak-password";
+    throw err;
+  }
   const cred = await createUserWithEmailAndPassword(auth, email, password);
   await updateProfile(cred.user, { displayName });
   // Create user doc in Firestore with role

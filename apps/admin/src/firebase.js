@@ -373,7 +373,11 @@ function getSecondaryAuth() {
 
 export async function createUserAccount(email, password, { firstName, lastName, displayName, role = "user", allowedTabs, auctionAccess, sendVerification = true } = {}) {
   if (!email || !password) throw new Error("Email and password are required");
-  if (password.length < 8) throw new Error("Password must be at least 8 characters");
+  const strength = validatePasswordStrength(password);
+  if (!strength.ok) {
+    const missing = strength.checks.filter(c => !c.ok).map(c => c.label);
+    throw new Error("Password too weak — needs: " + missing.join(", "));
+  }
   // Block duplicates against Firestore — Firebase Auth will also
   // reject duplicates with auth/email-already-in-use, but checking
   // here gives a friendlier message and avoids creating an orphan.
@@ -428,6 +432,27 @@ export function generatePassword(length = 14) {
   const required = [pick(upper), pick(lower), pick(digits), pick(symbols)];
   const rest = Array.from({ length: Math.max(0, length - required.length) }, () => pick(all));
   return [...required, ...rest].sort(() => Math.random() - 0.5).join("");
+}
+
+// ─── Password strength policy ───
+// Required for every new account. Returns the per-rule pass/fail
+// breakdown so callers can render a live checklist as the user
+// types, plus a single `ok` flag for submit gating. Centralizing
+// here keeps the admin "Add User" form, the auction signup, and
+// the createUserAccount server check in lockstep — adding a rule
+// in one place takes effect everywhere.
+export const PASSWORD_RULES = [
+  { key: "length",  label: "At least 8 characters",         test: (p) => (p || "").length >= 8 },
+  { key: "upper",   label: "One uppercase letter (A–Z)",    test: (p) => /[A-Z]/.test(p || "") },
+  { key: "lower",   label: "One lowercase letter (a–z)",    test: (p) => /[a-z]/.test(p || "") },
+  { key: "digit",   label: "One number (0–9)",              test: (p) => /[0-9]/.test(p || "") },
+  { key: "symbol",  label: "One symbol (! @ # $ % & * …)",  test: (p) => /[^A-Za-z0-9]/.test(p || "") },
+];
+export function validatePasswordStrength(password) {
+  const checks = PASSWORD_RULES.map(r => ({ key: r.key, label: r.label, ok: r.test(password) }));
+  const ok = checks.every(c => c.ok);
+  const score = checks.filter(c => c.ok).length; // 0..5
+  return { ok, checks, score };
 }
 
 // Delete a user's Firestore doc. Admin-only. Does not delete the

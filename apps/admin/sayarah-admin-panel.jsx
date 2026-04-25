@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, createContext, useContext, Component } from "react";
-import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData, onUsersChange, addUserByEmail, createUserAccount, generatePassword, deleteUserDoc, ensureUserDoc, getUserProfile, changePassword, resetPassword } from "./src/firebase.js";
+import { auth, firebaseSignIn, firebaseSignOut, onAuthChange, getUserRole, getAllUsers, updateUserPermissions, getUserData, onUsersChange, addUserByEmail, createUserAccount, generatePassword, validatePasswordStrength, deleteUserDoc, ensureUserDoc, getUserProfile, changePassword, resetPassword } from "./src/firebase.js";
 
 // Error boundary — catches render crashes and shows a message instead of blank page
 class ErrorBoundary extends Component {
@@ -336,6 +336,37 @@ function timeAgo(isoString) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// PASSWORD STRENGTH METER — live checklist for the Add User form.
+// Each rule shows green ✓ when met, red · when not. Submit is gated
+// elsewhere on validatePasswordStrength().ok so the user can't slip
+// a weak password past the form even if they ignore the meter.
+// ═══════════════════════════════════════════════════════════════
+function PasswordStrength({ password }) {
+  const { checks, score, ok } = validatePasswordStrength(password);
+  if (!password) return null;
+  const barColor = ok ? "#16A34A" : score >= 4 ? "#F59E0B" : score >= 2 ? "#F97316" : "#DC2626";
+  const label = ok ? "Strong" : score >= 4 ? "Almost there" : score >= 2 ? "Weak" : "Very weak";
+  return (
+    <div style={{ marginTop: 8, padding: "10px 12px", background: B.white, border: `1px solid ${B.grayLight}`, borderRadius: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+        <div style={{ flex: 1, height: 6, background: B.grayLight, borderRadius: 3, overflow: "hidden" }}>
+          <div style={{ width: `${(score / checks.length) * 100}%`, height: "100%", background: barColor, transition: "width 160ms ease, background 160ms ease" }} />
+        </div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: barColor, minWidth: 78, textAlign: "right" }}>{label}</div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: "4px 12px" }}>
+        {checks.map(c => (
+          <div key={c.key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: c.ok ? "#15803D" : B.grayDark }}>
+            <span style={{ width: 14, height: 14, borderRadius: "50%", background: c.ok ? "#16A34A" : "#E5E7EB", color: B.white, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 800, flexShrink: 0 }}>{c.ok ? "✓" : "·"}</span>
+            <span>{c.label}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════
 // USERS MANAGEMENT — Controls both apps
 // ═══════════════════════════════════════════════════════════════
 function UsersView({ users, onRefresh }) {
@@ -407,7 +438,12 @@ function UsersView({ users, onRefresh }) {
   const handleAddUser = async () => {
     if (!newEmail.trim()) { setMsg("Error: Email is required"); return; }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail.trim())) { setMsg("Error: Enter a valid email address"); return; }
-    if (!newPassword || newPassword.length < 8) { setMsg("Error: Password must be at least 8 characters"); return; }
+    const strength = validatePasswordStrength(newPassword);
+    if (!strength.ok) {
+      const missing = strength.checks.filter(c => !c.ok).map(c => c.label.toLowerCase());
+      setMsg("Error: Password is too weak — needs " + missing.join(", "));
+      return;
+    }
     setAdding(true); setMsg("");
     try {
       const fn = newFirstName.trim();
@@ -512,9 +548,10 @@ function UsersView({ users, onRefresh }) {
                 >Copy</button>
               )}
             </div>
+            <PasswordStrength password={newPassword} />
           </div>
           <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
-            <Btn onClick={handleAddUser} disabled={adding} variant="success" style={{ fontSize: 12 }}>{adding ? "Creating..." : "Create User"}</Btn>
+            <Btn onClick={handleAddUser} disabled={adding || !validatePasswordStrength(newPassword).ok} variant="success" style={{ fontSize: 12 }}>{adding ? "Creating..." : "Create User"}</Btn>
           </div>
         </Card>
       )}
